@@ -10,7 +10,7 @@
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%);
       height: 100vh;
       overflow: hidden;
     }
@@ -25,54 +25,59 @@
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 0;
-      border-bottom: 3px solid #667eea;
+      border-bottom: 4px solid transparent;
+      background: linear-gradient(white, white) padding-box,
+                  linorder-box;
     }
     .controls-panel {
       padding: 30px;
-      background: #ffffff;
+      background: linear-gradient(135deg, #ffffff 0%, #f8f9ff 100%);
       overflow-y: auto;
       max-height: 40vh;
     }
     .log-panel {
       padding: 30px;
-      background: #1a1a2e;
-      border-left: 3px solid #667eea;
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      border-left: 4px solid #667eea;
       overflow-y: auto;
       max-height: 40vh;
     }
     .charts-panel {
       padding: 30px;
-      background: #ffffff;
+      background: linear-gradient(135deg, #f8f9ff 0%, #e8eeff 100%);
       overflow-y: auto;
     }
     header {
       margin-bottom: 20px;
       padding-bottom: 15px;
-      border-bottom: 3px solid #667eea;
+      border-bottom: 3px solid transparent;
+      background: linear-gradient(white, white) padding-box,
+                  linear-gradient(90deg, #667eea, #764ba2, #f093fb) border-box;
     }
     h1 { 
-      font-size: 24px; 
-      font-weight: 800; 
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      font-size: 26px; 
+      font-weight: 900; 
+      background: linear- #764ba2 50%, #f093fb 100%);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
       background-clip: text;
       margin-bottom: 5px;
+      letter-spacing: -0.5px;
     }
     .subtitle { 
       font-size: 13px; 
       color: #6b7280; 
-      font-weight: 500;
+      font-weight: 600;
     }
     .controls {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
       gap: 12px;
       padding: 20px;
-      background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
-      border-radius: 12px;
-      box-shadow: 0 4px 6px rgba(0,0,0,0.07);
-      border: 1px solid #e5e7eb;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      border-radius: 16px;
+      box-shadow: 0 8px 16px rgba(102, 126, 234, 0.3);
+      border: 2px solid rgba(255, 255, 255, 0.2);
     }
     .control-group { 
       display: flex; 
@@ -80,101 +85,124 @@
       gap: 8px; 
     }
     label { 
-      font-size: 12px; 
-      font-weight: 700; 
-      color: #374151; 
+      font-size: 11px; 
+      font-weight: 800; 
+      color: #ffffff; 
       text-transform: uppercase;
-      letter-spacing: 0.5px;
+      letter-spacing: 1px;
+      text-shadow: 0 2px 4px rgba(0,0,0,0.2);
     }
     select, input[type="date"] {
       padding: 10px 12px;
-      border: 2px solid #e5e7eb;
-      border-radius: 8px;
+      border: 2px solid rgba(255, 255, 255, 0.3);
+      border-radius: 10px;
       font-size: 14px;
-      font-weight: 500;
-      background: white;
-      transition: all 0.2s;
+      font-weight: 600;
+      background: rgba(255, 255, 255, 0.95);
+      transition: all 0.3s;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.1);
     }
     select:focus, input[type="date"]:focus {
       outline: none;
-      border-color: #667eea;
-      box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+      border-color: #f093fb;
+      background: #ffffff;
+      box-shadow: 0 0 0 4px rgba(240, 147, 251, 0.2);
+      transform: translateY(-2px);
     }
     button {
       padding: 12px 20px;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
       color: white;
       border: none;
-      border-radius: 8px;
+      border-radius: 10px;
       font-size: 14px;
-      font-weight: 700;
+      font-weight: 800;
       cursor: pointer;
       transition: all 0.3s;
-      box-shadow: 0 4px 6px rgba(102, 126, 234, 0.3);
+      box-shadow: 0 6px 12px rgba(245, 87, 108, 0.4);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
     }
     button:hover { 
-      transform: translateY(-2px);
-      box-shadow: 0 6px 12px rgba(102, 126, 234, 0.4);
+      transform: translateY(-3px);
+      box-shadow: 0 8px 16px rgba(245, 87, 108, 0.5);
     }
     button:active {
-      transform: translateY(0);
+      transform: translateY(-1px);
     }
     button:disabled { 
-      background: #d1d5db; 
+      background: linear-gradient(135deg, #d1d5db 0%, #9ca3af 100%);
       cursor: not-allowed;
       transform: none;
       box-shadow: none;
     }
     .btn-success { 
-      background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
-      box-shadow: 0 4px 6px rgba(16, 185, 129, 0.3);
-    }
-    .btn-success:hover { 
+      background: linear-gradient(135deg, #10b981 0%, #059669 100%);
       box-shadow: 0 6px 12px rgba(16, 185, 129, 0.4);
     }
+    .btn-success:hover { 
+      box-shadow: 0 8px 16px rgba(16, 185, 129, 0.5);
+    }
     .status {
-      padding: 8px 16px;
-      border-radius: 20px;
+      padding: 10px 18px;
+      border-radius: 25px;
       font-size: 12px;
-      font-weight: 700;
+      font-weight: 800;
       text-transform: uppercase;
-      letter-spacing: 0.5px;
+      letter-spacing: 1px;
       display: inline-block;
+      box-shadow: 0 4px 8px rgba(0,0,0,0.15);
     }
     .status-ok { 
-      background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%);
-      color: #065f46;
-      border: 2px solid #3b82f6;
+      background: linear-gradient(135deg, #10b981 0%, #34d399 100%);
+      color: white;
+      border: 2px solid #059669;
     }
     .status-error { 
-      background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%);
-      color: #991b1b;
-      border: 2px solid #f97316;
+      background: linear-gradient(135deg, #ef4444 0%, #f87171 100%);
+      color: white;
+      border: 2px solid #dc2626;
     }
     .charts-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
-      gap: 20px;
+      gap: 25px;
     }
     .chart-card {
-      background: white;
-      border-radius: 12px;
-      padding: 20px;
-      box-shadow: 0 4px 6px rgba(0,0,0,0.07);
-      border: 1px solid #e5e7eb;
+      background: line135deg, #ffffff 0%, #fafbff 100%);
+      border-radius: 20px;
+      padding: 25px;
+      box-shadow: 0 8px 24px rgba(102, 126, 234, 0.15);
+      border: 2px solid rgba(102, 126, 234, 0.1);
       transition: all 0.3s;
+      position: relative;
+      overflow: hidden;
+    }
+    .chart-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 4px;
+      background: linear-gradient(90deg, #667eea, #764ba2, #f093fb);
     }
     .chart-card:hover {
-      box-shadow: 0 10px 20px rgba(0,0,0,0.1);
-      transform: translateY(-2px);
+      box-shadow: 0 12px 32px rgba(102, 126, 234, 0.25);
+      transform: translateY(-4px);
+      border-color: rgba(102, 126, 234, 0.3);
     }
     .chart-title {
-      font-size: 16px;
-      font-weight: 700;
-      color: #1f2937;
-      margin-bottom: 15px;
+      font-size: 17px;
+      font-weight: 800;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-bottom: 18px;
       padding-bottom: 12px;
       border-bottom: 2px solid #e5e7eb;
+      letter-spacing: -0.3px;
     }
     .chart-container { 
       position: relative; 
@@ -183,28 +211,30 @@
     .stats {
       display: flex;
       justify-content: space-around;
-      margin-top: 15px;
-      padding-top: 15px;
+      margin-top: 18px;
+      padding-top: 18px;
       border-top: 2px solid #e5e7eb;
-      font-size: 12px;
-      font-weight: 600;
-      color: #6b7280;
+      font-size: 13px;
+      font-weight: 700;
     }
     .stats span {
       display: flex;
       flex-direction: column;
       align-items: center;
       gap: 4px;
+      padding: 8px 12px;
+      border-radius: 10px;
+      background: rgba(102, 126, 234, 0.05);
     }
     .loading, .no-data {
       text-align: center;
       padding: 60px 20px;
       color: #6b7280;
-      background: white;
-      border-radius: 12px;
+      background: linear-gradient(135deg, #ffffff 0%, #fafbff 100%);
+      border-radius: 20px;
       font-size: 16px;
-      font-weight: 500;
-      border: 2px dashed #e5e7eb;
+      font-weight: 600;
+      border: 3px dashed rgba(102, 126, 234, 0.3);
     }
     .log-viewer {
       color: #e5e7eb;
@@ -214,29 +244,34 @@
     }
     .log-viewer h3 {
       color: #fff;
-      font-size: 18px;
-      font-weight: 700;
-      margin-bottom: 15px;
-      padding-bottom: 12px;
-      border-bottom: 2px solid #667eea;
+      font-size: 20px;
+      font-weight: 800;
+      margin-bottom: 20px;
+      padding-bottom: 15px;
+      border-bottom: 3px solid transparent;
+      background: linear-gradient(#16213e, #16213e) padding-box,
+                  linear-gradient(90deg, #667eea, #f093fb) border-box;
+      letter-spacing: 0.5px;
     }
     .log-entry {
-      padding: 8px 12px;
-      margin-bottom: 4px;
-      border-radius: 6px;
-      background: rgba(255,255,255,0.03);
-      border-left: 3px solid transparent;
+      padding: 10px 14px;
+      margin-bottom: 6px;
+      border-radius: 8px;
+      background: rgba(255,255,255,0.05);
+      border-left: 4px solid transparent;
       transition: all 0.2s;
+      backdrop-filter: blur(10px);
     }
     .log-entry:hover {
-      background: rgba(255,255,255,0.06);
+      background: rgba(255,255,255,0.08);
+      transform: translateX(4px);
     }
     .log-entry:last-child { margin-bottom: 0; }
     .log-time { 
       color: #9ca3af; 
       margin-right: 10px; 
       font-size: 11px;
-      font-weight: 600;
+      font-weight: 700;
     }
     .log-info { 
       color: #60a5fa;
@@ -249,11 +284,286 @@
     .log-error { 
       color: #f87171;
       border-left-color: #f87171;
-      background: rgba(248, 113, 113, 0.1);
+      background: rgba(248, 113, 113, 0.15);
     }
   </style>
   <script src="/socket.io/socket.io.js"></script>
 </head>
+<body>
+  <div class="container">
+    <div class="top-section">
+      <div class="controls-panel">
+        <header>
+          <h1>🏥 Kinnser Past Due Report Dashboard</h1>
+          <p class="subtitle">Automated report tracking and analytics</p>
+        </header>
+
+        <div class="controls">
+          <div class="control-group">
+            <label>Report Type</label>
+            <select id="reportFilter">
+              <option value="all">All Reports</option>
+            </select>
+          </div>
+          <div class="control-group">
+            <label>Start Date</label>
+            <input type="date" id="startDate">
+          </div>
+          <div class="control-group">
+            <label>End Date</label>
+            <input type="date" id="endDate">
+          </div>
+          <div class="control-group">
+            <label>&nbsp;</label>
+            <button onclick="lo">🔄 Refresh</button>
+          </div>
+          <div class="control-group">
+            <label>&nbsp;</label>
+            <button class="btn-success" onclick="downloadReports()" id="downloadBtn">
+              ⬇️ Download Now
+            </button>
+          </div>
+          <div class="control-group">
+            <label>Status</label>
+            <span id="status" class="status status-ok">Ready</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="log-panel">
+        <div class="log-viewer">
+       <h3>📋 Activity Log</h3>
+          <div id="logContent"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="charts-panel">
+      <div id="chartsContainer" class="charts-grid">
+        <div class="loading">Loading dashboard...</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let analyticsData = {};
+    let charts = {};
+    const socket = io();
+
+    socket.on('log', (log) => {
+      addLogEntry(log);
+    });
+
+    socket.on('logs', (logs) => {
+      logs.forEach(log => addLogEntry(log));
+    });
+
+    function addLogEntry(log) {
+      const logContent = document.getElementById('logContent');
+      const time = new Date(log.timestamp).toLocaleTimeString();
+      const entry = document.createElement('div');
+      entry.className = `log-entry log-${log.type}`;
+      entry.innerHTML = `<span class="log-time">[${time}]</span>${log.message}`;
+      logContent.appendChild(entry);
+      logContent.parentElement.scrollTop = logContent.parentElement.scrollHeight;
+    }
+
+    function clearLogs() {
+tElementById('logContent').innerHTML = '';
+    }
+
+    const today = new Date();
+    const thirtyDaysAgo = new Date(today);
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    
+    document.getElementById('endDate').value = today.toISOString().split('T')[0];
+    document.getElementById('startDate').value = thirtyDaysAgo.toISOString().split('T')[0];
+
+    loadData();
+
+    async function loadData() {
+      const container = document.getElementById('chartsContainer');
+      container.innerHTML = '<div class="loading">Loading data...</div>';
+      
+      try {
+        const response = await fetch('/api/analytics');
+        analyticsData = await response.json();
+        
+        const filter = document.getElementById('reportFilter');
+        const currentValue = filter.value;
+        filter.innerHTML = '<option value="all">All Reports</option>';
+        Object.keys(analyticsData).forEach(name => {
+          filter.innerHTML += `<option value="${name}">${name}</option>`;
+        });
+        filter.value = currentValue || 'all';
+        
+        renderCharts();
+        setStatus('ok', 'Data loaded');
+      } catch (error) {
+        container.innerHTML = `<div class="error">Failed to load data: ${error.message}</div>`;
+        setStatus('error', 'Load failed');
+      }
+    }
+
+    function renderCharts() {
+      const container = document.getElementById('chartsContainer');
+      const filterValue = document.getElementById('reportFilter').value;
+      const startDate = document.getElementById('startDate').value;
+      const endDate = document.getElementById('endDate').value;
+      
+      Object.values(charts).forEach(chart => chart.destroy());
+      charts = {};
+      
+      let reportsToShow = filterValue === 'all' 
+        ? Object.entries(analyticsData)
+        : [[filterValue, analyticsData[filterValue] || []]];
+      
+      if (reportsToShow.length === 0 || (reportsToShow.length === 1 && !reportsToShow[0][1])) {
+        container.innerHTML = '<div class="no-data">No reports available. Click "Download Now" to fetch data.</div>';
+        return;
+      }
+      
+      container.innerHTML = '';
+      
+      reportsToShow.forEach(([reportName, data], index) => {
+        if (!data || data.length === 0) return;
+        
+        const filteredData = data.filter(d => {
+          if (startDate && d.date < startDate) return false;
+          if (endDate && d.date > endDate) return false;
+          return true;
+        });
+        
+        if (filteredData.length === 0) return;
+        
+        const cardId = `chart-${index}`;
+        const cat.createElement('div');
+        card.className = 'chart-card';
+        
+        const totalBillable = filteredData.reduce((sum, d) => sum + (d.billableCount || 0), 0);
+        const totalNonBillable = filteredData.reduce((sum, d) => sum + (d.nonBillableCount || 0), 0);
+        const totalRecords = filteredData.reduce((sum, d) => sum + d.rowCount, 0);
+        
+        card.innerHTML = `
+          <div class="chart-title">${reportName}</div>
+          <div class="chart-container">
+            <canvas Id}"></canvas>
+          </div>
+          <div class="stats">
+            <span>Total: ${totalRecords}</span>
+            <span style="color: #10b981;">✓ Billable: ${totalBillable}</span>
+            <span style="color: #ef4444;">✗ Non-Billable: ${totalNonBillable}</span>
+          </div>
+        `;
+        
+        container.appendChild(card);
+        
+        const ctx = document.getElementById(cardId).getContext('2d');
+        
+        charts[cardId] = new Chart(ctx, {
+          type: 'bar',
+          data: {
+            labels: filteredData.map(d => d.date),
+            datasets: [
+              {
+                label: 'Billable',
+                data: filteredData.map(d => d.billableCount || 0),
+                backgroundColor: '#10b981',
+                borderColor: '#059669',
+                borderWidth: 1
+              },
+              {
+                label: 'Non-Billable',
+                data: filteredData.map(d => d.nonBillableCount || 0),
+                backgroundColor: '#ef4444',
+                borderColor: '#dc2626',
+                borderWidth: 1
+              }
+            ]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { 
+              legend: { 
+                display: true, 
+                position: 'top',
+                labels: {
+                  font: { size: 12, weight: 'bold' }
+                }
+              },
+              tooltip: {
+                callbacks: {
+                  footer: function(tooltms) {
+                    let total = 0;
+                    tooltipItems.forEach(item => {
+                      total += item.parsed.y;
+                    });
+                    return 'Total: ' + total;
+                  }
+                }
+              }
+            },
+            scales: { 
+              x: { 
+                stacked: true,
+                grid: { display: false }
+              },
+              y: { 
+                stacked: true, 
+                beginAtZero: true,
+                ticks: { precision: 0 }
+              }
+            }
+          }
+        });
+      });
+      
+      if (container.innerHTML === '') {
+        container.innerHTML = '<div class="no-data">No data for selected filters</div>';
+      }
+    }
+
+    async function downloadReports() {
+      const btn = document.getElementById('downloadBtn');
+      btn.disabled = true;
+      btn.textContent = '⏳ Downloading...';
+      setStatus('ok', 'Downloading...');
+;
+  </script>
+</body>
+</html>
+abled = false;
+        btn.textContent = '⬇️ Download Now';
+      }
+    }
+
+    function setStatus(type, message) {
+      const status = document.getElementById('status');
+      status.className = `status status-${type}`;
+      status.textContent = message;
+    }
+
+    document.getElementById('reportFilter').addEventListener('change', renderCharts);
+    document.getElementById('startDate').addEventListener('change', renderCharts);
+    document.getElementById('endDate').addEventListener('change', renderCharts)ait fetch('/api/download', { method: 'POST' });
+        const result = await response.json();
+        
+        if (result.success) {
+          setStatus('ok', 'Complete!');
+          setTimeout(() => loadData(), 2000);
+        } else {
+          throw new Error(result.error || 'Download failed');
+        }
+      } catch (error) {
+        setStatus('error', 'Failed');
+        addLogEntry({ type: 'error', message: `Error: ${error.message}`, timestamp: new Date().toISOString() });
+      } finally {
+        btn.dis      
+      clearLogs();
+      
+      try {
+        const response = aw
 <body>
   <div class="container">
     <div class="top-section">
@@ -425,30 +735,40 @@
         
         const ctx = document.getElementById(cardId).getContext('2d');
         
-        // All charts are stacked bar charts showing billable vs non-billable
+        // Create gradient colors - Blue/Teal for Billable, Coral/Orange for Non-Billable
+        const blueGradient = ctx.createLinearGradient(0, 0, 400, 0);
+        blueGradient.addColorStop(0, '#3b82f6');  // Bright blue
+        blueGradient.addColorStop(1, '#06b6d4');  // Cyan
+        
+        const coralGradient = ctx.createLinearGradient(0, 0, 400, 0);
+        coralGradient.addColorStop(0, '#f97316');  // Orange
+        coralGradient.addColorStop(1, '#fb923c');  // Light orange
+        
         charts[cardId] = new Chart(ctx, {
           type: 'bar',
-          indexAxis: 'y',
           data: {
             labels: filteredData.map(d => d.date),
             datasets: [
               {
                 label: 'Billable',
                 data: filteredData.map(d => d.billableCount || 0),
-                backgroundColor: '#3b82f6',
+                backgroundColor: blueGradient,
                 borderColor: '#2563eb',
-                borderWidth: 2
+                borderWidth: 2,
+                borderRadius: 8
               },
               {
                 label: 'Non-Billable',
                 data: filteredData.map(d => d.nonBillableCount || 0),
-                backgroundColor: '#f97316',
+                backgroundColor: coralGradient,
                 borderColor: '#ea580c',
-                borderWidth: 2
+                borderWidth: 2,
+                borderRadius: 8
               }
             ]
           },
           options: {
+            indexAxis: 'y',
             responsive: true,
             maintainAspectRatio: false,
             plugins: { 
@@ -456,28 +776,28 @@
                 display: true, 
                 position: 'top',
                 labels: {
-                  font: { size: 12, weight: 'bold' }
+                  font: { size: 13, weight: 'bold' },
+                  padding: 15,
+                  usePointStyle: true,
+                  pointStyle: 'rectRounded'
                 }
               },
               tooltip: {
-                callbacks: {
-                  footer: function(tooltipItems) {
-                    let total = 0;
-                    tooltipItems.forEach(item => {
-                      total += item.parsed.y;
-                    });
-                    return 'Total: ' + total;
-                  }
-                }
+                backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                padding: 12,
+                titleFont: { size: 14, weight: 'bold' },
+                bodyFont: { size: 13 }
               }
             },
             scales: { 
               x: { 
-                grid: { display: false }
+                beginAtZero: true,
+                ticks: { precision: 0, font: { size: 11 } },
+                grid: { color: 'rgba(0, 0, 0, 0.05)' }
               },
               y: { 
-                beginAtZero: true,
-                ticks: { precision: 0 }
+                ticks: { font: { size: 11, weight: '600' } },
+                grid: { display: false }
               }
             }
           }
