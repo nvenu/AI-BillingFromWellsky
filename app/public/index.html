@@ -343,7 +343,6 @@
       <div id="chartsContainer" class="charts-grid">
         <div class="loading">Loading dashboard...</div>
       </div>
-    </div>
 
       <div id="downloadsSection" style="margin-top: 30px; padding: 25px; background: linear-gradient(135deg, #ffffff 0%, #f8f9ff 100%); border-radius: 16px; border: 2px solid rgba(102, 126, 234, 0.2); box-shadow: 0 4px 12px rgba(102, 126, 234, 0.1);">
         <h3 style="font-size: 18px; font-weight: 800; color: #1e40af; margin-bottom: 16px; display: flex; align-items: center; gap: 10px;">
@@ -353,14 +352,8 @@
           <p style="color: #6b7280; font-size: 14px; text-align: center; padding: 30px;">No files yet. Click "Download Now" to fetch reports.</p>
         </div>
       </div>
-      <div id="downloadsSection" style="margin-top: 30px; padding: 25px; background: linear-gradient(135deg, #ffffff 0%, #f8f9ff 100%); border-radius: 16px; border: 2px solid rgba(102, 126, 234, 0.2); box-shadow: 0 4px 12px rgba(102, 126, 234, 0.1);">
-        <h3 style="font-size: 18px; font-weight: 800; color: #1e40af; margin-bottom: 16px; display: flex; align-items: center; gap: 10px;">
-          �� Downloaded Files
-        </h3>
-        <div id="filesList" style="max-height: 400px; overflow-y: auto;">
-          <p style="color: #6b7280; font-size: 14px; text-align: center; padding: 30px;">No files yet. Click "Download Now" to fetch reports.</p>
-        </div>
-      </div>  </div>
+    </div>
+  </div>
 
   <script>
     let analyticsData = {};
@@ -398,6 +391,7 @@ tElementById('logContent').innerHTML = '';
 
     loadData();
     loadFiles();
+
     async function loadData() {
       const container = document.getElementById('chartsContainer');
       container.innerHTML = '<div class="loading">Loading data...</div>';
@@ -546,293 +540,6 @@ tElementById('logContent').innerHTML = '';
       btn.disabled = true;
       btn.textContent = '⏳ Downloading...';
       setStatus('ok', 'Downloading...');
-;
-  </script>
-</body>
-</html>
-abled = false;
-        btn.textContent = '⬇️ Download Now';
-      }
-    }
-
-    function setStatus(type, message) {
-      const status = document.getElementById('status');
-      status.className = `status status-${type}`;
-      status.textContent = message;
-    }
-
-    document.getElementById('reportFilter').addEventListener('change', renderCharts);
-    document.getElementById('startDate').addEventListener('change', renderCharts);
-    document.getElementById('endDate').addEventListener('change', renderCharts)ait fetch('/api/download', { method: 'POST' });
-        const result = await response.json();
-        
-        if (result.success) {
-          setStatus('ok', 'Complete!');
-          setTimeout(() => loadData(), 2000);
-        } else {
-          throw new Error(result.error || 'Download failed');
-        }
-      } catch (error) {
-        setStatus('error', 'Failed');
-        addLogEntry({ type: 'error', message: `Error: ${error.message}`, timestamp: new Date().toISOString() });
-      } finally {
-        btn.dis      
-      clearLogs();
-      
-      try {
-        const response = aw
-<body>
-  <div class="container">
-    <div class="top-section">
-      <div class="controls-panel">
-        <header>
-          <h1>🏥 Kinnser Past Due Report Dashboard</h1>
-          <p class="subtitle">Automated report tracking and analytics</p>
-        </header>
-
-        <div class="controls">
-          <div class="control-group">
-            <label>Report Type</label>
-            <select id="reportFilter">
-              <option value="all">All Reports</option>
-            </select>
-          </div>
-          <div class="control-group">
-            <label>Start Date</label>
-            <input type="date" id="startDate">
-          </div>
-          <div class="control-group">
-            <label>End Date</label>
-            <input type="date" id="endDate">
-          </div>
-          <div class="control-group">
-            <label>&nbsp;</label>
-            <button onclick="loadData()">🔄 Refresh</button>
-          </div>
-          <div class="control-group">
-            <label>&nbsp;</label>
-            <button class="btn-success" onclick="downloadReports()" id="downloadBtn">
-              ⬇️ Download Now
-            </button>
-          </div>
-          <div class="control-group">
-            <label>Status</label>
-            <span id="status" class="status status-ok">Ready</span>
-          </div>
-        </div>
-      </div>
-
-      <div class="log-panel">
-        <div class="log-viewer">
-          <h3>📋 Activity Log</h3>
-          <div id="logContent"></div>
-        </div>
-      </div>
-    </div>
-
-    <div class="charts-panel">
-      <div id="chartsContainer" class="charts-grid">
-        <div class="loading">Loading dashboard...</div>
-      </div>
-    </div>
-  </div>
-
-  <script>
-    let analyticsData = {};
-    let charts = {};
-    const socket = io();
-
-    socket.on('log', (log) => {
-      addLogEntry(log);
-    });
-
-    socket.on('logs', (logs) => {
-      logs.forEach(log => addLogEntry(log));
-    });
-
-    function addLogEntry(log) {
-      const logContent = document.getElementById('logContent');
-      const time = new Date(log.timestamp).toLocaleTimeString();
-      const entry = document.createElement('div');
-      entry.className = `log-entry log-${log.type}`;
-      entry.innerHTML = `<span class="log-time">[${time}]</span>${log.message}`;
-      logContent.appendChild(entry);
-      logContent.parentElement.scrollTop = logContent.parentElement.scrollHeight;
-    }
-
-    function clearLogs() {
-      document.getElementById('logContent').innerHTML = '';
-    }
-
-    const today = new Date();
-    const thirtyDaysAgo = new Date(today);
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    
-    document.getElementById('endDate').value = today.toISOString().split('T')[0];
-    document.getElementById('startDate').value = thirtyDaysAgo.toISOString().split('T')[0];
-
-    loadData();
-
-    async function loadData() {
-      const container = document.getElementById('chartsContainer');
-      container.innerHTML = '<div class="loading">Loading data...</div>';
-      
-      try {
-        const response = await fetch('/api/analytics');
-        analyticsData = await response.json();
-        
-        const filter = document.getElementById('reportFilter');
-        const currentValue = filter.value;
-        filter.innerHTML = '<option value="all">All Reports</option>';
-        Object.keys(analyticsData).forEach(name => {
-          filter.innerHTML += `<option value="${name}">${name}</option>`;
-        });
-        filter.value = currentValue || 'all';
-        
-        renderCharts();
-        setStatus('ok', 'Data loaded');
-      } catch (error) {
-        container.innerHTML = `<div class="error">Failed to load data: ${error.message}</div>`;
-        setStatus('error', 'Load failed');
-      }
-    }
-
-    function renderCharts() {
-      const container = document.getElementById('chartsContainer');
-      const filterValue = document.getElementById('reportFilter').value;
-      const startDate = document.getElementById('startDate').value;
-      const endDate = document.getElementById('endDate').value;
-      
-      Object.values(charts).forEach(chart => chart.destroy());
-      charts = {};
-      
-      let reportsToShow = filterValue === 'all' 
-        ? Object.entries(analyticsData)
-        : [[filterValue, analyticsData[filterValue] || []]];
-      
-      if (reportsToShow.length === 0 || (reportsToShow.length === 1 && !reportsToShow[0][1])) {
-        container.innerHTML = '<div class="no-data">No reports available. Click "Download Now" to fetch data.</div>';
-        return;
-      }
-      
-      container.innerHTML = '';
-      
-      reportsToShow.forEach(([reportName, data], index) => {
-        if (!data || data.length === 0) return;
-        
-        const filteredData = data.filter(d => {
-          if (startDate && d.date < startDate) return false;
-          if (endDate && d.date > endDate) return false;
-          return true;
-        });
-        
-        if (filteredData.length === 0) return;
-        
-        const cardId = `chart-${index}`;
-        const card = document.createElement('div');
-        card.className = 'chart-card';
-        
-        const totalBillable = filteredData.reduce((sum, d) => sum + (d.billableCount || 0), 0);
-        const totalNonBillable = filteredData.reduce((sum, d) => sum + (d.nonBillableCount || 0), 0);
-        const totalRecords = filteredData.reduce((sum, d) => sum + d.rowCount, 0);
-        
-        card.innerHTML = `
-          <div class="chart-title">${reportName}</div>
-          <div class="chart-container">
-            <canvas id="${cardId}"></canvas>
-          </div>
-          <div class="stats">
-            <span>Total: ${totalRecords}</span>
-            <span style="color: #3b82f6;">✓ Billable: ${totalBillable}</span>
-            <span style="color: #f97316;">✗ Non-Billable: ${totalNonBillable}</span>
-          </div>
-        `;
-        
-        container.appendChild(card);
-        
-        const ctx = document.getElementById(cardId).getContext('2d');
-        
-        // Create gradient colors - Blue/Teal for Billable, Coral/Orange for Non-Billable
-        const blueGradient = ctx.createLinearGradient(0, 0, 400, 0);
-        blueGradient.addColorStop(0, '#3b82f6');  // Bright blue
-        blueGradient.addColorStop(1, '#06b6d4');  // Cyan
-        
-        const coralGradient = ctx.createLinearGradient(0, 0, 400, 0);
-        coralGradient.addColorStop(0, '#f97316');  // Orange
-        coralGradient.addColorStop(1, '#fb923c');  // Light orange
-        
-        charts[cardId] = new Chart(ctx, {
-          type: 'bar',
-          data: {
-            labels: filteredData.map(d => d.date),
-            datasets: [
-              {
-                label: 'Billable',
-                data: filteredData.map(d => d.billableCount || 0),
-                backgroundColor: blueGradient,
-                borderColor: '#2563eb',
-                borderWidth: 2,
-                borderRadius: 8
-              },
-              {
-                label: 'Non-Billable',
-                data: filteredData.map(d => d.nonBillableCount || 0),
-                backgroundColor: coralGradient,
-                borderColor: '#ea580c',
-                borderWidth: 2,
-                borderRadius: 8
-              }
-            ]
-          },
-          options: {
-            indexAxis: 'y',
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: { 
-              legend: { 
-                display: true, 
-                position: 'top',
-                labels: {
-                  font: { size: 13, weight: 'bold' },
-                  padding: 15,
-                  usePointStyle: true,
-                  pointStyle: 'rectRounded'
-                }
-              },
-              tooltip: {
-                backgroundColor: 'rgba(0, 0, 0, 0.8)',
-                padding: 12,
-                titleFont: { size: 14, weight: 'bold' },
-                bodyFont: { size: 13 }
-              }
-            },
-            scales: { 
-              x: { 
-                beginAtZero: true,
-                ticks: { precision: 0, font: { size: 11 } },
-                grid: { color: 'rgba(0, 0, 0, 0.05)' }
-              },
-              y: { 
-                ticks: { font: { size: 11, weight: '600' } },
-                grid: { display: false }
-              }
-            }
-          }
-        });
-      });
-      
-      if (container.innerHTML === '') {
-        container.innerHTML = '<div class="no-data">No data for selected filters</div>';
-      }
-    }
-
-    async function downloadReports() {
-      const btn = document.getElementById('downloadBtn');
-      btn.disabled = true;
-      btn.textContent = '⏳ Downloading...';
-      setStatus('ok', 'Downloading...');
-      
-      clearLogs();
       
       try {
         const response = await fetch('/api/download', { method: 'POST' });
@@ -840,7 +547,6 @@ abled = false;
         
         if (result.success) {
           setStatus('ok', 'Complete!');
-          setTimeout(() => loadData(), 2000);
         } else {
           throw new Error(result.error || 'Download failed');
         }
@@ -859,23 +565,14 @@ abled = false;
       status.textContent = message;
     }
 
-    document.getElementById('reportFilter').addEventListener('change', renderCharts);
-    document.getElementById('startDate').addEventListener('change', renderCharts);
-    document.getElementById('endDate').addEventListener('change', renderCharts);
-
     // Load files list
     async function loadFiles() {
-      console.log('loadFiles() called');
       try {
         const response = await fetch('/api/reports');
         const files = await response.json();
-        console.log('Files loaded:', files);
         
         const filesList = document.getElementById('filesList');
-        if (!filesList) {
-          console.error('filesList element not found!');
-          return;
-        }
+        if (!filesList) return;
         
         if (files.length === 0) {
           filesList.innerHTML = '<p style="color: #6b7280; font-size: 14px; text-align: center; padding: 30px;">No files yet. Click "Download Now" to fetch reports.</p>';
@@ -886,12 +583,12 @@ abled = false;
         files.sort((a, b) => b.date.localeCompare(a.date));
         
         filesList.innerHTML = files.map(file => `
-          <div style="display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; margin-bottom: 10px; background: white; border-radius: 10px; border: 1px solid #e5e7eb; box-shadow: 0 2px 4px rgba(0,0,0,0.05); transition: all 0.2s;">
+          <div style="display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; margin-bottom: 10px; background: white; border-radius: 10px; border: 1px solid #e5e7eb; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
             <div style="flex: 1;">
               <div style="font-size: 14px; font-weight: 700; color: #1e40af; margin-bottom: 4px;">${file.reportName}</div>
               <div style="font-size: 12px; color: #6b7280;">📅 ${file.date} • 📦 ${(file.size / 1024).toFixed(1)} KB</div>
             </div>
-            <a href="/downloads/${file.filename}" download style="padding: 8px 16px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; text-decoration: none; border-radius: 8px; font-size: 13px; font-weight: 700; transition: all 0.2s; box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);">
+            <a href="/downloads/${file.filename}" download style="padding: 8px 16px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; text-decoration: none; border-radius: 8px; font-size: 13px; font-weight: 700; box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);">
               ⬇️ Download
             </a>
           </div>
@@ -911,6 +608,10 @@ abled = false;
         setStatus('error', 'Download failed');
       }
     });
+
+    document.getElementById('reportFilter').addEventListener('change', renderCharts);
+    document.getElementById('startDate').addEventListener('change', renderCharts);
+    document.getElementById('endDate').addEventListener('change', renderCharts);
   </script>
 </body>
 </html>
