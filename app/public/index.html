@@ -296,28 +296,10 @@
       <div class="controls-panel">
         <header>
           <h1>🏥 Kinnser Past Due Report Dashboard</h1>
-          <p class="subtitle">Automated report tracking and analytics</p>
+          <p class="subtitle">Automated report tracking and analytics • 📅 Auto-download: Daily at 1:30 PM IST (8:00 AM UTC)</p>
         </header>
 
         <div class="controls">
-          <div class="control-group">
-            <label>Report Type</label>
-            <select id="reportFilter">
-              <option value="all">All Reports</option>
-            </select>
-          </div>
-          <div class="control-group">
-            <label>Start Date</label>
-            <input type="date" id="startDate">
-          </div>
-          <div class="control-group">
-            <label>End Date</label>
-            <input type="date" id="endDate">
-          </div>
-          <div class="control-group">
-            <label>&nbsp;</label>
-            <button onclick="lo">🔄 Refresh</button>
-          </div>
           <div class="control-group">
             <label>&nbsp;</label>
             <button class="btn-success" onclick="downloadReports()" id="downloadBtn">
@@ -382,13 +364,6 @@
 tElementById('logContent').innerHTML = '';
     }
 
-    const today = new Date();
-    const thirtyDaysAgo = new Date(today);
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    
-    document.getElementById('endDate').value = today.toISOString().split('T')[0];
-    document.getElementById('startDate').value = thirtyDaysAgo.toISOString().split('T')[0];
-
     loadData();
     loadFiles();
 
@@ -405,8 +380,13 @@ tElementById('logContent').innerHTML = '';
         filter.innerHTML = '<option value="all">All Reports</option>';
         Object.keys(analyticsData).forEach(name => {
           filter.innerHTML += `<option value="${name}">${name}</option>`;
-        });
-        filter.value = currentValue || 'all';
+    async function loadData() {
+      const container = document.getElementById('chartsContainer');
+      container.innerHTML = '<div class="loading">Loading data...</div>';
+      
+      try {
+        const response = await fetch('/api/analytics');
+        analyticsData = await response.json();
         
         renderCharts();
         setStatus('ok', 'Data loaded');
@@ -418,18 +398,13 @@ tElementById('logContent').innerHTML = '';
 
     function renderCharts() {
       const container = document.getElementById('chartsContainer');
-      const filterValue = document.getElementById('reportFilter').value;
-      const startDate = document.getElementById('startDate').value;
-      const endDate = document.getElementById('endDate').value;
       
       Object.values(charts).forEach(chart => chart.destroy());
       charts = {};
       
-      let reportsToShow = filterValue === 'all' 
-        ? Object.entries(analyticsData)
-        : [[filterValue, analyticsData[filterValue] || []]];
+      const reportsToShow = Object.entries(analyticsData);
       
-      if (reportsToShow.length === 0 || (reportsToShow.length === 1 && !reportsToShow[0][1])) {
+      if (reportsToShow.length === 0) {
         container.innerHTML = '<div class="no-data">No reports available. Click "Download Now" to fetch data.</div>';
         return;
       }
@@ -439,21 +414,13 @@ tElementById('logContent').innerHTML = '';
       reportsToShow.forEach(([reportName, data], index) => {
         if (!data || data.length === 0) return;
         
-        const filteredData = data.filter(d => {
-          if (startDate && d.date < startDate) return false;
-          if (endDate && d.date > endDate) return false;
-          return true;
-        });
-        
-        if (filteredData.length === 0) return;
-        
         const cardId = `chart-${index}`;
         const card = document.createElement('div');
         card.className = 'chart-card';
         
-        const totalBillable = filteredData.reduce((sum, d) => sum + (d.billableCount || 0), 0);
-        const totalNonBillable = filteredData.reduce((sum, d) => sum + (d.nonBillableCount || 0), 0);
-        const totalRecords = filteredData.reduce((sum, d) => sum + d.rowCount, 0);
+        const totalBillable = data.reduce((sum, d) => sum + (d.billableCount || 0), 0);
+        const totalNonBillable = data.reduce((sum, d) => sum + (d.nonBillableCount || 0), 0);
+        const totalRecords = data.reduce((sum, d) => sum + d.rowCount, 0);
         
         card.innerHTML = `
           <div class="chart-title">${reportName}</div>
@@ -483,11 +450,11 @@ tElementById('logContent').innerHTML = '';
         charts[cardId] = new Chart(ctx, {
           type: 'bar',
           data: {
-            labels: filteredData.map(d => d.date),
+            labels: data.map(d => d.date),
             datasets: [
               {
                 label: 'Billable',
-                data: filteredData.map(d => d.billableCount || 0),
+                data: data.map(d => d.billableCount || 0),
                 backgroundColor: billableGradient,
                 borderColor: '#2563eb',
                 borderWidth: 2,
@@ -495,7 +462,7 @@ tElementById('logContent').innerHTML = '';
               },
               {
                 label: 'Non-Billable',
-                data: filteredData.map(d => d.nonBillableCount || 0),
+                data: data.map(d => d.nonBillableCount || 0),
                 backgroundColor: nonBillableGradient,
                 borderColor: '#ea580c',
                 borderWidth: 2,
@@ -628,10 +595,6 @@ tElementById('logContent').innerHTML = '';
         setStatus('error', 'Download failed');
       }
     });
-
-    document.getElementById('reportFilter').addEventListener('change', renderCharts);
-    document.getElementById('startDate').addEventListener('change', renderCharts);
-    document.getElementById('endDate').addEventListener('change', renderCharts);
   </script>
 </body>
 </html>
