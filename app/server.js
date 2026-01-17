@@ -22,6 +22,8 @@ let downloadLogs = [];
 // Middleware
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
+// Serve data files for download
+app.use('/downloads', express.static(DATA_DIR));
 
 // Socket.io connection
 io.on('connection', (socket) => {
@@ -196,10 +198,15 @@ app.post('/api/download', async (req, res) => {
     const KinnserReportDownloader = (await import('./automation/reportDownloader_simple.js')).default;
     const downloader = new KinnserReportDownloader(io);
     const results = await downloader.run();
+    
+    // Notify clients to refresh data
+    io.emit('download-complete', { success: true, results });
+    
     res.json({ success: true, results });
   } catch (error) {
     const errorMsg = error.message;
     io.emit('log', { type: 'error', message: `Error: ${errorMsg}` });
+    io.emit('download-complete', { success: false, error: errorMsg });
     res.status(500).json({ success: false, error: errorMsg });
   }
 });

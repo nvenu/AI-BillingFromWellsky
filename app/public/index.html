@@ -328,6 +328,15 @@
             <span id="status" class="status status-ok">Ready</span>
           </div>
         </div>
+
+        <div id="downloadsSection" style="margin-top: 20px; padding: 20px; background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%); border-radius: 16px; border: 2px solid rgba(102, 126, 234, 0.2);">
+          <h3 style="font-size: 16px; font-weight: 800; color: #1e40af; margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
+            📥 Downloaded Files
+          </h3>
+          <div id="filesList" style="max-height: 200px; overflow-y: auto;">
+            <p style="color: #6b7280; font-size: 13px; text-align: center; padding: 20px;">No files yet. Click "Download Now" to fetch reports.</p>
+          </div>
+        </div>
       </div>
 
       <div class="log-panel">
@@ -380,7 +389,7 @@ tElementById('logContent').innerHTML = '';
     document.getElementById('startDate').value = thirtyDaysAgo.toISOString().split('T')[0];
 
     loadData();
-
+    loadFiles();
     async function loadData() {
       const container = document.getElementById('chartsContainer');
       container.innerHTML = '<div class="loading">Loading data...</div>';
@@ -845,6 +854,45 @@ abled = false;
     document.getElementById('reportFilter').addEventListener('change', renderCharts);
     document.getElementById('startDate').addEventListener('change', renderCharts);
     document.getElementById('endDate').addEventListener('change', renderCharts);
+
+    // Load files list
+    async function loadFiles() {
+      try {
+        const response = await fetch('/api/reports');
+        const files = await response.json();
+        
+        const filesList = document.getElementById('filesList');
+        if (files.length === 0) {
+          filesList.innerHTML = '<p style="color: #6b7280; font-size: 13px; text-align: center; padding: 20px;">No files yet. Click "Download Now" to fetch reports.</p>';
+          return;
+        }
+        
+        filesList.innerHTML = files.map(file => `
+          <div style="display: flex; justify-content: space-between; align-items: center; padding: 10px; margin-bottom: 8px; background: white; border-radius: 8px; border: 1px solid #e5e7eb;">
+            <div style="flex: 1;">
+              <div style="font-size: 13px; font-weight: 700; color: #1e40af;">${file.reportName}</div>
+              <div style="font-size: 11px; color: #6b7280;">${file.date} • ${(file.size / 1024).toFixed(1)} KB</div>
+            </div>
+            <a href="/downloads/${file.filename}" download style="padding: 6px 12px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; text-decoration: none; border-radius: 6px; font-size: 12px; font-weight: 700;">
+              ⬇️ Download
+            </a>
+          </div>
+        `).join('');
+      } catch (error) {
+        console.error('Failed to load files:', error);
+      }
+    }
+
+    // Listen for download completion
+    socket.on('download-complete', (result) => {
+      loadData(); // Refresh charts
+      loadFiles(); // Refresh file list
+      if (result.success) {
+        setStatus('ok', 'Download complete');
+      } else {
+        setStatus('error', 'Download failed');
+      }
+    });
   </script>
 </body>
 </html>
