@@ -375,19 +375,6 @@ tElementById('logContent').innerHTML = '';
         const response = await fetch('/api/analytics');
         analyticsData = await response.json();
         
-        const filter = document.getElementById('reportFilter');
-        const currentValue = filter.value;
-        filter.innerHTML = '<option value="all">All Reports</option>';
-        Object.keys(analyticsData).forEach(name => {
-          filter.innerHTML += `<option value="${name}">${name}</option>`;
-    async function loadData() {
-      const container = document.getElementById('chartsContainer');
-      container.innerHTML = '<div class="loading">Loading data...</div>';
-      
-      try {
-        const response = await fetch('/api/analytics');
-        analyticsData = await response.json();
-        
         renderCharts();
         setStatus('ok', 'Data loaded');
       } catch (error) {
