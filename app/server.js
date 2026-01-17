@@ -111,7 +111,7 @@ app.get('/api/analytics', async (req, res) => {
     
     const analytics = {};
     const billableAnalytics = {
-      'Billable vs Non-Billable': []
+      'All Locations - Combined': []
     };
     
     for (const file of excelFiles) {
@@ -156,13 +156,13 @@ app.get('/api/analytics', async (req, res) => {
           });
           
           // Add to billable analytics
-          const existingEntry = billableAnalytics['Billable vs Non-Billable'].find(e => e.date === date);
+          const existingEntry = billableAnalytics['All Locations - Combined'].find(e => e.date === date);
           if (existingEntry) {
             existingEntry.billableCount += billableCount;
             existingEntry.nonBillableCount += nonBillableCount;
             existingEntry.rowCount += data.length;
           } else {
-            billableAnalytics['Billable vs Non-Billable'].push({
+            billableAnalytics['All Locations - Combined'].push({
               date,
               rowCount: data.length,
               billableCount,
@@ -180,7 +180,7 @@ app.get('/api/analytics', async (req, res) => {
       analytics[name].sort((a, b) => a.date.localeCompare(b.date));
     });
     
-    billableAnalytics['Billable vs Non-Billable'].sort((a, b) => a.date.localeCompare(b.date));
+    billableAnalytics['All Locations - Combined'].sort((a, b) => a.date.localeCompare(b.date));
     
     // Merge billable analytics with regular analytics
     const combinedAnalytics = { ...billableAnalytics, ...analytics };
