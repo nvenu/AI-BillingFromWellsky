@@ -13,6 +13,8 @@ Automated dashboard for tracking and visualizing Kinnser Past Due Visits reports
 
 ## Setup
 
+### Local Development
+
 1. **Install dependencies:**
    ```bash
    cd app
@@ -34,6 +36,43 @@ Automated dashboard for tracking and visualizing Kinnser Past Due Visits reports
 
 4. **Open dashboard:**
    - Navigate to http://localhost:3000
+
+### Server Deployment
+
+1. **Clone repository:**
+   ```bash
+   git clone <your-repo-url>
+   cd AIVisitsWellskyReport/app
+   ```
+
+2. **Install dependencies and Playwright browsers:**
+   ```bash
+   npm install
+   # If postinstall doesn't run automatically:
+   npx playwright install --with-deps chromium
+   ```
+
+3. **Configure environment:**
+   ```bash
+   cp .env.example .env
+   nano .env  # Add your credentials
+   ```
+
+4. **Start with PM2 (recommended for production):**
+   ```bash
+   npm install -g pm2
+   pm2 start server.js --name kinnser-dashboard
+   pm2 save
+   pm2 startup
+   ```
+
+   Or run directly:
+   ```bash
+   npm start
+   ```
+
+5. **Access dashboard:**
+   - Navigate to http://your-server-ip:3000
 
 ## Usage
 
