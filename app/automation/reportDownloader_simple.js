@@ -27,6 +27,11 @@ class KinnserReportDownloader {
   constructor(io = null) {
     this.username = process.env.KINNSER_USERNAME;
     this.password = process.env.KINNSER_PASSWORD;
+    
+    if (!this.username || !this.password) {
+      throw new Error('KINNSER_USERNAME and KINNSER_PASSWORD must be set in .env file');
+    }
+    
     this.dataDir = path.join(__dirname, '..', 'data');
     this.browser = null;
     this.page = null;
