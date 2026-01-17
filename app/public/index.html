@@ -857,11 +857,18 @@ abled = false;
 
     // Load files list
     async function loadFiles() {
+      console.log('loadFiles() called');
       try {
         const response = await fetch('/api/reports');
         const files = await response.json();
+        console.log('Files loaded:', files);
         
         const filesList = document.getElementById('filesList');
+        if (!filesList) {
+          console.error('filesList element not found!');
+          return;
+        }
+        
         if (files.length === 0) {
           filesList.innerHTML = '<p style="color: #6b7280; font-size: 13px; text-align: center; padding: 20px;">No files yet. Click "Download Now" to fetch reports.</p>';
           return;
