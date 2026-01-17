@@ -448,7 +448,7 @@ tElementById('logContent').innerHTML = '';
         if (filteredData.length === 0) return;
         
         const cardId = `chart-${index}`;
-        const cat.createElement('div');
+        const card = document.createElement('div');
         card.className = 'chart-card';
         
         const totalBillable = filteredData.reduce((sum, d) => sum + (d.billableCount || 0), 0);
@@ -458,7 +458,7 @@ tElementById('logContent').innerHTML = '';
         card.innerHTML = `
           <div class="chart-title">${reportName}</div>
           <div class="chart-container">
-            <canvas Id}"></canvas>
+            <canvas id="${cardId}"></canvas>
           </div>
           <div class="stats">
             <span>Total: ${totalRecords}</span>
@@ -505,7 +505,7 @@ tElementById('logContent').innerHTML = '';
               },
               tooltip: {
                 callbacks: {
-                  footer: function(tooltms) {
+                  footer: function(tooltipItems) {
                     let total = 0;
                     tooltipItems.forEach(item => {
                       total += item.parsed.y;
