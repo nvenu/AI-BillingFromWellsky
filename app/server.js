@@ -6,6 +6,7 @@ import dotenv from 'dotenv';
 import XLSX from 'xlsx';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
+import cron from 'node-cron';
 
 dotenv.config();
 
@@ -219,6 +220,25 @@ app.get('/api/health', (req, res) => {
 // Serve main page
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// Schedule automatic downloads
+const schedule = process.env.REPORT_SCHEDULE || '0 8 * * *';
+console.log(`📅 Scheduled automatic downloads: ${schedule} (Server timezone: ${Intl.DateTimeFormat().resolvedOptions().timeZone})`);
+
+cron.schedule(schedule, async () => {
+  console.log('⏰ Running scheduled download...');
+  try {
+    const KinnserReportDownloader = (await import('./automation/reportDownloader_simple.js')).default;
+    const downloader = new KinnserReportDownloader(io);
+    const results = await downloader.run();
+    io.emit('download-complete', { success: true, results });
+    console.log('✅ Scheduled download completed successfully');
+  } catch (error) {
+    console.error('❌ Scheduled download failed:', error.message);
+    io.emit('log', { type: 'error', message: `Scheduled download failed: ${error.message}` });
+    io.emit('download-complete', { success: false, error: error.message });
+  }
 });
 
 httpServer.listen(PORT, () => {
