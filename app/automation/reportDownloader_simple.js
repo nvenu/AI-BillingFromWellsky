@@ -63,7 +63,7 @@ class KinnserReportDownloader {
 
   async login() {
     this.log('info', '🔐 Logging into Kinnser...');
-    await this.page.goto('https://kinnser.net/', { waitUntil: 'networkidle' });
+    await this.page.goto('https://kinnser.net/', { waitUntil: 'domcontentloaded' });
     
     await this.takeScreenshot('01_login_page');
     
@@ -92,8 +92,8 @@ class KinnserReportDownloader {
     await this.takeScreenshot('03_after_login_click');
     
     this.log('info', '⏳ Waiting for new page to load...');
-    await this.page.waitForLoadState('networkidle');
-    await this.page.waitForTimeout(3000);
+    await this.page.waitForLoadState('domcontentloaded');
+    await this.page.waitForTimeout(5000);
     
     await this.takeScreenshot('04_new_page_loaded');
     this.log('success', '✅ New page loaded!');
@@ -186,8 +186,8 @@ class KinnserReportDownloader {
     await this.takeScreenshot('07_reports_clicked');
     
     this.log('info', '⏳ Waiting for Reports page to load...');
-    await this.page.waitForLoadState('networkidle');
-    await this.page.waitForTimeout(3000);
+    await this.page.waitForLoadState('domcontentloaded');
+    await this.page.waitForTimeout(5000);
     
     await this.takeScreenshot('08_reports_page_loaded');
     this.log('success', '✅ Reports page loaded!');
@@ -303,8 +303,8 @@ class KinnserReportDownloader {
     await this.takeScreenshot(`10_${reportName.replace(/\s+/g, '_')}_clicked`);
     
     this.log('info', `⏳ Waiting for "${reportName}" page to load...`);
-    await this.page.waitForLoadState('networkidle');
-    await this.page.waitForTimeout(3000);
+    await this.page.waitForLoadState('domcontentloaded');
+    await this.page.waitForTimeout(5000);
     
     await this.takeScreenshot(`11_${reportName.replace(/\s+/g, '_')}_page_loaded`);
     this.log('success', `✅ "${reportName}" page loaded!`);
@@ -414,8 +414,8 @@ class KinnserReportDownloader {
           
           // Navigate back to inbox for next user
           this.log('info', '🏠 Returning to inbox page...');
-          await this.page.goto('https://kinnser.net/AM/Message/inbox.cfm', { waitUntil: 'networkidle' });
-          await this.page.waitForTimeout(2000);
+          await this.page.goto('https://kinnser.net/AM/Message/inbox.cfm', { waitUntil: 'domcontentloaded' });
+          await this.page.waitForTimeout(3000);
           this.log('success', '✅ Back at inbox, ready for next user');
           
         } catch (error) {
