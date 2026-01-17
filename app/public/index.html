@@ -462,14 +462,23 @@ tElementById('logContent').innerHTML = '';
           </div>
           <div class="stats">
             <span>Total: ${totalRecords}</span>
-            <span style="color: #10b981;">✓ Billable: ${totalBillable}</span>
-            <span style="color: #ef4444;">✗ Non-Billable: ${totalNonBillable}</span>
+            <span style="color: #3b82f6;">✓ Billable: ${totalBillable}</span>
+            <span style="color: #f97316;">✗ Non-Billable: ${totalNonBillable}</span>
           </div>
         `;
         
         container.appendChild(card);
         
         const ctx = document.getElementById(cardId).getContext('2d');
+        
+        // Create gradients
+        const billableGradient = ctx.createLinearGradient(0, 0, 0, 400);
+        billableGradient.addColorStop(0, '#3b82f6');
+        billableGradient.addColorStop(1, '#06b6d4');
+        
+        const nonBillableGradient = ctx.createLinearGradient(0, 0, 0, 400);
+        nonBillableGradient.addColorStop(0, '#f97316');
+        nonBillableGradient.addColorStop(1, '#fb923c');
         
         charts[cardId] = new Chart(ctx, {
           type: 'bar',
@@ -479,36 +488,45 @@ tElementById('logContent').innerHTML = '';
               {
                 label: 'Billable',
                 data: filteredData.map(d => d.billableCount || 0),
-                backgroundColor: '#10b981',
-                borderColor: '#059669',
-                borderWidth: 1
+                backgroundColor: billableGradient,
+                borderColor: '#2563eb',
+                borderWidth: 2,
+                borderRadius: 8
               },
               {
                 label: 'Non-Billable',
                 data: filteredData.map(d => d.nonBillableCount || 0),
-                backgroundColor: '#ef4444',
-                borderColor: '#dc2626',
-                borderWidth: 1
+                backgroundColor: nonBillableGradient,
+                borderColor: '#ea580c',
+                borderWidth: 2,
+                borderRadius: 8
               }
             ]
           },
           options: {
             responsive: true,
             maintainAspectRatio: false,
+            indexAxis: 'y',
             plugins: { 
               legend: { 
                 display: true, 
                 position: 'top',
                 labels: {
-                  font: { size: 12, weight: 'bold' }
+                  font: { size: 13, weight: 'bold' },
+                  padding: 15,
+                  usePointStyle: true
                 }
               },
               tooltip: {
+                backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                padding: 12,
+                titleFont: { size: 14, weight: 'bold' },
+                bodyFont: { size: 13 },
                 callbacks: {
                   footer: function(tooltipItems) {
                     let total = 0;
                     tooltipItems.forEach(item => {
-                      total += item.parsed.y;
+                      total += item.parsed.x;
                     });
                     return 'Total: ' + total;
                   }
@@ -517,13 +535,15 @@ tElementById('logContent').innerHTML = '';
             },
             scales: { 
               x: { 
-                stacked: true,
-                grid: { display: false }
+                stacked: false,
+                beginAtZero: true,
+                ticks: { precision: 0, font: { size: 12 } },
+                grid: { color: 'rgba(0, 0, 0, 0.05)' }
               },
               y: { 
-                stacked: true, 
-                beginAtZero: true,
-                ticks: { precision: 0 }
+                stacked: false,
+                ticks: { font: { size: 12 } },
+                grid: { display: false }
               }
             }
           }
