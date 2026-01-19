@@ -212,6 +212,71 @@ app.post('/api/download', async (req, res) => {
   }
 });
 
+// API: Trigger deviation report download
+app.post('/api/deviation/download', async (req, res) => {
+  try {
+    downloadLogs = []; // Clear previous logs
+    
+    const DeviationReportDownloader = (await import('./automation/deviationDownloader.js')).default;
+    const downloader = new DeviationReportDownloader(io);
+    const results = await downloader.run();
+    
+    // Store results in a JSON file
+    const deviationDataPath = path.join(DATA_DIR, 'deviation_data.json');
+    let existingData = [];
+    try {
+      const fileContent = await fs.readFile(deviationDataPath, 'utf-8');
+      existingData = JSON.parse(fileContent);
+    } catch (e) {
+      // File doesn't exist yet
+    }
+    
+    // Add new results
+    existingData.push(...results);
+    await fs.writeFile(deviationDataPath, JSON.stringify(existingData, null, 2));
+    
+    // Notify clients to refresh data
+    io.emit('deviation-complete', { success: true, results });
+    
+    res.json({ success: true, results });
+  } catch (error) {
+    const errorMsg = error.message;
+    io.emit('log', { type: 'error', message: `Error: ${errorMsg}` });
+    io.emit('deviation-complete', { success: false, error: errorMsg });
+    res.status(500).json({ success: false, error: errorMsg });
+  }
+});
+
+// API: Get deviation analytics
+app.get('/api/deviation/analytics', async (req, res) => {
+  try {
+    const deviationDataPath = path.join(DATA_DIR, 'deviation_data.json');
+    const fileContent = await fs.readFile(deviationDataPath, 'utf-8');
+    const data = JSON.parse(fileContent);
+    
+    // Group by location
+    const analytics = {};
+    data.forEach(record => {
+      if (!analytics[record.location]) {
+        analytics[record.location] = [];
+      }
+      analytics[record.location].push({
+        date: record.date,
+        count: record.count
+      });
+    });
+    
+    // Sort by date
+    Object.keys(analytics).forEach(location => {
+      analytics[location].sort((a, b) => a.date.localeCompare(b.date));
+    });
+    
+    res.json(analytics);
+  } catch (error) {
+    res.json({});
+  }
+});
+
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });

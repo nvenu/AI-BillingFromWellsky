@@ -21,10 +21,37 @@
       min-height: 100vh;
       background: #ffffff;
     }
-    .header {
+    .top-section {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0;
+      border-bottom: 4px solid transparent;
+      background: linear-gradient(white, white) padding-box,
+                  linear-gradient(90deg, #8b5cf6, #6366f1, #3b82f6) border-box;
+      flex-shrink: 0;
+    }
+    .controls-panel {
       padding: 30px;
       background: linear-gradient(135deg, #ffffff 0%, #f8f9ff 100%);
-      border-bottom: 4px solid transparent;
+      overflow-y: auto;
+      max-height: 50vh;
+    }
+    .log-panel {
+      padding: 30px;
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      border-left: 4px solid #8b5cf6;
+      overflow-y: auto;
+      max-height: 50vh;
+    }
+    .charts-panel {
+      padding: 30px;
+      background: linear-gradient(135deg, #f8f9ff 0%, #e8eeff 100%);
+      flex: 1;
+    }
+    header {
+      margin-bottom: 20px;
+      padding-bottom: 15px;
+      border-bottom: 3px solid transparent;
       background: linear-gradient(white, white) padding-box,
                   linear-gradient(90deg, #8b5cf6, #6366f1, #3b82f6) border-box;
     }
@@ -42,47 +69,182 @@
       font-size: 13px; 
       color: #6b7280; 
       font-weight: 600;
-      margin-bottom: 15px;
     }
-    .back-btn {
-      display: inline-block;
-      padding: 8px 16px;
-      background: linear-gradient(135deg, #6b7280 0%, #4b5563 100%);
+    .controls {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 12px;
+      padding: 20px;
+      background: linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%);
+      border-radius: 16px;
+      box-shadow: 0 8px 16px rgba(139, 92, 246, 0.3);
+      border: 2px solid rgba(255, 255, 255, 0.2);
+    }
+    .control-group { 
+      display: flex; 
+      flex-direction: column; 
+      gap: 8px; 
+    }
+    label { 
+      font-size: 11px; 
+      font-weight: 800; 
+      color: #ffffff; 
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      text-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    }
+    button {
+      padding: 12px 16px;
+      border: 2px solid rgba(255, 255, 255, 0.3);
+      border-radius: 12px;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.2s;
+      background: rgba(255, 255, 255, 0.15);
       color: white;
-      text-decoration: none;
-      border-radius: 8px;
+      backdrop-filter: blur(10px);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    }
+    button:hover {
+      background: rgba(255, 255, 255, 0.25);
+      transform: translateY(-2px);
+      box-shadow: 0 6px 16px rgba(0, 0, 0, 0.15);
+    }
+    .btn-success {
+      background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+      border-color: rgba(255, 255, 255, 0.4);
+    }
+    .status {
+      padding: 10px 16px;
+      border-radius: 10px;
       font-size: 13px;
       font-weight: 700;
-      transition: all 0.2s;
-      box-shadow: 0 2px 8px rgba(107, 114, 128, 0.3);
-    }
-    .back-btn:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 4px 12px rgba(107, 114, 128, 0.4);
-    }
-    .content {
-      padding: 30px;
-      background: linear-gradient(135deg, #f8f9ff 0%, #e8eeff 100%);
-      flex: 1;
-    }
-    .placeholder {
       text-align: center;
-      padding: 60px 20px;
-      background: white;
+      backdrop-filter: blur(10px);
+    }
+    .status-ok {
+      background: rgba(16, 185, 129, 0.2);
+      color: #10b981;
+      border: 2px solid rgba(16, 185, 129, 0.3);
+    }
+    .status-error {
+      background: rgba(239, 68, 68, 0.2);
+      color: #ef4444;
+      border: 2px solid rgba(239, 68, 68, 0.3);
+    }
+    .charts-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+      gap: 25px;
+    }
+    .chart-card {
+      background: linear-gradient(135deg, #ffffff 0%, #fafbff 100%);
       border-radius: 20px;
+      padding: 25px;
       box-shadow: 0 8px 24px rgba(139, 92, 246, 0.15);
       border: 2px solid rgba(139, 92, 246, 0.1);
+      transition: all 0.3s;
     }
-    .placeholder h2 {
-      font-size: 24px;
-      color: #8b5cf6;
-      margin-bottom: 10px;
+    .chart-card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 12px 32px rgba(139, 92, 246, 0.2);
     }
-    .placeholder p {
-      font-size: 16px;
+    .chart-title {
+      font-size: 18px;
+      font-weight: 800;
+      background: linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-bottom: 18px;
+      padding-bottom: 12px;
+      border-bottom: 2px solid #e5e7eb;
+      letter-spacing: -0.3px;
+    }
+    .chart-container { 
+      position: relative; 
+      height: 280px; 
+    }
+    .stats {
+      display: flex;
+      justify-content: space-around;
+      margin-top: 18px;
+      padding-top: 18px;
+      border-top: 2px solid #e5e7eb;
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .stats span {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      padding: 8px 12px;
+      border-radius: 10px;
+      background: rgba(139, 92, 246, 0.05);
+    }
+    .loading, .no-data {
+      text-align: center;
+      padding: 60px 20px;
       color: #6b7280;
+      background: linear-gradient(135deg, #ffffff 0%, #fafbff 100%);
+      border-radius: 20px;
+      font-size: 16px;
+      font-weight: 600;
+      border: 3px dashed rgba(139, 92, 246, 0.3);
+    }
+    .log-viewer {
+      color: #e5e7eb;
+      font-family: 'SF Mono', 'Monaco', 'Menlo', 'Courier New', monospace;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+    .log-viewer h3 {
+      color: #fff;
+      font-size: 20px;
+      font-weight: 800;
+      margin-bottom: 20px;
+      padding-bottom: 15px;
+      border-bottom: 3px solid transparent;
+      background: linear-gradient(#16213e, #16213e) padding-box,
+                  linear-gradient(90deg, #8b5cf6, #3b82f6) border-box;
+      letter-spacing: 0.5px;
+    }
+    .log-entry {
+      padding: 10px 14px;
+      margin-bottom: 6px;
+      border-radius: 8px;
+      background: rgba(255,255,255,0.05);
+      border-left: 4px solid transparent;
+      transition: all 0.2s;
+      backdrop-filter: blur(10px);
+    }
+    .log-entry:hover {
+      background: rgba(255,255,255,0.08);
+      transform: translateX(4px);
+    }
+    .log-time { 
+      color: #9ca3af; 
+      margin-right: 10px; 
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .log-info { 
+      color: #60a5fa;
+      border-left-color: #60a5fa;
+    }
+    .log-success { 
+      color: #34d399;
+      border-left-color: #34d399;
+    }
+    .log-error { 
+      color: #f87171;
+      border-left-color: #87171;
+      background: rgba(248, 113, 113, 0.15);
     }
   </style>
+  <script src="/socket.io/socket.io.js"></script>
 </head>
 <body>
   <div class="container">
@@ -99,17 +261,216 @@
       </div>
     </div>
 
-    <div class="header">
-      <h1>📊 Deviation Report Dashboard</h1>
-      <p class="subtitle">Track and analyze deviations across locations</p>
+    <div class="top-section">
+      <div class="controls-panel">
+        <header>
+          <h1>📊 Schedule Deviation Dashboard</h1>
+          <p class="subtitle">Track schedule deviations across locations</p>
+        </header>
+
+        <div class="controls">
+          <div class="control-group">
+            <label>&nbsp;</label>
+            <button class="btn-success" onclick="downloadDeviationReport()" id="downloadBtn">
+              ⬇️ Download Now
+            </button>
+          </div>
+          <div class="control-group">
+            <label>Status</label>
+            <span id="status" class="status status-ok">Ready</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="log-panel">
+        <div class="log-viewer">
+          <h3>📋 Activity Log</h3>
+          <div id="logContent"></div>
+        </div>
+      </div>
     </div>
 
-    <div class="content">
-      <div class="placeholder">
-        <h2>🚧 Coming Soon</h2>
-        <p>Deviation report features will be implemented here.</p>
+    <div class="charts-panel">
+      <div id="chartsContainer" class="charts-grid">
+        <div class="loading">Loading dashboard...</div>
       </div>
     </div>
   </div>
+
+  <script>
+    let analyticsData = {};
+    let charts = {};
+    const socket = io();
+
+    socket.on('log', (log) => {
+      addLogEntry(log);
+    });
+
+    socket.on('logs', (logs) => {
+      logs.forEach(log => addLogEntry(log));
+    });
+
+    socket.on('deviation-complete', (result) => {
+      loadData();
+      if (result.success) {
+        setStatus('ok', 'Download complete');
+      } else {
+        setStatus('error', 'Download failed');
+      }
+    });
+
+    function addLogEntry(log) {
+      const logContent = document.getElementById('logContent');
+      const time = new Date(log.timestamp).toLocaleTimeString();
+      const entry = document.createElement('div');
+      entry.className = `log-entry log-${log.type}`;
+      entry.innerHTML = `<span class="log-time">[${time}]</span>${log.message}`;
+      logContent.appendChild(entry);
+      logContent.parentElement.scrollTop = logContent.parentElement.scrollHeight;
+    }
+
+    loadData();
+
+    async function loadData() {
+      const container = document.getElementById('chartsContainer');
+      container.innerHTML = '<div class="loading">Loading data...</div>';
+      
+      try {
+        const response = await fetch('/api/deviation/analytics');
+        analyticsData = await response.json();
+        
+        renderCharts();
+        setStatus('ok', 'Data loaded');
+      } catch (error) {
+        container.innerHTML = `<div class="error">Failed to load data: ${error.message}</div>`;
+        setStatus('error', 'Load failed');
+      }
+    }
+
+    function renderCharts() {
+      const container = document.getElementById('chartsContainer');
+      
+      Object.values(charts).forEach(chart => chart.destroy());
+      charts = {};
+      
+      const reportsToShow = Object.entries(analyticsData);
+      
+      if (reportsToShow.length === 0) {
+        container.innerHTML = '<div class="no-data">No deviation data available. Click "Download Now" to fetch data.</div>';
+        return;
+      }
+      
+      container.innerHTML = '';
+      
+      reportsToShow.forEach(([location, data], index) => {
+        if (!data || data.length === 0) return;
+        
+        const cardId = `chart-${index}`;
+        const card = document.createElement('div');
+        card.className = 'chart-card';
+        
+        const totalRecords = data.reduce((sum, d) => sum + d.count, 0);
+        const avgRecords = Math.round(totalRecords / data.length);
+        
+        card.innerHTML = `
+          <div class="chart-title">${location}</div>
+          <div class="chart-container">
+            <canvas id="${cardId}"></canvas>
+          </div>
+          <div class="stats">
+            <span>Total: ${totalRecords}</span>
+            <span style="color: #8b5cf6;">Avg: ${avgRecords}</span>
+          </div>
+        `;
+        
+        container.appendChild(card);
+        
+        const ctx = document.getElementById(cardId).getContext('2d');
+        
+        // Create gradient
+        const gradient = ctx.createLinearGradient(0, 0, 0, 400);
+        gradient.addColorStop(0, '#8b5cf6');
+        gradient.addColorStop(1, '#6366f1');
+        
+        charts[cardId] = new Chart(ctx, {
+          type: 'bar',
+          data: {
+            labels: data.map(d => d.date),
+            datasets: [
+              {
+                label: 'Deviation Count',
+                data: data.map(d => d.count),
+                backgroundColor: gradient,
+                borderColor: '#7c3aed',
+                borderWidth: 2,
+                borderRadius: 8
+              }
+            ]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            indexAxis: 'y',
+            plugins: { 
+              legend: { 
+                display: false
+              },
+              tooltip: {
+                backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                padding: 12,
+                titleFont: { size: 14, weight: 'bold' },
+                bodyFont: { size: 13 }
+              }
+            },
+            scales: { 
+              x: { 
+                beginAtZero: true,
+                ticks: { precision: 0, font: { size: 12 } },
+                grid: { color: 'rgba(0, 0, 0, 0.05)' }
+              },
+              y: { 
+                ticks: { font: { size: 12 } },
+                grid: { display: false }
+              }
+            }
+          }
+        });
+      });
+      
+      if (container.innerHTML === '') {
+        container.innerHTML = '<div class="no-data">No data for selected filters</div>';
+      }
+    }
+
+    async function downloadDeviationReport() {
+      const btn = document.getElementById('downloadBtn');
+      btn.disabled = true;
+      btn.textContent = '⏳ Downloading...';
+      setStatus('ok', 'Downloading...');
+      
+      try {
+        const response = await fetch('/api/deviation/download', { method: 'POST' });
+        const result = await response.json();
+        
+        if (result.success) {
+          setStatus('ok', 'Complete!');
+        } else {
+          throw new Error(result.error || 'Download failed');
+        }
+      } catch (error) {
+        setStatus('error', 'Failed');
+        addLogEntry({ type: 'error', message: `Error: ${error.message}`, timestamp: new Date().toISOString() });
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '⬇️ Download Now';
+      }
+    }
+
+    function setStatus(type, message) {
+      const status = document.getElementById('status');
+      status.className = `status status-${type}`;
+      status.textContent = message;
+    }
+  </script>
 </body>
 </html>
