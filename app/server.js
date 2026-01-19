@@ -222,6 +222,11 @@ app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+// Serve deviation report page
+app.get('/deviation', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'deviation.html'));
+});
+
 // Schedule automatic downloads
 const schedule = process.env.REPORT_SCHEDULE || '0 8 * * *';
 console.log(`📅 Scheduled automatic downloads: ${schedule} (Server timezone: ${Intl.DateTimeFormat().resolvedOptions().timeZone})`);
