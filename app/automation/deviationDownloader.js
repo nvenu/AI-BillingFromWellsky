@@ -262,7 +262,17 @@ class DeviationReportDownloader {
         this.log('info', `   Data rows in tbody: ${tbodyRows.length}`);
         
         if (tbodyRows.length > 0) {
-          recordCount = tbodyRows.length;
+          // Check if tbody rows have actual data (not just empty rows)
+          let nonEmptyRows = 0;
+          for (const row of tbodyRows) {
+            const cells = await row.$$('td');
+            // Check if row has cells with content (not just checkboxes/empty cells)
+            if (cells.length > 1) {
+              nonEmptyRows++;
+            }
+          }
+          recordCount = nonEmptyRows;
+          this.log('info', `   Non-empty data rows: ${nonEmptyRows}`);
           this.log('success', `✅ Found ${recordCount} records in tbody`);
         } else {
           // No tbody, try counting all rows and subtract thead rows
