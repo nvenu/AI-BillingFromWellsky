@@ -13,7 +13,9 @@ const SWAP_USERS = [
   'Aspire - Scottsdale',
   'Aspire - Yuba City',
   'Nightingale - Las Vegas',
-  'Nightingale - Minnetonka'
+  'Nightingale - Minnetonka',
+  'Nightingale - Pompano Beach',
+  'Nightingale - Willowbrook'
 ];
 
 class DeviationReportDownloader {
