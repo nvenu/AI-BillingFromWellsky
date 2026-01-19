@@ -234,25 +234,35 @@ class DeviationReportDownloader {
     // Try to find table rows or record count
     let recordCount = 0;
     try {
-      // Try to count table rows (excluding header)
-      const rows = await this.page.$$('table tr');
-      this.log('info', `   Total rows found: ${rows.length}`);
-      if (rows.length > 1) {
-        recordCount = rows.length - 1; // Subtract header row
-        this.log('success', `✅ Found ${recordCount} records (${rows.length} rows - 1 header)`);
-      } else {
-        // Try alternative methods to count records
-        const allTables = await this.page.$$('table');
-        this.log('info', `   Found ${allTables.length} tables on page`);
-        
-        // Look for the main data table
-        for (const table of allTables) {
-          const tableRows = await table.$$('tr');
-          if (tableRows.length > recordCount) {
-            recordCount = tableRows.length - 1;
-          }
+      // First check if there's a table at all
+      const tables = await this.page.$$('table');
+      
+      if (tables.length === 0) {
+        // No table found - check for "no records" message
+        const alertDiv = await this.page.$('.alert-yellow-wide');
+        if (alertDiv) {
+          this.log('info', '   No data table found (alert message present)');
+        } else {
+          this.log('info', '   No data table found on page');
         }
-        this.log('success', `✅ Counted ${recordCount} records`);
+        recordCount = 0;
+        this.log('success', '✅ No records found');
+      } else {
+        // Table exists, count rows
+        const rows = await this.page.$$('table tr');
+        this.log('info', `   Total rows found: ${rows.length}`);
+        
+        if (rows.length > 1) {
+          recordCount = rows.length - 1; // Subtract header row
+          this.log('success', `✅ Found ${recordCount} records (${rows.length} rows - 1 header)`);
+        } else if (rows.length === 1) {
+          // Only header row, no data
+          recordCount = 0;
+          this.log('success', '✅ No records found (only header row)');
+        } else {
+          recordCount = 0;
+          this.log('info', '   Empty table');
+        }
       }
     } catch (error) {
       this.log('error', `❌ Error counting records: ${error.message}`);
@@ -260,6 +270,7 @@ class DeviationReportDownloader {
     }
     
     return recordCount;
+
   }
 
   async selectSwapUser(swapUser) {
