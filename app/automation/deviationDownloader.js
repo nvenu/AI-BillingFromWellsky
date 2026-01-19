@@ -349,7 +349,7 @@ class DeviationReportDownloader {
           // Navigate back to inbox for next user
           this.log('info', '🏠 Returning to inbox page...');
           await this.page.goto('https://kinnser.net/AM/Message/inbox.cfm', { waitUntil: 'domcontentloaded' });
-          await this.page.waitForTimeout(3000);
+          await this.page.waitForTimeout(5000);
           this.log('success', '✅ Back at inbox, ready for next user');
           
         } catch (error) {
