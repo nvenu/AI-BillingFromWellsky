@@ -311,6 +311,38 @@ cron.schedule(schedule, async () => {
   }
 });
 
+// Schedule automatic deviation reports
+const deviationSchedule = process.env.DEVIATION_SCHEDULE || '30 8 * * *';
+console.log(`📊 Scheduled deviation reports: ${deviationSchedule} (Server timezone: ${Intl.DateTimeFormat().resolvedOptions().timeZone})`);
+
+cron.schedule(deviationSchedule, async () => {
+  console.log('⏰ Running scheduled deviation report...');
+  try {
+    const DeviationReportDownloader = (await import('./automation/deviationDownloader.js')).default;
+    const downloader = new DeviationReportDownloader(io);
+    const results = await downloader.run();
+    
+    // Store results
+    const deviationDataPath = path.join(DATA_DIR, 'deviation_data.json');
+    let existingData = [];
+    try {
+      const fileContent = await fs.readFile(deviationDataPath, 'utf-8');
+      existingData = JSON.parse(fileContent);
+    } catch (e) {
+      // File doesn't exist yet
+    }
+    existingData.push(...results);
+    await fs.writeFile(deviationDataPath, JSON.stringify(existingData, null, 2));
+    
+    io.emit('deviation-complete', { success: true, results });
+    console.log('✅ Scheduled deviation report completed successfully');
+  } catch (error) {
+    console.error('❌ Scheduled deviation report failed:', error.message);
+    io.emit('log', { type: 'error', message: `Scheduled deviation report failed: ${error.message}` });
+    io.emit('deviation-complete', { success: false, error: error.message });
+  }
+});
+
 httpServer.listen(PORT, () => {
   console.log(`\n🚀 Kinnser Report Dashboard running at http://localhost:${PORT}\n`);
 });
