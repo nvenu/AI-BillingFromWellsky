@@ -188,21 +188,30 @@ class DeviationReportDownloader {
             await element.scrollIntoViewIfNeeded();
             await this.page.waitForTimeout(500);
             
-            const tagName = await element.evaluate(el => el.tagName);
-            if (tagName === 'STRONG') {
-              this.log('info', '   Found <strong> tag, looking for parent link...');
-              const parentLink = await element.evaluateHandle(el => el.closest('a'));
-              if (parentLink) {
-                await parentLink.click();
-                this.log('success', '✅ Clicked parent link of "Schedule Deviation"');
+            try {
+              const tagName = await element.evaluate(el => el.tagName);
+              this.log('info', `   Element tag: ${tagName}`);
+              
+              if (tagName === 'STRONG') {
+                this.log('info', '   Found <strong> tag, looking for parent link...');
+                const parentLink = await element.evaluateHandle(el => el.closest('a'));
+                if (parentLink) {
+                  await parentLink.click();
+                  this.log('success', '✅ Clicked parent link of "Schedule Deviation"');
+                } else {
+                  await element.click();
+                  this.log('success', '✅ Clicked "Schedule Deviation"');
+                }
               } else {
-                await element.click();
+                await this.page.click(selector);
                 this.log('success', '✅ Clicked "Schedule Deviation"');
               }
-            } else {
-              await this.page.click(selector);
-              this.log('success', '✅ Clicked "Schedule Deviation"');
+            } catch (evalError) {
+              this.log('info', `   Error evaluating element, trying direct click: ${evalError.message}`);
+              await element.click();
+              this.log('success', '✅ Clicked "Schedule Deviation" (direct click)');
             }
+            
             deviationClicked = true;
             break;
           } else {
