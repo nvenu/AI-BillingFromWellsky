@@ -306,6 +306,8 @@ class DeviationReportDownloader {
 
   async close() {
     if (this.browser) {
+      this.log('info', '⏳ Keeping browser open for 10 more seconds...');
+      await this.page.waitForTimeout(10000);
       this.log('info', '🔒 Closing browser...');
       await this.browser.close();
       this.log('success', '✅ Browser closed');
@@ -321,7 +323,7 @@ class DeviationReportDownloader {
       const date = new Date().toISOString().split('T')[0];
       
       for (const swapUser of SWAP_USERS) {
-        this.log('info', `\n========== Processing swapUser: ${swapUser} ==========`);
+        this.log('info', `\n========== Processing swapUser: ${swapUser} (${SWAP_USERS.indexOf(swapUser) + 1}/${SWAP_USERS.length}) ==========`);
         
         try {
           const currentUrl = this.page.url();
@@ -362,6 +364,16 @@ class DeviationReportDownloader {
             success: false,
             error: error.message
           });
+          
+          // Try to recover by going back to inbox
+          try {
+            this.log('info', '🔄 Attempting to recover...');
+            await this.page.goto('https://kinnser.net/AM/Message/inbox.cfm', { waitUntil: 'domcontentloaded' });
+            await this.page.waitForTimeout(5000);
+            this.log('success', '✅ Recovered, continuing with next user');
+          } catch (recoveryError) {
+            this.log('error', `❌ Recovery failed: ${recoveryError.message}`);
+          }
         }
       }
       
