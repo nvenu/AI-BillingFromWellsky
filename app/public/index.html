@@ -292,6 +292,19 @@
 </head>
 <body>
   <div class="container">
+    <!-- Reports Navigation Section -->
+    <div style="padding: 20px 30px; background: linear-gradient(135deg, #ffffff 0%, #f8f9ff 100%); border-bottom: 3px solid transparent; background: linear-gradient(white, white) padding-box, linear-gradient(90deg, #667eea, #764ba2, #f093fb) border-box;">
+      <div style="display: flex; align-items: center; gap: 15px;">
+        <span style="font-size: 14px; font-weight: 800; color: #4b5563; text-transform: uppercase; letter-spacing: 1px;">📑 Reports:</span>
+        <button onclick="window.location.href='/'" style="padding: 10px 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 10px; font-size: 13px; font-weight: 700; cursor: pointer; box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3); transition: all 0.2s;">
+          📋 Past Due Visits
+        </button>
+        <button onclick="window.location.href='/deviation'" style="padding: 10px 20px; background: linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%); color: white; border: none; border-radius: 10px; font-size: 13px; font-weight: 700; cursor: pointer; box-shadow: 0 4px 12px rgba(139, 92, 246, 0.3); transition: all 0.2s;">
+          📊 Deviation Report
+        </button>
+      </div>
+    </div>
+
     <div class="top-section">
       <div class="controls-panel">
         <header>
@@ -304,12 +317,6 @@
             <label>&nbsp;</label>
             <button class="btn-success" onclick="downloadReports()" id="downloadBtn">
               ⬇️ Download Now
-            </button>
-          </div>
-          <div class="control-group">
-            <label>&nbsp;</label>
-            <button onclick="window.location.href='/deviation'" style="padding: 12px 20px; background: linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%); color: white; border: none; border-radius: 12px; font-size: 14px; font-weight: 700; cursor: pointer; box-shadow: 0 4px 12px rgba(139, 92, 246, 0.3); transition: all 0.2s;">
-              📊 Deviation Report
             </button>
           </div>
           <div class="control-group">
