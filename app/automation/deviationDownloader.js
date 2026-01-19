@@ -257,20 +257,25 @@ class DeviationReportDownloader {
         recordCount = 0;
         this.log('success', '✅ No records found');
       } else {
-        // Table exists, count rows
-        const rows = await this.page.$$('table tr');
-        this.log('info', `   Total rows found: ${rows.length}`);
+        // Table exists, count only tbody rows (data rows, not header rows)
+        const tbodyRows = await this.page.$$('table tbody tr');
+        this.log('info', `   Data rows in tbody: ${tbodyRows.length}`);
         
-        if (rows.length > 1) {
-          recordCount = rows.length - 1; // Subtract header row
-          this.log('success', `✅ Found ${recordCount} records (${rows.length} rows - 1 header)`);
-        } else if (rows.length === 1) {
-          // Only header row, no data
-          recordCount = 0;
-          this.log('success', '✅ No records found (only header row)');
+        if (tbodyRows.length > 0) {
+          recordCount = tbodyRows.length;
+          this.log('success', `✅ Found ${recordCount} records in tbody`);
         } else {
-          recordCount = 0;
-          this.log('info', '   Empty table');
+          // No tbody, try counting all rows and subtract thead rows
+          const allRows = await this.page.$$('table tr');
+          const theadRows = await this.page.$$('table thead tr');
+          recordCount = allRows.length - theadRows.length;
+          this.log('info', `   Total rows: ${allRows.length}, thead rows: ${theadRows.length}`);
+          
+          if (recordCount > 0) {
+            this.log('success', `✅ Found ${recordCount} records`);
+          } else {
+            this.log('success', '✅ No records found (only header rows)');
+          }
         }
       }
     } catch (error) {
