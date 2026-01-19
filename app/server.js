@@ -231,8 +231,21 @@ app.post('/api/deviation/download', async (req, res) => {
       // File doesn't exist yet
     }
     
-    // Add new results
-    existingData.push(...results);
+    // Update or add new results - replace existing records for same date and location
+    results.forEach(newRecord => {
+      const existingIndex = existingData.findIndex(
+        record => record.location === newRecord.location && record.date === newRecord.date
+      );
+      
+      if (existingIndex !== -1) {
+        // Update existing record
+        existingData[existingIndex] = newRecord;
+      } else {
+        // Add new record
+        existingData.push(newRecord);
+      }
+    });
+    
     await fs.writeFile(deviationDataPath, JSON.stringify(existingData, null, 2));
     
     // Notify clients to refresh data
@@ -331,7 +344,22 @@ cron.schedule(deviationSchedule, async () => {
     } catch (e) {
       // File doesn't exist yet
     }
-    existingData.push(...results);
+    
+    // Update or add new results - replace existing records for same date and location
+    results.forEach(newRecord => {
+      const existingIndex = existingData.findIndex(
+        record => record.location === newRecord.location && record.date === newRecord.date
+      );
+      
+      if (existingIndex !== -1) {
+        // Update existing record
+        existingData[existingIndex] = newRecord;
+      } else {
+        // Add new record
+        existingData.push(newRecord);
+      }
+    });
+    
     await fs.writeFile(deviationDataPath, JSON.stringify(existingData, null, 2));
     
     io.emit('deviation-complete', { success: true, results });
