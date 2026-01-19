@@ -301,7 +301,15 @@ class DeviationReportDownloader {
       throw new Error('swapUser dropdown not found');
     }
     
-    await this.page.waitForTimeout(2000);
+    // Wait for page to process the user change
+    this.log('info', '⏳ Waiting for user change to process...');
+    await this.page.waitForTimeout(3000);
+    
+    // Reload the page to ensure menu is available
+    this.log('info', '🔄 Reloading page to refresh menu...');
+    await this.page.reload({ waitUntil: 'domcontentloaded' });
+    await this.page.waitForTimeout(3000);
+    this.log('success', '✅ Page reloaded');
   }
 
   async close() {
