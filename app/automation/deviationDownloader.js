@@ -43,7 +43,8 @@ class DeviationReportDownloader {
   async initialize() {
     this.log('info', '🚀 Initializing browser...');
     this.browser = await chromium.launch({ 
-      headless: true,
+      headless: false,
+      slowMo: 500,
       timeout: 60000
     });
     this.page = await this.browser.newPage();
