@@ -43,8 +43,7 @@ class DeviationReportDownloader {
   async initialize() {
     this.log('info', '🚀 Initializing browser...');
     this.browser = await chromium.launch({ 
-      headless: false,
-      slowMo: 500,
+      headless: true,
       timeout: 60000
     });
     this.page = await this.browser.newPage();
@@ -314,8 +313,6 @@ class DeviationReportDownloader {
 
   async close() {
     if (this.browser) {
-      this.log('info', '⏳ Keeping browser open for 10 more seconds...');
-      await this.page.waitForTimeout(10000);
       this.log('info', '🔒 Closing browser...');
       await this.browser.close();
       this.log('success', '✅ Browser closed');
