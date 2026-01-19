@@ -236,9 +236,10 @@ class DeviationReportDownloader {
     try {
       // Try to count table rows (excluding header)
       const rows = await this.page.$$('table tr');
+      this.log('info', `   Total rows found: ${rows.length}`);
       if (rows.length > 1) {
         recordCount = rows.length - 1; // Subtract header row
-        this.log('success', `✅ Found ${recordCount} records in table`);
+        this.log('success', `✅ Found ${recordCount} records (${rows.length} rows - 1 header)`);
       } else {
         // Try alternative methods to count records
         const allTables = await this.page.$$('table');
