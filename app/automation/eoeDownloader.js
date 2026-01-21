@@ -45,8 +45,7 @@ class EOEReportDownloader {
   async initialize() {
     this.log('info', '🚀 Initializing browser...');
     this.browser = await chromium.launch({ 
-      headless: false,
-      slowMo: 500,
+      headless: true,
       timeout: 60000,
       downloadsPath: this.downloadPath
     });
