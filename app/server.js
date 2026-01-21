@@ -388,6 +388,207 @@ app.get('/api/eoe/analytics', async (req, res) => {
   }
 });
 
+// API: Get detailed EOE analytics from Excel files
+app.get('/api/eoe/detailed-analytics', async (req, res) => {
+  try {
+    const files = await fs.readdir(DATA_DIR);
+    const eoeFiles = files.filter(f => f.startsWith('EOE_Not_Ready_') && f.endsWith('.xlsx'));
+    
+    const allOffices = [
+      'Nightingale - Taunton',
+      'Aspire - Dublin',
+      'Aspire - San Diego',
+      'Aspire - Scottsdale',
+      'Aspire - Yuba City',
+      'Nightingale - Las Vegas',
+      'Nightingale - Minnetonka',
+      'Nightingale - Pompano Beach',
+      'Nightingale - Willowbrook'
+    ];
+    
+    const detailedData = {
+      byOffice: {},
+      byDate: {},
+      rootCauses: {},
+      riskBuckets: {}
+    };
+    
+    // Initialize all offices with zero data
+    allOffices.forEach(office => {
+      detailedData.byOffice[office] = {
+        total: 0,
+        rootCauses: {
+          'Missing Orders': 0,
+          'Missing F2F': 0,
+          'RAP Issues': 0,
+          'PCR Tracking Missing': 0,
+          'Service Date Mismatch': 0,
+          'Medicare Missing': 0
+        },
+        riskBuckets: {
+          'Critical': 0,
+          'High': 0,
+          'Medium': 0,
+          'Low': 0
+        },
+        byDate: {}
+      };
+    });
+    
+    for (const file of eoeFiles) {
+      const filepath = path.join(DATA_DIR, file);
+      const match = file.match(/EOE_Not_Ready_(.+)_(\d{4}-\d{2}-\d{2})\.xlsx/);
+      
+      if (match) {
+        const location = match[1].replace(/_/g, ' ');
+        const date = match[2];
+        
+        try {
+          const workbook = XLSX.readFile(filepath);
+          const sheet = workbook.Sheets[workbook.SheetNames[0]];
+          
+          // Skip first row (title), read from row 2 onwards
+          const allRows = XLSX.utils.sheet_to_json(sheet, { range: 1 });
+          
+          if (allRows.length === 0) continue;
+          
+          // First row after skip is the header row
+          const headerRow = allRows[0];
+          const records = allRows.slice(1); // Actual data rows
+          
+          // Map the column names
+          const colMap = {};
+          Object.keys(headerRow).forEach(key => {
+            const value = headerRow[key];
+            if (value === 'Orders') colMap.orders = key;
+            else if (value === 'F2F') colMap.f2f = key;
+            else if (value === 'RAP Status') colMap.rapStatus = key;
+            else if (value === 'PCR Tracking #') colMap.pcrTracking = key;
+            else if (value === 'Same Service Date Match') colMap.serviceDate = key;
+            else if (value === 'Medicare #') colMap.medicare = key;
+            else if (value === 'Days Until RAP Cancellation') colMap.daysPending = key;
+          });
+          
+          if (!detailedData.byOffice[location]) {
+            detailedData.byOffice[location] = {
+              total: 0,
+              rootCauses: {
+                'Missing Orders': 0,
+                'Missing F2F': 0,
+                'RAP Issues': 0,
+                'PCR Tracking Missing': 0,
+                'Service Date Mismatch': 0,
+                'Medicare Missing': 0
+              },
+              riskBuckets: {
+                'Critical': 0,
+                'High': 0,
+                'Medium': 0,
+                'Low': 0
+              },
+              byDate: {}
+            };
+          }
+          
+          if (!detailedData.byOffice[location].byDate[date]) {
+            detailedData.byOffice[location].byDate[date] = 0;
+          }
+          
+          detailedData.byOffice[location].total += records.length;
+          detailedData.byOffice[location].byDate[date] += records.length;
+          
+          if (!detailedData.byDate[date]) {
+            detailedData.byDate[date] = {};
+            allOffices.forEach(office => {
+              detailedData.byDate[date][office] = 0;
+            });
+          }
+          detailedData.byDate[date][location] = (detailedData.byDate[date][location] || 0) + records.length;
+          
+          // Process each record for root causes and risk buckets
+          records.forEach((record, idx) => {
+            // Check what's missing (empty or no checkmark)
+            // If the cell is empty or doesn't have a checkmark, it's missing
+            const hasOrders = record[colMap.orders] && (record[colMap.orders] === '✔' || record[colMap.orders] === 'X');
+            const hasF2F = record[colMap.f2f] && (record[colMap.f2f] === '✔' || record[colMap.f2f] === 'X');
+            const hasRAPStatus = record[colMap.rapStatus] && record[colMap.rapStatus].toString().trim() !== '';
+            const hasPCRTracking = record[colMap.pcrTracking] && (record[colMap.pcrTracking] === '✔' || record[colMap.pcrTracking] === 'X');
+            const hasServiceDateMatch = record[colMap.serviceDate] && (record[colMap.serviceDate] === '✔' || record[colMap.serviceDate] === 'X');
+            const hasMedicare = record[colMap.medicare] && (record[colMap.medicare] === '✔' || record[colMap.medicare] === 'X');
+            
+            // Debug first record
+            if (idx === 0) {
+              console.log(`[DEBUG] ${location} - First record analysis:`);
+              console.log(`  Orders: "${record[colMap.orders]}" -> has: ${hasOrders}`);
+              console.log(`  F2F: "${record[colMap.f2f]}" -> has: ${hasF2F}`);
+              console.log(`  RAP Status: "${record[colMap.rapStatus]}" -> has: ${hasRAPStatus}`);
+              console.log(`  PCR Tracking: "${record[colMap.pcrTracking]}" -> has: ${hasPCRTracking}`);
+              console.log(`  Service Date: "${record[colMap.serviceDate]}" -> has: ${hasServiceDateMatch}`);
+              console.log(`  Medicare: "${record[colMap.medicare]}" -> has: ${hasMedicare}`);
+            }
+            
+            // Determine root cause based on what's missing
+            if (!hasOrders) {
+              detailedData.byOffice[location].rootCauses['Missing Orders']++;
+              detailedData.rootCauses['Missing Orders'] = (detailedData.rootCauses['Missing Orders'] || 0) + 1;
+            }
+            if (!hasF2F) {
+              detailedData.byOffice[location].rootCauses['Missing F2F']++;
+              detailedData.rootCauses['Missing F2F'] = (detailedData.rootCauses['Missing F2F'] || 0) + 1;
+            }
+            if (!hasRAPStatus) {
+              detailedData.byOffice[location].rootCauses['RAP Issues']++;
+              detailedData.rootCauses['RAP Issues'] = (detailedData.rootCauses['RAP Issues'] || 0) + 1;
+            }
+            if (!hasPCRTracking) {
+              detailedData.byOffice[location].rootCauses['PCR Tracking Missing']++;
+              detailedData.rootCauses['PCR Tracking Missing'] = (detailedData.rootCauses['PCR Tracking Missing'] || 0) + 1;
+            }
+            if (!hasServiceDateMatch) {
+              detailedData.byOffice[location].rootCauses['Service Date Mismatch']++;
+              detailedData.rootCauses['Service Date Mismatch'] = (detailedData.rootCauses['Service Date Mismatch'] || 0) + 1;
+            }
+            if (!hasMedicare) {
+              detailedData.byOffice[location].rootCauses['Medicare Missing']++;
+              detailedData.rootCauses['Medicare Missing'] = (detailedData.rootCauses['Medicare Missing'] || 0) + 1;
+            }
+            
+            // Determine risk bucket based on days pending
+            const daysPendingStr = record[colMap.daysPending] || '';
+            const daysPending = parseInt(daysPendingStr) || 0;
+            
+            if (daysPending <= 3) {
+              detailedData.byOffice[location].riskBuckets['Critical']++;
+              detailedData.riskBuckets['Critical'] = (detailedData.riskBuckets['Critical'] || 0) + 1;
+            } else if (daysPending <= 7) {
+              detailedData.byOffice[location].riskBuckets['High']++;
+              detailedData.riskBuckets['High'] = (detailedData.riskBuckets['High'] || 0) + 1;
+            } else if (daysPending <= 14) {
+              detailedData.byOffice[location].riskBuckets['Medium']++;
+              detailedData.riskBuckets['Medium'] = (detailedData.riskBuckets['Medium'] || 0) + 1;
+            } else {
+              detailedData.byOffice[location].riskBuckets['Low']++;
+              detailedData.riskBuckets['Low'] = (detailedData.riskBuckets['Low'] || 0) + 1;
+            }
+          });
+        } catch (e) {
+          console.error(`Error parsing ${file}:`, e.message);
+        }
+      }
+    }
+    
+    res.json(detailedData);
+  } catch (error) {
+    console.error('Error in detailed analytics:', error);
+    res.json({
+      byOffice: {},
+      byDate: {},
+      rootCauses: {},
+      riskBuckets: {}
+    });
+  }
+});
+
 // Schedule automatic downloads
 const schedule = process.env.REPORT_SCHEDULE || '0 8 * * *';
 console.log(`📅 Scheduled automatic downloads: ${schedule} (Server timezone: ${Intl.DateTimeFormat().resolvedOptions().timeZone})`);

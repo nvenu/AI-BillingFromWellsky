@@ -2,7 +2,6 @@ import { chromium } from 'playwright';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
-import fs from 'fs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, '..', '.env') });
@@ -46,7 +45,8 @@ class EOEReportDownloader {
   async initialize() {
     this.log('info', '🚀 Initializing browser...');
     this.browser = await chromium.launch({ 
-      headless: true,
+      headless: false,
+      slowMo: 500,
       timeout: 60000,
       downloadsPath: this.downloadPath
     });
@@ -138,7 +138,21 @@ class EOEReportDownloader {
     
     this.log('info', '⏳ Waiting for Billing Manager to load...');
     await this.page.waitForLoadState('domcontentloaded');
-    await this.page.waitForTimeout(5000);
+    await this.page.waitForTimeout(3000);
+    
+    // Wait for loading indicator to disappear
+    this.log('info', '⏳ Waiting for loading to complete...');
+    try {
+      await this.page.waitForSelector('.loading, [ng-show*="loading"], .spinner', { 
+        state: 'hidden', 
+        timeout: 30000 
+      });
+      this.log('success', '✅ Loading completed');
+    } catch (e) {
+      this.log('info', '   Loading indicator not found or already hidden');
+    }
+    
+    await this.page.waitForTimeout(2000);
     
     this.log('success', '✅ Billing Manager loaded');
   }
@@ -146,69 +160,108 @@ class EOEReportDownloader {
   async downloadEOEReport() {
     this.log('info', '📋 Looking for "EOE" menu...');
     
-    const eoeSelectors = [
-      'text="EOE"',
-      'a:has-text("EOE")',
-      '[ng-click*="EOE"]'
-    ];
+    // Wait a bit for page to stabilize
+    await this.page.waitForTimeout(2000);
     
-    let eoeClicked = false;
-    for (const selector of eoeSelectors) {
-      try {
-        const element = await this.page.$(selector);
-        if (element && await element.isVisible()) {
-          await element.click();
-          this.log('success', '✅ Clicked "EOE"');
-          eoeClicked = true;
-          break;
-        }
-      } catch (e) {
-        // Try next
-      }
-    }
-    
-    if (!eoeClicked) {
+    // Try to click EOE menu with better error handling
+    try {
+      await this.page.click('text="EOE"', { timeout: 10000 });
+      this.log('success', '✅ Clicked "EOE"');
+    } catch (e) {
+      this.log('error', `❌ Failed to click EOE menu: ${e.message}`);
       throw new Error('"EOE" menu not found');
     }
     
-    await this.page.waitForTimeout(2000);
+    await this.page.waitForTimeout(3000);
     
     this.log('info', '🔍 Looking for "Not Ready" option...');
     
-    const notReadySelectors = [
-      'text="Not Ready"',
-      'a:has-text("Not Ready")',
-      '[ng-click*="notReady"]',
-      '[ng-click*="NotReady"]'
-    ];
-    
-    let notReadyClicked = false;
-    for (const selector of notReadySelectors) {
+    // Try to click Not Ready with better error handling
+    try {
+      // Wait for the element to be visible
+      await this.page.waitForSelector('#eoe-not-ready', { state: 'visible', timeout: 10000 });
+      await this.page.click('#eoe-not-ready');
+      this.log('success', '✅ Clicked "Not Ready"');
+    } catch (e) {
+      this.log('error', `❌ Failed to click Not Ready: ${e.message}`);
+      
+      // Try alternative selector
       try {
-        const element = await this.page.$(selector);
-        if (element && await element.isVisible()) {
-          await element.click();
-          this.log('success', '✅ Clicked "Not Ready"');
-          notReadyClicked = true;
-          break;
-        }
-      } catch (e) {
-        // Try next
+        await this.page.click('text="Not Ready"', { timeout: 5000 });
+        this.log('success', '✅ Clicked "Not Ready" (alternative selector)');
+      } catch (e2) {
+        this.log('error', `❌ Alternative selector also failed: ${e2.message}`);
+        throw new Error('"Not Ready" option not found');
       }
     }
     
-    if (!notReadyClicked) {
-      throw new Error('"Not Ready" option not found');
+    this.log('info', '⏳ Waiting for Not Ready page to load...');
+    await this.page.waitForLoadState('domcontentloaded');
+    await this.page.waitForTimeout(3000);
+    
+    // Wait for any loading indicators
+    try {
+      await this.page.waitForSelector('.loading, [ng-show*="loading"]', { 
+        state: 'hidden', 
+        timeout: 15000 
+      });
+      this.log('info', '   Loading completed');
+    } catch (e) {
+      this.log('info', '   No loading indicator found');
     }
     
-    this.log('info', '⏳ Waiting for report to load...');
-    await this.page.waitForLoadState('domcontentloaded');
-    await this.page.waitForTimeout(5000);
+    // Click "Oasis Red Light? Click Here!!" button to load records (if present)
+    this.log('info', '🔴 Looking for "Oasis Red Light" button...');
+    
+    try {
+      const oasisSelectors = [
+        '#pendo-text-0462efb2',
+        'text="Oasis Red Light? Click Here!!"',
+        'div:has-text("Oasis Red Light? Click Here!!")'
+      ];
+      
+      let oasisClicked = false;
+      for (const selector of oasisSelectors) {
+        try {
+          const element = await this.page.$(selector);
+          if (element && await element.isVisible()) {
+            await element.click();
+            this.log('success', '✅ Clicked "Oasis Red Light" button');
+            oasisClicked = true;
+            break;
+          }
+        } catch (e) {
+          // Try next
+        }
+      }
+      
+      if (oasisClicked) {
+        this.log('info', '⏳ Waiting for records to load...');
+        await this.page.waitForLoadState('domcontentloaded');
+        await this.page.waitForTimeout(5000);
+        
+        // Wait for any loading indicators
+        try {
+          await this.page.waitForSelector('.loading, [ng-show*="loading"]', { 
+            state: 'hidden', 
+            timeout: 15000 
+          });
+          this.log('info', '   Loading completed');
+        } catch (e) {
+          this.log('info', '   No loading indicator found');
+        }
+      } else {
+        this.log('info', '   "Oasis Red Light" button not found, checking for records directly...');
+      }
+      
+    } catch (e) {
+      this.log('info', `   Could not click Oasis Red Light button: ${e.message}`);
+      this.log('info', '   Continuing to check for records...');
+    }
     
     // Check if there are records
     this.log('info', '🔢 Checking for records...');
     
-    // Count records (you can adjust this selector based on actual page structure)
     const recordCount = await this.getRecordCount();
     this.log('info', `   Found ${recordCount} records`);
     
@@ -218,36 +271,90 @@ class EOEReportDownloader {
     }
     
     // Click export button
-    this.log('info', '📥 Clicking export button...');
+    this.log('info', '📥 Looking for export button...');
     
-    const downloadPromise = this.page.waitForEvent('download', { timeout: 30000 });
-    
-    const exportClicked = await this.page.click('#tabExport').catch(() => false);
-    
-    if (!exportClicked) {
-      throw new Error('Export button not found or not clickable');
+    try {
+      // Wait for export button to be visible
+      await this.page.waitForSelector('#tabExport', { state: 'visible', timeout: 10000 });
+      this.log('success', '✅ Found export button');
+      
+      // Set up download listener BEFORE clicking
+      const downloadPromise = this.page.waitForEvent('download', { timeout: 30000 });
+      
+      // Click the export button
+      await this.page.click('#tabExport');
+      this.log('success', '✅ Clicked export button');
+      
+      // Wait for the dialog to appear
+      this.log('info', '⏳ Waiting for export dialog...');
+      await this.page.waitForTimeout(2000);
+      
+      // Look for "Save File" button in dialog
+      this.log('info', '💾 Looking for "Save File" button...');
+      const saveSelectors = [
+        'text="Save File"',
+        'button:has-text("Save File")',
+        'a:has-text("Save File")'
+      ];
+      
+      let saveClicked = false;
+      for (const selector of saveSelectors) {
+        try {
+          const element = await this.page.$(selector);
+          if (element && await element.isVisible()) {
+            await element.click();
+            this.log('success', '✅ Clicked "Save File"');
+            saveClicked = true;
+            break;
+          }
+        } catch (e) {
+          // Try next
+        }
+      }
+      
+      if (!saveClicked) {
+        this.log('info', '   "Save File" button not found, download might start automatically');
+      }
+      
+      this.log('info', '⏳ Waiting for download to complete...');
+      const download = await downloadPromise;
+      
+      const date = new Date().toISOString().split('T')[0];
+      const sanitizedLocation = this.currentSwapUser.replace(/[^a-zA-Z0-9-]/g, '_');
+      const filename = `EOE_Not_Ready_${sanitizedLocation}_${date}.xlsx`;
+      const filepath = path.join(this.downloadPath, filename);
+      
+      await download.saveAs(filepath);
+      this.log('success', `✅ Downloaded: ${filename}`);
+      
+      return { count: recordCount, downloaded: true, filename };
+    } catch (e) {
+      this.log('error', `❌ Export failed: ${e.message}`);
+      throw new Error('Export button not found or download failed');
     }
-    
-    this.log('success', '✅ Clicked export button');
-    this.log('info', '⏳ Waiting for download...');
-    
-    const download = await downloadPromise;
-    const date = new Date().toISOString().split('T')[0];
-    const sanitizedLocation = this.currentSwapUser.replace(/[^a-zA-Z0-9-]/g, '_');
-    const filename = `EOE_Not_Ready_${sanitizedLocation}_${date}.xlsx`;
-    const filepath = path.join(this.downloadPath, filename);
-    
-    await download.saveAs(filepath);
-    this.log('success', `✅ Downloaded: ${filename}`);
-    
-    return { count: recordCount, downloaded: true, filename };
   }
 
   async getRecordCount() {
     try {
-      // Try to count table rows or grid items
-      const rows = await this.page.$$('table tbody tr, .grid-row, [ng-repeat]');
-      return rows.length;
+      // Try to count table rows
+      const rows = await this.page.$$('table tbody tr');
+      
+      if (rows.length === 0) {
+        this.log('info', '   No tbody rows found');
+        return 0;
+      }
+      
+      // Filter out empty rows (rows with only 1 cell or less)
+      let validRowCount = 0;
+      for (const row of rows) {
+        const cells = await row.$$('td');
+        if (cells.length > 1) {
+          validRowCount++;
+        }
+      }
+      
+      this.log('info', `   Counted ${validRowCount} valid rows (${rows.length} total)`);
+      return validRowCount;
     } catch (error) {
       this.log('info', `   Could not count records: ${error.message}`);
       return 0;
@@ -281,8 +388,17 @@ class EOEReportDownloader {
       throw new Error('swapUser dropdown not found');
     }
     
-    await this.page.waitForTimeout(3000);
-    await this.page.reload({ waitUntil: 'domcontentloaded' });
+    // Wait for the page to start reloading
+    await this.page.waitForTimeout(2000);
+    
+    // Instead of reload, wait for navigation that happens automatically
+    try {
+      await this.page.waitForLoadState('domcontentloaded', { timeout: 15000 });
+      this.log('info', '   Page reloaded after swapUser change');
+    } catch (e) {
+      this.log('info', '   Page did not reload, continuing...');
+    }
+    
     await this.page.waitForTimeout(3000);
   }
 

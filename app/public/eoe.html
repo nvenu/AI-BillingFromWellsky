@@ -10,7 +10,7 @@
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
-      background: linear-gradient(135deg, #00ACC1 0%, #607D8B 50%, #455A64 100%);
+      background: #F1F5F9;
       min-height: 100vh;
       overflow-x: hidden;
       overflow-y: auto;
@@ -19,55 +19,49 @@
       display: flex;
       flex-direction: column;
       min-height: 100vh;
-      background: #ffffff;
+      background: #F1F5F9;
     }
     .top-section {
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 0;
-      border-bottom: 4px solid transparent;
-      background: linear-gradient(white, white) padding-box,
-                  linear-gradient(90deg, #00ACC1, #00BCD4, #26C6DA) border-box;
+      border-bottom: 2px solid #CBD5E1;
+      background: #ffffff;
       flex-shrink: 0;
     }
     .controls-panel {
       padding: 30px;
-      background: linear-gradient(135deg, #E0F7FA 0%, #B2EBF2 100%);
+      background: #ffffff;
+      border-right: 1px solid #E2E8F0;
       overflow-y: auto;
       max-height: 50vh;
     }
     .log-panel {
       padding: 30px;
-      background: linear-gradient(135deg, #263238 0%, #37474F 100%);
-      border-left: 4px solid #00ACC1;
+      background: #263238;
       overflow-y: auto;
       max-height: 50vh;
     }
     .charts-panel {
       padding: 30px;
-      background: linear-gradient(135deg, #E0F7FA 0%, #F1F8F9 100%);
+      background: #F1F5F9;
       flex: 1;
     }
     header {
       margin-bottom: 20px;
       padding-bottom: 15px;
-      border-bottom: 3px solid transparent;
-      background: linear-gradient(white, white) padding-box,
-                  linear-gradient(90deg, #00ACC1, #00BCD4, #26C6DA) border-box;
+      border-bottom: 2px solid #CBD5E1;
     }
     h1 { 
       font-size: 26px; 
       font-weight: 900; 
-      background: linear-gradient(135deg, #00ACC1 0%, #00BCD4 50%, #26C6DA 100%);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
+      color: #1e293b;
       margin-bottom: 5px;
       letter-spacing: -0.5px;
     }
     .subtitle { 
       font-size: 13px; 
-      color: #00695C; 
+      color: #64748b; 
       font-weight: 600;
     }
     .controls {
@@ -75,10 +69,9 @@
       grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
       gap: 12px;
       padding: 20px;
-      background: linear-gradient(135deg, #00ACC1 0%, #0097A7 100%);
-      border-radius: 16px;
-      box-shadow: 0 8px 16px rgba(0, 172, 193, 0.4);
-      border: 2px solid rgba(255, 255, 255, 0.3);
+      background: #ffffff;
+      border-radius: 12px;
+      border: 2px solid #CBD5E1;
     }
     .control-group { 
       display: flex; 
@@ -88,127 +81,100 @@
     label { 
       font-size: 11px; 
       font-weight: 800; 
-      color: #ffffff; 
+      color: #64748b; 
       text-transform: uppercase;
       letter-spacing: 1px;
-      text-shadow: 0 2px 4px rgba(0,0,0,0.2);
     }
     button {
       padding: 12px 16px;
-      border: 2px solid rgba(255, 255, 255, 0.4);
-      border-radius: 12px;
+      border: 2px solid #CBD5E1;
+      border-radius: 8px;
       font-size: 14px;
       font-weight: 700;
       cursor: pointer;
       transition: all 0.2s;
-      background: rgba(255, 255, 255, 0.2);
-      color: white;
-      backdrop-filter: blur(10px);
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+      background: #ffffff;
+      color: #1e293b;
     }
     button:hover {
-      background: rgba(255, 255, 255, 0.3);
-      transform: translateY(-2px);
-      box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2);
+      background: #E2E8F0;
+      border-color: #94a3b8;
+      transform: translateY(-1px);
     }
     .btn-success {
-      background: linear-gradient(135deg, #00897B 0%, #00695C 100%);
-      border-color: rgba(255, 255, 255, 0.5);
-      box-shadow: 0 4px 12px rgba(0, 137, 123, 0.3);
+      background: #10b981;
+      color: white;
+      border-color: #059669;
     }
     .btn-success:hover {
-      box-shadow: 0 6px 16px rgba(0, 137, 123, 0.4);
+      background: #059669;
+      border-color: #047857;
     }
     .status {
       padding: 10px 16px;
-      border-radius: 10px;
+      border-radius: 8px;
       font-size: 13px;
       font-weight: 700;
       text-align: center;
-      backdrop-filter: blur(10px);
     }
     .status-ok {
-      background: rgba(0, 137, 123, 0.15);
-      color: #00695C;
-      border: 2px solid rgba(0, 137, 123, 0.4);
+      background: #d1fae5;
+      color: #065f46;
+      border: 2px solid #10b981;
     }
     .status-error {
-      background: rgba(239, 68, 68, 0.15);
-      color: #dc2626;
-      border: 2px solid rgba(239, 68, 68, 0.4);
+      background: #fee2e2;
+      color: #991b1b;
+      border: 2px solid #ef4444;
     }
     .charts-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
       gap: 25px;
     }
     .chart-card {
-      background: linear-gradient(135deg, #ffffff 0%, #E0F7FA 100%);
-      border-radius: 20px;
+      background: #ffffff;
+      border-radius: 12px;
       padding: 25px;
-      box-shadow: 0 8px 24px rgba(0, 172, 193, 0.2);
-      border: 2px solid rgba(0, 172, 193, 0.2);
+      border: 2px solid #CBD5E1;
       transition: all 0.3s;
       position: relative;
       overflow: hidden;
     }
-    .chart-card::before {
-      content: '';
-      position: absolute;
-      top: 0;
-      left: 0;
-      right: 0;
-      height: 4px;
-      background: linear-gradient(90deg, #00ACC1, #00BCD4, #26C6DA);
-    }
     .chart-card:hover {
-      transform: translateY(-4px);
-      box-shadow: 0 12px 32px rgba(0, 172, 193, 0.3);
-      border-color: rgba(0, 172, 193, 0.4);
+      transform: translateY(-2px);
+      box-shadow: 0 8px 16px rgba(0, 0, 0, 0.1);
+      border-color: #94a3b8;
+      background: #E2E8F0;
+    }
+    .chart-card.full-width {
+      grid-column: 1 / -1;
     }
     .chart-title {
       font-size: 18px;
       font-weight: 800;
-      background: linear-gradient(135deg, #00ACC1 0%, #0097A7 100%);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
+      color: #1e293b;
       margin-bottom: 18px;
       padding-bottom: 12px;
-      border-bottom: 2px solid #B2EBF2;
+      border-bottom: 2px solid #CBD5E1;
       letter-spacing: -0.3px;
     }
     .chart-container { 
       position: relative; 
-      height: 280px; 
+      height: 400px; 
     }
-    .stats {
-      display: flex;
-      justify-content: space-around;
-      margin-top: 18px;
-      padding-top: 18px;
-      border-top: 2px solid #B2EBF2;
-      font-size: 13px;
-      font-weight: 700;
-    }
-    .stats span {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 4px;
-      padding: 8px 12px;
-      border-radius: 10px;
-      background: rgba(0, 172, 193, 0.1);
+    .chart-container.tall { 
+      height: 500px; 
     }
     .loading, .no-data {
       text-align: center;
       padding: 60px 20px;
-      color: #00695C;
-      background: linear-gradient(135deg, #ffffff 0%, #E0F7FA 100%);
-      border-radius: 20px;
+      color: #64748b;
+      background: #ffffff;
+      border-radius: 12px;
       font-size: 16px;
       font-weight: 600;
-      border: 3px dashed rgba(0, 172, 193, 0.3);
+      border: 2px dashed #CBD5E1;
     }
     .log-viewer {
       color: #ECEFF1;
@@ -222,9 +188,7 @@
       font-weight: 800;
       margin-bottom: 20px;
       padding-bottom: 15px;
-      border-bottom: 3px solid transparent;
-      background: linear-gradient(#37474F, #37474F) padding-box,
-                  linear-gradient(90deg, #00ACC1, #fbbf24) border-box;
+      border-bottom: 2px solid #475569;
       letter-spacing: 0.5px;
     }
     .log-entry {
@@ -259,22 +223,99 @@
       border-left-color: #E57373;
       background: rgba(229, 115, 115, 0.1);
     }
+    .heatmap-container {
+      overflow-x: auto;
+    }
+    .heatmap-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    .heatmap-table th,
+    .heatmap-table td {
+      padding: 12px;
+      text-align: center;
+      border: 1px solid #CBD5E1;
+    }
+    .heatmap-table th {
+      background: #475569;
+      color: white;
+      font-weight: 700;
+      text-transform: uppercase;
+      font-size: 12px;
+      letter-spacing: 0.5px;
+    }
+    .heatmap-table td {
+      font-weight: 600;
+      background: #ffffff;
+      color: #1e293b;
+    }
+    .heatmap-table tbody td:first-child {
+      text-align: left;
+      font-weight: 700;
+      color: #1e293b;
+      background: #F1F5F9;
+    }
+    .heatmap-cell-0 { background: #E8F5E9; color: #2E7D32; }
+    .heatmap-cell-low { background: #FFF9C4; color: #F57F17; }
+    .heatmap-cell-medium { background: #FFE082; color: #E65100; }
+    .heatmap-cell-high { background: #FFAB91; color: #BF360C; }
+    .heatmap-cell-critical { background: #EF5350; color: white; }
+    .info-box {
+      background: #dbeafe;
+      border: 2px solid #3b82f6;
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 20px;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+    .info-box-title {
+      font-weight: 800;
+      color: #1e40af;
+      margin-bottom: 8px;
+      font-size: 14px;
+    }
+    .info-box-content {
+      color: #1e3a8a;
+    }
+    .risk-legend {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 12px;
+      margin-top: 8px;
+    }
+    .risk-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .risk-badge {
+      padding: 4px 12px;
+      border-radius: 6px;
+      font-weight: 700;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .risk-badge-critical { background: #EF5350; color: white; }
+    .risk-badge-high { background: #FFAB91; color: #BF360C; }
+    .risk-badge-medium { background: #FFE082; color: #E65100; }
+    .risk-badge-low { background: #FFF9C4; color: #F57F17; }
   </style>
   <script src="/socket.io/socket.io.js"></script>
 </head>
 <body>
   <div class="container">
-    <!-- Reports Navigation Section -->
-    <div style="padding: 20px 30px; background: linear-gradient(135deg, #ffffff 0%, #E0F7FA 100%); border-bottom: 3px solid transparent; background: linear-gradient(white, white) padding-box, linear-gradient(90deg, #667eea, #0ea5e9, #00ACC1) border-box;">
+    <div style="padding: 20px 30px; background: #ffffff; border-bottom: 2px solid #CBD5E1;">
       <div style="display: flex; align-items: center; gap: 15px;">
-        <span style="font-size: 14px; font-weight: 800; color: #4b5563; text-transform: uppercase; letter-spacing: 1px;">📑 Reports:</span>
-        <button onclick="window.location.href='/'" style="padding: 10px 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 10px; font-size: 13px; font-weight: 700; cursor: pointer; box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3); transition: all 0.2s;">
+        <span style="font-size: 14px; font-weight: 800; color: #64748b; text-transform: uppercase; letter-spacing: 1px;">📑 Reports:</span>
+        <button onclick="window.location.href='/'" style="padding: 10px 20px; background: #667eea; color: white; border: 2px solid #5a67d8; border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer; transition: all 0.2s;">
           📋 Past Due Visits
         </button>
-        <button onclick="window.location.href='/deviation'" style="padding: 10px 20px; background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%); color: white; border: none; border-radius: 10px; font-size: 13px; font-weight: 700; cursor: pointer; box-shadow: 0 4px 12px rgba(14, 165, 233, 0.4); transition: all 0.2s;">
+        <button onclick="window.location.href='/deviation'" style="padding: 10px 20px; background: #0ea5e9; color: white; border: 2px solid #0284c7; border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer; transition: all 0.2s;">
           📊 Deviation Report
         </button>
-        <button onclick="window.location.href='/eoe'" style="padding: 10px 20px; background: linear-gradient(135deg, #00ACC1 0%, #0097A7 100%); color: white; border: none; border-radius: 10px; font-size: 13px; font-weight: 700; cursor: pointer; box-shadow: 0 4px 12px rgba(0, 172, 193, 0.4); transition: all 0.2s;">
+        <button onclick="window.location.href='/eoe'" style="padding: 10px 20px; background: #10b981; color: white; border: 2px solid #059669; border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer; transition: all 0.2s;">
           📋 EOE Report
         </button>
       </div>
@@ -317,9 +358,21 @@
   </div>
 
   <script>
-    let analyticsData = {};
+    let detailedData = null;
     let charts = {};
     const socket = io();
+
+    const allOffices = [
+      'Nightingale - Taunton',
+      'Aspire - Dublin',
+      'Aspire - San Diego',
+      'Aspire - Scottsdale',
+      'Aspire - Yuba City',
+      'Nightingale - Las Vegas',
+      'Nightingale - Minnetonka',
+      'Nightingale - Pompano Beach',
+      'Nightingale - Willowbrook'
+    ];
 
     socket.on('log', (log) => {
       addLogEntry(log);
@@ -355,8 +408,8 @@
       container.innerHTML = '<div class="loading">Loading data...</div>';
       
       try {
-        const response = await fetch('/api/eoe/analytics');
-        analyticsData = await response.json();
+        const response = await fetch('/api/eoe/detailed-analytics');
+        detailedData = await response.json();
         
         renderCharts();
         setStatus('ok', 'Data loaded');
@@ -372,94 +425,385 @@
       Object.values(charts).forEach(chart => chart.destroy());
       charts = {};
       
-      const reportsToShow = Object.entries(analyticsData);
-      
-      if (reportsToShow.length === 0) {
+      if (!detailedData || Object.keys(detailedData.byOffice).length === 0) {
         container.innerHTML = '<div class="no-data">No EOE data available. Click "Download Now" to fetch data.</div>';
         return;
       }
       
       container.innerHTML = '';
       
-      reportsToShow.forEach(([location, data], index) => {
-        if (!data || data.length === 0) return;
-        
-        const cardId = `chart-${index}`;
-        const card = document.createElement('div');
-        card.className = 'chart-card';
-        
-        const totalRecords = data.reduce((sum, d) => sum + d.count, 0);
-        const avgRecords = Math.round(totalRecords / data.length);
-        
-        card.innerHTML = `
-          <div class="chart-title">${location}</div>
-          <div class="chart-container">
-            <canvas id="${cardId}"></canvas>
+      // 1. Root Cause by Office (Stacked Bar)
+      createRootCauseByOfficeChart(container);
+      
+      // 2. Overall Root Cause Summary (Horizontal Bar)
+      createOverallRootCauseSummaryChart(container);
+      
+      // 3. RAP Risk Distribution by Office (Stacked Column)
+      createRiskDistributionChart(container);
+      
+      // 4. Office Comparison - Total EOE Not Ready (Grouped Bar)
+      createOfficeComparisonChart(container);
+      
+      // 5. 7-Day Trend Line (All Offices)
+      create7DayTrendChart(container);
+      
+      // Add Risk Classification Info Box before Risk Heatmap
+      const infoBox = document.createElement('div');
+      infoBox.className = 'info-box';
+      infoBox.style.gridColumn = '1 / -1';
+      infoBox.innerHTML = `
+        <div class="info-box-title">📊 Risk Bucket Classification</div>
+        <div class="info-box-content">
+          EOE records are categorized by days pending based on the "Days Until RAP Cancellation" field:
+          <div class="risk-legend">
+            <div class="risk-item">
+              <span class="risk-badge risk-badge-critical">Critical</span>
+              <span>0-3 days (Immediate action required)</span>
+            </div>
+            <div class="risk-item">
+              <span class="risk-badge risk-badge-high">High</span>
+              <span>4-7 days (Urgent attention needed)</span>
+            </div>
+            <div class="risk-item">
+              <span class="risk-badge risk-badge-medium">Medium</span>
+              <span>8-14 days (Address soon)</span>
+            </div>
+            <div class="risk-item">
+              <span class="risk-badge risk-badge-low">Low</span>
+              <span>15+ days (Lower priority)</span>
+            </div>
           </div>
-          <div class="stats">
-            <span>Total: ${totalRecords}</span>
-            <span style="color: #00ACC1;">Avg: ${avgRecords}</span>
-          </div>
-        `;
-        
-        container.appendChild(card);
-        
-        const ctx = document.getElementById(cardId).getContext('2d');
-        
-        // Create gradient - cyan to slate blue
-        const gradient = ctx.createLinearGradient(0, 0, 0, 400);
-        gradient.addColorStop(0, '#00ACC1');
-        gradient.addColorStop(0.5, '#00BCD4');
-        gradient.addColorStop(1, '#607D8B');
-        
-        charts[cardId] = new Chart(ctx, {
-          type: 'bar',
-          data: {
-            labels: data.map(d => d.date),
-            datasets: [
-              {
-                label: 'EOE Not Ready Count',
-                data: data.map(d => d.count),
-                backgroundColor: gradient,
-                borderColor: '#0097A7',
-                borderWidth: 2,
-                borderRadius: 8
-              }
-            ]
+        </div>
+      `;
+      container.appendChild(infoBox);
+      
+      // 6. Risk Heatmap
+      createRiskHeatmap(container);
+    }
+
+    function createRootCauseByOfficeChart(container) {
+      const card = document.createElement('div');
+      card.className = 'chart-card full-width';
+      card.innerHTML = `
+        <div class="chart-title">Root Cause by Office</div>
+        <div class="chart-container tall">
+          <canvas id="rootCauseByOffice"></canvas>
+        </div>
+      `;
+      container.appendChild(card);
+      
+      const ctx = document.getElementById('rootCauseByOffice').getContext('2d');
+      
+      const rootCauseCategories = ['Missing Orders', 'Missing F2F', 'RAP Issues', 'PCR Tracking Missing', 'Service Date Mismatch', 'Medicare Missing'];
+      const colors = ['#EF5350', '#FF7043', '#FFA726', '#FFCA28', '#66BB6A', '#42A5F5'];
+      
+      const datasets = rootCauseCategories.map((category, index) => ({
+        label: category,
+        data: allOffices.map(office => detailedData.byOffice[office]?.rootCauses[category] || 0),
+        backgroundColor: colors[index],
+        borderColor: colors[index],
+        borderWidth: 1
+      }));
+      
+      charts.rootCauseByOffice = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: allOffices,
+          datasets: datasets
+        },
+        options: {
+          indexAxis: 'y',
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { position: 'top' },
+            tooltip: {
+              backgroundColor: 'rgba(0, 0, 0, 0.8)',
+              padding: 12
+            }
           },
-          options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            indexAxis: 'y',
-            plugins: { 
-              legend: { 
-                display: false
-              },
-              tooltip: {
-                backgroundColor: 'rgba(0, 0, 0, 0.8)',
-                padding: 12,
-                titleFont: { size: 14, weight: 'bold' },
-                bodyFont: { size: 13 }
-              }
+          scales: {
+            x: {
+              stacked: true,
+              beginAtZero: true,
+              ticks: { precision: 0 }
             },
-            scales: { 
-              x: { 
-                beginAtZero: true,
-                ticks: { precision: 0, font: { size: 12 } },
-                grid: { color: 'rgba(0, 0, 0, 0.05)' }
-              },
-              y: { 
-                ticks: { font: { size: 12 } },
-                grid: { display: false }
-              }
+            y: {
+              stacked: true
             }
           }
-        });
+        }
       });
+    }
+
+    function createOverallRootCauseSummaryChart(container) {
+      const card = document.createElement('div');
+      card.className = 'chart-card';
+      card.innerHTML = `
+        <div class="chart-title">Overall Root Cause Summary</div>
+        <div class="chart-container">
+          <canvas id="overallRootCause"></canvas>
+        </div>
+      `;
+      container.appendChild(card);
       
-      if (container.innerHTML === '') {
-        container.innerHTML = '<div class="no-data">No data for selected filters</div>';
-      }
+      const ctx = document.getElementById('overallRootCause').getContext('2d');
+      
+      const rootCauseCategories = ['Missing Orders', 'Missing F2F', 'RAP Issues', 'PCR Tracking Missing', 'Service Date Mismatch', 'Medicare Missing'];
+      const colors = ['#EF5350', '#FF7043', '#FFA726', '#FFCA28', '#66BB6A', '#42A5F5'];
+      
+      charts.overallRootCause = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: rootCauseCategories,
+          datasets: [{
+            label: 'Total Count',
+            data: rootCauseCategories.map(cat => detailedData.rootCauses[cat] || 0),
+            backgroundColor: colors,
+            borderColor: colors,
+            borderWidth: 1
+          }]
+        },
+        options: {
+          indexAxis: 'y',
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              backgroundColor: 'rgba(0, 0, 0, 0.8)',
+              padding: 12
+            }
+          },
+          scales: {
+            x: {
+              beginAtZero: true,
+              ticks: { precision: 0 }
+            }
+          }
+        }
+      });
+    }
+
+    function createRiskDistributionChart(container) {
+      const card = document.createElement('div');
+      card.className = 'chart-card full-width';
+      card.innerHTML = `
+        <div class="chart-title">RAP Risk Distribution by Office</div>
+        <div class="chart-container tall">
+          <canvas id="riskDistribution"></canvas>
+        </div>
+      `;
+      container.appendChild(card);
+      
+      const ctx = document.getElementById('riskDistribution').getContext('2d');
+      
+      const riskBuckets = ['Critical', 'High', 'Medium', 'Low'];
+      const riskColors = {
+        'Critical': '#EF5350',
+        'High': '#FF7043',
+        'Medium': '#FFA726',
+        'Low': '#66BB6A'
+      };
+      
+      const datasets = riskBuckets.map(bucket => ({
+        label: bucket + ' (0-3d, 4-7d, 8-14d, 15+d)',
+        data: allOffices.map(office => detailedData.byOffice[office]?.riskBuckets[bucket] || 0),
+        backgroundColor: riskColors[bucket],
+        borderColor: riskColors[bucket],
+        borderWidth: 1
+      }));
+      
+      charts.riskDistribution = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: allOffices,
+          datasets: datasets
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { position: 'top' },
+            tooltip: {
+              backgroundColor: 'rgba(0, 0, 0, 0.8)',
+              padding: 12
+            }
+          },
+          scales: {
+            x: {
+              stacked: true
+            },
+            y: {
+              stacked: true,
+              beginAtZero: true,
+              ticks: { precision: 0 }
+            }
+          }
+        }
+      });
+    }
+
+    function createOfficeComparisonChart(container) {
+      const card = document.createElement('div');
+      card.className = 'chart-card';
+      card.innerHTML = `
+        <div class="chart-title">Office Comparison – Total EOE Not Ready</div>
+        <div class="chart-container">
+          <canvas id="officeComparison"></canvas>
+        </div>
+      `;
+      container.appendChild(card);
+      
+      const ctx = document.getElementById('officeComparison').getContext('2d');
+      
+      const gradient = ctx.createLinearGradient(0, 0, 0, 400);
+      gradient.addColorStop(0, '#00ACC1');
+      gradient.addColorStop(0.5, '#00BCD4');
+      gradient.addColorStop(1, '#607D8B');
+      
+      charts.officeComparison = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: allOffices,
+          datasets: [{
+            label: 'Total EOE Not Ready',
+            data: allOffices.map(office => detailedData.byOffice[office]?.total || 0),
+            backgroundColor: gradient,
+            borderColor: '#0097A7',
+            borderWidth: 2,
+            borderRadius: 8
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              backgroundColor: 'rgba(0, 0, 0, 0.8)',
+              padding: 12
+            }
+          },
+          scales: {
+            y: {
+              beginAtZero: true,
+              ticks: { precision: 0 }
+            }
+          }
+        }
+      });
+    }
+
+    function create7DayTrendChart(container) {
+      const card = document.createElement('div');
+      card.className = 'chart-card full-width';
+      card.innerHTML = `
+        <div class="chart-title">7-Day Trend Line (All Offices)</div>
+        <div class="chart-container">
+          <canvas id="trendLine"></canvas>
+        </div>
+      `;
+      container.appendChild(card);
+      
+      const ctx = document.getElementById('trendLine').getContext('2d');
+      
+      // Get all dates and sort them
+      const allDates = Object.keys(detailedData.byDate).sort();
+      const last7Dates = allDates.slice(-7);
+      
+      const officeColors = [
+        '#EF5350', '#FF7043', '#FFA726', '#FFCA28', '#66BB6A', 
+        '#42A5F5', '#AB47BC', '#26C6DA', '#EC407A'
+      ];
+      
+      const datasets = allOffices.map((office, index) => ({
+        label: office,
+        data: last7Dates.map(date => detailedData.byDate[date]?.[office] || 0),
+        borderColor: officeColors[index],
+        backgroundColor: officeColors[index] + '33',
+        borderWidth: 2,
+        tension: 0.3,
+        fill: false
+      }));
+      
+      charts.trendLine = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: last7Dates,
+          datasets: datasets
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { 
+              position: 'top',
+              labels: { boxWidth: 12, padding: 10 }
+            },
+            tooltip: {
+              backgroundColor: 'rgba(0, 0, 0, 0.8)',
+              padding: 12
+            }
+          },
+          scales: {
+            y: {
+              beginAtZero: true,
+              ticks: { precision: 0 }
+            }
+          }
+        }
+      });
+    }
+
+    function createRiskHeatmap(container) {
+      const card = document.createElement('div');
+      card.className = 'chart-card full-width';
+      card.innerHTML = `
+        <div class="chart-title">Risk Heatmap</div>
+        <div class="heatmap-container">
+          <table class="heatmap-table" id="heatmapTable"></table>
+        </div>
+      `;
+      container.appendChild(card);
+      
+      const table = document.getElementById('heatmapTable');
+      const riskBuckets = ['Critical (0-3d)', 'High (4-7d)', 'Medium (8-14d)', 'Low (15+d)'];
+      
+      // Create header
+      let headerHTML = '<thead><tr><th>Office</th>';
+      riskBuckets.forEach(bucket => {
+        headerHTML += `<th>${bucket}</th>`;
+      });
+      headerHTML += '</tr></thead>';
+      
+      // Create body
+      let bodyHTML = '<tbody>';
+      allOffices.forEach(office => {
+        bodyHTML += `<tr><td style="text-align: left; font-weight: 700;">${office}</td>`;
+        
+        const critical = detailedData.byOffice[office]?.riskBuckets['Critical'] || 0;
+        const high = detailedData.byOffice[office]?.riskBuckets['High'] || 0;
+        const medium = detailedData.byOffice[office]?.riskBuckets['Medium'] || 0;
+        const low = detailedData.byOffice[office]?.riskBuckets['Low'] || 0;
+        
+        bodyHTML += `<td class="${getHeatmapClass(critical, 'critical')}">${critical}</td>`;
+        bodyHTML += `<td class="${getHeatmapClass(high, 'high')}">${high}</td>`;
+        bodyHTML += `<td class="${getHeatmapClass(medium, 'medium')}">${medium}</td>`;
+        bodyHTML += `<td class="${getHeatmapClass(low, 'low')}">${low}</td>`;
+        bodyHTML += '</tr>';
+      });
+      bodyHTML += '</tbody>';
+      
+      table.innerHTML = headerHTML + bodyHTML;
+    }
+
+    function getHeatmapClass(value, type) {
+      if (value === 0) return 'heatmap-cell-0';
+      if (type === 'critical') return 'heatmap-cell-critical';
+      if (type === 'high') return 'heatmap-cell-high';
+      if (type === 'medium') return 'heatmap-cell-medium';
+      return 'heatmap-cell-low';
     }
 
     async function downloadEOEReport() {
