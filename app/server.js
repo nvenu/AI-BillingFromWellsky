@@ -305,6 +305,89 @@ app.get('/deviation', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'deviation.html'));
 });
 
+// Serve EOE report page
+app.get('/eoe', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'eoe.html'));
+});
+
+// API: Trigger EOE report download
+app.post('/api/eoe/download', async (req, res) => {
+  try {
+    downloadLogs = []; // Clear previous logs
+    
+    const EOEReportDownloader = (await import('./automation/eoeDownloader.js')).default;
+    const downloader = new EOEReportDownloader(io);
+    const results = await downloader.run();
+    
+    // Store results in a JSON file
+    const eoeDataPath = path.join(DATA_DIR, 'eoe_data.json');
+    let existingData = [];
+    try {
+      const fileContent = await fs.readFile(eoeDataPath, 'utf-8');
+      existingData = JSON.parse(fileContent);
+    } catch (e) {
+      // File doesn't exist yet
+    }
+    
+    // Update or add new results - replace existing records for same date and location
+    results.forEach(newRecord => {
+      const existingIndex = existingData.findIndex(
+        record => record.location === newRecord.location && record.date === newRecord.date
+      );
+      
+      if (existingIndex !== -1) {
+        // Update existing record
+        existingData[existingIndex] = newRecord;
+      } else {
+        // Add new record
+        existingData.push(newRecord);
+      }
+    });
+    
+    await fs.writeFile(eoeDataPath, JSON.stringify(existingData, null, 2));
+    
+    // Notify clients to refresh data
+    io.emit('eoe-complete', { success: true, results });
+    
+    res.json({ success: true, results });
+  } catch (error) {
+    const errorMsg = error.message;
+    io.emit('log', { type: 'error', message: `Error: ${errorMsg}` });
+    io.emit('eoe-complete', { success: false, error: errorMsg });
+    res.status(500).json({ success: false, error: errorMsg });
+  }
+});
+
+// API: Get EOE analytics
+app.get('/api/eoe/analytics', async (req, res) => {
+  try {
+    const eoeDataPath = path.join(DATA_DIR, 'eoe_data.json');
+    const fileContent = await fs.readFile(eoeDataPath, 'utf-8');
+    const data = JSON.parse(fileContent);
+    
+    // Group by location
+    const analytics = {};
+    data.forEach(record => {
+      if (!analytics[record.location]) {
+        analytics[record.location] = [];
+      }
+      analytics[record.location].push({
+        date: record.date,
+        count: record.count
+      });
+    });
+    
+    // Sort by date
+    Object.keys(analytics).forEach(location => {
+      analytics[location].sort((a, b) => a.date.localeCompare(b.date));
+    });
+    
+    res.json(analytics);
+  } catch (error) {
+    res.json({});
+  }
+});
+
 // Schedule automatic downloads
 const schedule = process.env.REPORT_SCHEDULE || '0 8 * * *';
 console.log(`📅 Scheduled automatic downloads: ${schedule} (Server timezone: ${Intl.DateTimeFormat().resolvedOptions().timeZone})`);
@@ -381,3 +464,50 @@ export function emitLog(type, message) {
   downloadLogs.push(log);
   io.emit('log', log);
 }
+
+// Schedule automatic EOE reports
+const eoeSchedule = process.env.EOE_SCHEDULE || '30 8 * * *';
+console.log(`📋 Scheduled EOE reports: ${eoeSchedule} (Server timezone: ${Intl.DateTimeFormat().resolvedOptions().timeZone})`);
+
+cron.schedule(eoeSchedule, async () => {
+  console.log('⏰ Running scheduled EOE report...');
+  try {
+    const EOEReportDownloader = (await import('./automation/eoeDownloader.js')).default;
+    const downloader = new EOEReportDownloader(io);
+    const results = await downloader.run();
+    
+    // Store results
+    const eoeDataPath = path.join(DATA_DIR, 'eoe_data.json');
+    let existingData = [];
+    try {
+      const fileContent = await fs.readFile(eoeDataPath, 'utf-8');
+      existingData = JSON.parse(fileContent);
+    } catch (e) {
+      // File doesn't exist yet
+    }
+    
+    // Update or add new results - replace existing records for same date and location
+    results.forEach(newRecord => {
+      const existingIndex = existingData.findIndex(
+        record => record.location === newRecord.location && record.date === newRecord.date
+      );
+      
+      if (existingIndex !== -1) {
+        // Update existing record
+        existingData[existingIndex] = newRecord;
+      } else {
+        // Add new record
+        existingData.push(newRecord);
+      }
+    });
+    
+    await fs.writeFile(eoeDataPath, JSON.stringify(existingData, null, 2));
+    
+    io.emit('eoe-complete', { success: true, results });
+    console.log('✅ Scheduled EOE report completed successfully');
+  } catch (error) {
+    console.error('❌ Scheduled EOE report failed:', error.message);
+    io.emit('log', { type: 'error', message: `Scheduled EOE report failed: ${error.message}` });
+    io.emit('eoe-complete', { success: false, error: error.message });
+  }
+});
