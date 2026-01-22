@@ -765,21 +765,33 @@
       const card = document.createElement('div');
       card.className = 'chart-card full-width';
       card.innerHTML = `
-        <div class="chart-title">Top Contributors</div>
-        <div class="chart-subtitle">Top contributors to missing diagnosis issues (Referral Sources)</div>
+        <div class="chart-title">Missing Diagnosis by Insurance</div>
+        <div class="chart-subtitle">Top insurance payers with missing diagnosis claims</div>
         <div class="chart-container"><canvas id="topContributors"></canvas></div>
       `;
       container.appendChild(card);
       
       const ctx = document.getElementById('topContributors').getContext('2d');
-      const sources = detailedData.referralSources || {};
-      const sorted = Object.entries(sources).sort((a, b) => b[1] - a[1]).slice(0, 5);
-      const total = Object.values(sources).reduce((a, b) => a + b, 0);
+      const insurances = detailedData.insurances || {};
+      const sorted = Object.entries(insurances)
+        .filter(([name]) => name && name !== 'Unknown' && name !== '')
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 8);
+      const total = sorted.reduce((sum, [, count]) => sum + count, 0);
+      
+      if (sorted.length === 0) {
+        card.innerHTML = `
+          <div class="chart-title">Missing Diagnosis by Insurance</div>
+          <div class="chart-subtitle">Top insurance payers with missing diagnosis claims</div>
+          <div style="text-align: center; padding: 40px; color: #64748b;">No insurance data available</div>
+        `;
+        return;
+      }
       
       charts.topContributors = new Chart(ctx, {
         type: 'bar',
         data: {
-          labels: sorted.map(([name]) => name.length > 25 ? name.substring(0, 25) + '...' : name),
+          labels: sorted.map(([name]) => name.length > 30 ? name.substring(0, 30) + '...' : name),
           datasets: [{
             label: 'Count',
             data: sorted.map(([, count]) => count),

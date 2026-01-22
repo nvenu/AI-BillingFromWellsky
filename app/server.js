@@ -463,6 +463,7 @@ app.get('/api/dx/detailed-analytics', async (req, res) => {
       agingBuckets: {},
       rapRiskBuckets: {},
       referralSources: {},
+      insurances: {},
       missingDxRecords: []
     };
     
@@ -583,6 +584,12 @@ app.get('/api/dx/detailed-analytics', async (req, res) => {
               const intakeUser = record[colMap.intakeUser] || 'Unknown';
               if (!detailedData.intakeUsers) detailedData.intakeUsers = {};
               detailedData.intakeUsers[intakeUser] = (detailedData.intakeUsers[intakeUser] || 0) + 1;
+              
+              // Insurance tracking
+              const insurance = record[colMap.insurance] || '';
+              if (insurance) {
+                detailedData.insurances[insurance] = (detailedData.insurances[insurance] || 0) + 1;
+              }
               
               // Store detail record with actual available columns
               detailedData.missingDxRecords.push({
