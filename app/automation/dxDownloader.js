@@ -264,53 +264,71 @@ class DXReportDownloader {
       await this.page.waitForSelector('#tabExport', { state: 'visible', timeout: 10000 });
       this.log('success', '✅ Found export button');
       
-      const downloadPromise = this.page.waitForEvent('download', { timeout: 30000 });
-      
       await this.page.click('#tabExport');
       this.log('success', '✅ Clicked export button');
       
-      this.log('info', '⏳ Waiting for export dialog...');
-      await this.page.waitForTimeout(2000);
+      this.log('info', '⏳ Waiting for export to prepare...');
       
-      // Look for "Save File" button
-      this.log('info', '💾 Looking for "Save File" button...');
-      const saveSelectors = [
-        '#btnSaveLinkText',
-        'a#btnSaveLinkText',
-        'text="Save File"'
-      ];
+      // Wait for loading to appear and disappear
+      try {
+        await this.page.waitForSelector('.loading, [ng-show*="loading"], .spinner', { 
+          state: 'visible', 
+          timeout: 5000 
+        });
+        this.log('info', '   Loading indicator appeared');
+        
+        await this.page.waitForSelector('.loading, [ng-show*="loading"], .spinner', { 
+          state: 'hidden', 
+          timeout: 60000 
+        });
+        this.log('info', '   Loading completed');
+      } catch (e) {
+        this.log('info', '   No loading indicator detected');
+        await this.page.waitForTimeout(3000);
+      }
+      
+      // Wait for "Save File" button to appear
+      this.log('info', '💾 Waiting for "Save File" button...');
       
       let saveClicked = false;
-      for (const selector of saveSelectors) {
-        try {
-          const element = await this.page.$(selector);
-          if (element && await element.isVisible()) {
-            await element.click();
-            this.log('success', '✅ Clicked "Save File"');
-            saveClicked = true;
-            break;
-          }
-        } catch (e) {
-          // Try next
+      try {
+        // Wait for the Save File link to appear
+        await this.page.waitForSelector('#btnSaveLinkText, a:has-text("Save File")', { 
+          state: 'visible', 
+          timeout: 30000 
+        });
+        this.log('success', '✅ Save File button appeared');
+        
+        // Set up download promise before clicking
+        const downloadPromise = this.page.waitForEvent('download', { timeout: 30000 });
+        
+        // Click the Save File button
+        const saveBtn = await this.page.$('#btnSaveLinkText') || await this.page.$('a:has-text("Save File")');
+        if (saveBtn) {
+          await saveBtn.click();
+          this.log('success', '✅ Clicked "Save File"');
+          saveClicked = true;
+          
+          this.log('info', '⏳ Waiting for download to complete...');
+          const download = await downloadPromise;
+          
+          const date = new Date().toISOString().split('T')[0];
+          const sanitizedLocation = this.currentSwapUser.replace(/[^a-zA-Z0-9-]/g, '_');
+          const filename = `DX_Not_Ready_${sanitizedLocation}_${date}.xlsx`;
+          const filepath = path.join(this.downloadPath, filename);
+          
+          await download.saveAs(filepath);
+          this.log('success', `✅ Downloaded: ${filename}`);
+          
+          return { count: recordCount, downloaded: true, filename };
         }
+      } catch (e) {
+        this.log('error', `❌ Save File button not found: ${e.message}`);
       }
       
       if (!saveClicked) {
-        this.log('info', '   "Save File" button not found, download might start automatically');
+        throw new Error('Save File button not found');
       }
-      
-      this.log('info', '⏳ Waiting for download to complete...');
-      const download = await downloadPromise;
-      
-      const date = new Date().toISOString().split('T')[0];
-      const sanitizedLocation = this.currentSwapUser.replace(/[^a-zA-Z0-9-]/g, '_');
-      const filename = `DX_Not_Ready_${sanitizedLocation}_${date}.xlsx`;
-      const filepath = path.join(this.downloadPath, filename);
-      
-      await download.saveAs(filepath);
-      this.log('success', `✅ Downloaded: ${filename}`);
-      
-      return { count: recordCount, downloaded: true, filename };
     } catch (e) {
       this.log('error', `❌ Export failed: ${e.message}`);
       throw new Error('Export button not found or download failed');
