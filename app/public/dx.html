@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>EOE Report - Kinnser Dashboard</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='0.9em' font-size='90'>📋</text></svg>">
+  <title>DX Report - Kinnser Dashboard</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='0.9em' font-size='90'>🩺</text></svg>">
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -315,9 +315,6 @@
         <button onclick="window.location.href='/deviation'" style="padding: 10px 20px; background: #0ea5e9; color: white; border: 2px solid #0284c7; border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer; transition: all 0.2s;">
           📊 Deviation Report
         </button>
-        <button onclick="window.location.href='/eoe'" style="padding: 10px 20px; background: #10b981; color: white; border: 2px solid #059669; border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer; transition: all 0.2s;">
-          📋 EOE Report
-        </button>
         <button onclick="window.location.href='/dx'" style="padding: 10px 20px; background: #8b5cf6; color: white; border: 2px solid #7c3aed; border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer; transition: all 0.2s;">
           🩺 DX Report
         </button>
@@ -327,8 +324,8 @@
     <div class="top-section">
       <div class="controls-panel">
         <header>
-          <h1>📋 EOE Not Ready Dashboard</h1>
-          <p class="subtitle">Track EOE Not Ready claims across locations • 📅 Auto-download: Daily at 2:00 PM IST (8:30 AM UTC)</p>
+          <h1>🩺 Missing Diagnosis Dashboard</h1>
+          <p class="subtitle">Track missing diagnosis records across locations • 📅 Auto-download: Daily at 2:30 PM IST (9:00 AM UTC)</p>
         </header>
 
         <div class="controls">
@@ -385,7 +382,7 @@
       logs.forEach(log => addLogEntry(log));
     });
 
-    socket.on('eoe-complete', (result) => {
+    socket.on('dx-complete', (result) => {
       loadData();
       if (result.success) {
         setStatus('ok', 'Download complete');
@@ -411,7 +408,7 @@
       container.innerHTML = '<div class="loading">Loading data...</div>';
       
       try {
-        const response = await fetch('/api/eoe/detailed-analytics');
+        const response = await fetch('/api/dx/detailed-analytics');
         detailedData = await response.json();
         
         renderCharts();
@@ -429,62 +426,416 @@
       charts = {};
       
       if (!detailedData || Object.keys(detailedData.byOffice).length === 0) {
-        container.innerHTML = '<div class="no-data">No EOE data available. Click "Download Now" to fetch data.</div>';
+        container.innerHTML = '<div class="no-data">No DX data available. Click "Download Now" to fetch data.</div>';
         return;
       }
       
       container.innerHTML = '';
       
-      // 1. Root Cause by Office (Stacked Bar)
-      createRootCauseByOfficeChart(container);
+      // 1. Missing Diagnosis Count by Office
+      createMissingDxByOfficeChart(container);
       
-      // 2. Overall Root Cause Summary (Horizontal Bar)
-      createOverallRootCauseSummaryChart(container);
+      // 2. % Missing Diagnosis by Office
+      createPercentMissingDxChart(container);
       
-      // 3. RAP Risk Distribution by Office (Stacked Column)
-      createRiskDistributionChart(container);
+      // 3. Aging Buckets
+      createAgingBucketsChart(container);
       
-      // 4. Office Comparison - Total EOE Not Ready (Grouped Bar)
-      createOfficeComparisonChart(container);
+      // 4. RAP Risk Buckets
+      createRAPRiskBucketsChart(container);
       
-      // 5. 7-Day Trend Line (All Offices)
-      create7DayTrendChart(container);
+      // 5. Missing Diagnosis Trend Over Time
+      createTrendChart(container);
       
-      // Add Risk Classification Info Box before Risk Heatmap
-      const infoBox = document.createElement('div');
-      infoBox.className = 'info-box';
-      infoBox.style.gridColumn = '1 / -1';
-      infoBox.innerHTML = `
-        <div class="info-box-title">📊 Risk Bucket Classification</div>
-        <div class="info-box-content">
-          EOE records are categorized by days pending based on the "Days Until RAP Cancellation" field:
-          <div class="risk-legend">
-            <div class="risk-item">
-              <span class="risk-badge risk-badge-critical">Critical</span>
-              <span>0-3 days (Immediate action required)</span>
-            </div>
-            <div class="risk-item">
-              <span class="risk-badge risk-badge-high">High</span>
-              <span>4-7 days (Urgent attention needed)</span>
-            </div>
-            <div class="risk-item">
-              <span class="risk-badge risk-badge-medium">Medium</span>
-              <span>8-14 days (Address soon)</span>
-            </div>
-            <div class="risk-item">
-              <span class="risk-badge risk-badge-low">Low</span>
-              <span>15+ days (Lower priority)</span>
-            </div>
-          </div>
-        </div>
-      `;
-      container.appendChild(infoBox);
+      // 6. Top 5 Referral Sources
+      createTopReferralSourcesChart(container);
       
-      // 6. Risk Heatmap
-      createRiskHeatmap(container);
+      // 7. Detail Table
+      createDetailTable(container);
     }
 
-    function createRootCauseByOfficeChart(container) {
+    function createMissingDxByOfficeChart(container) {
+      const card = document.createElement('div');
+      card.className = 'chart-card';
+      card.innerHTML = `
+        <div class="chart-title">Missing Diagnosis Count by Office</div>
+        <div class="chart-container">
+          <canvas id="missingDxByOffice"></canvas>
+        </div>
+      `;
+      container.appendChild(card);
+      
+      const ctx = document.getElementById('missingDxByOffice').getContext('2d');
+      
+      const gradient = ctx.createLinearGradient(0, 0, 0, 400);
+      gradient.addColorStop(0, '#8b5cf6');
+      gradient.addColorStop(1, '#6366f1');
+      
+      charts.missingDxByOffice = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: allOffices,
+          datasets: [{
+            label: 'Missing Diagnosis Count',
+            data: allOffices.map(office => detailedData.byOffice[office]?.missingDx || 0),
+            backgroundColor: gradient,
+            borderColor: '#7c3aed',
+            borderWidth: 2,
+            borderRadius: 8
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              backgroundColor: 'rgba(0, 0, 0, 0.8)',
+              padding: 12
+            }
+          },
+          scales: {
+            y: {
+              beginAtZero: true,
+              ticks: { precision: 0 }
+            }
+          }
+        }
+      });
+    }
+
+    function createPercentMissingDxChart(container) {
+      const card = document.createElement('div');
+      card.className = 'chart-card';
+      card.innerHTML = `
+        <div class="chart-title">% Missing Diagnosis by Office</div>
+        <div class="chart-container">
+          <canvas id="percentMissingDx"></canvas>
+        </div>
+      `;
+      container.appendChild(card);
+      
+      const ctx = document.getElementById('percentMissingDx').getContext('2d');
+      
+      charts.percentMissingDx = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: allOffices,
+          datasets: [{
+            label: '% Missing Diagnosis',
+            data: allOffices.map(office => detailedData.byOffice[office]?.percentMissingDx || 0),
+            backgroundColor: '#f59e0b',
+            borderColor: '#d97706',
+            borderWidth: 2,
+            borderRadius: 8
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              backgroundColor: 'rgba(0, 0, 0, 0.8)',
+              padding: 12,
+              callbacks: {
+                label: function(context) {
+                  return context.parsed.y + '%';
+                }
+              }
+            }
+          },
+          scales: {
+            y: {
+              beginAtZero: true,
+              max: 100,
+              ticks: {
+                callback: function(value) {
+                  return value + '%';
+                }
+              }
+            }
+          }
+        }
+      });
+    }
+
+    function createAgingBucketsChart(container) {
+      const card = document.createElement('div');
+      card.className = 'chart-card';
+      card.innerHTML = `
+        <div class="chart-title">Aging Buckets</div>
+        <div class="chart-container">
+          <canvas id="agingBuckets"></canvas>
+        </div>
+      `;
+      container.appendChild(card);
+      
+      const ctx = document.getElementById('agingBuckets').getContext('2d');
+      
+      const buckets = ['0-2 days', '3-7 days', '8-14 days', '15+ days'];
+      const colors = ['#10b981', '#f59e0b', '#f97316', '#ef4444'];
+      
+      charts.agingBuckets = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: buckets,
+          datasets: [{
+            label: 'Count',
+            data: buckets.map(bucket => detailedData.agingBuckets[bucket] || 0),
+            backgroundColor: colors,
+            borderColor: colors,
+            borderWidth: 2,
+            borderRadius: 8
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              backgroundColor: 'rgba(0, 0, 0, 0.8)',
+              padding: 12
+            }
+          },
+          scales: {
+            y: {
+              beginAtZero: true,
+              ticks: { precision: 0 }
+            }
+          }
+        }
+      });
+    }
+
+    function createRAPRiskBucketsChart(container) {
+      const card = document.createElement('div');
+      card.className = 'chart-card';
+      card.innerHTML = `
+        <div class="chart-title">RAP Risk Buckets</div>
+        <div class="chart-container">
+          <canvas id="rapRiskBuckets"></canvas>
+        </div>
+      `;
+      container.appendChild(card);
+      
+      const ctx = document.getElementById('rapRiskBuckets').getContext('2d');
+      
+      const buckets = ['Critical (0-3d)', 'High (4-7d)', 'Medium (8-14d)', 'Low (15+d)'];
+      const colors = ['#ef4444', '#f97316', '#f59e0b', '#10b981'];
+      
+      charts.rapRiskBuckets = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: buckets,
+          datasets: [{
+            label: 'Count',
+            data: buckets.map(bucket => detailedData.rapRiskBuckets[bucket] || 0),
+            backgroundColor: colors,
+            borderColor: colors,
+            borderWidth: 2,
+            borderRadius: 8
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              backgroundColor: 'rgba(0, 0, 0, 0.8)',
+              padding: 12
+            }
+          },
+          scales: {
+            y: {
+              beginAtZero: true,
+              ticks: { precision: 0 }
+            }
+          }
+        }
+      });
+    }
+
+    function createTrendChart(container) {
+      const card = document.createElement('div');
+      card.className = 'chart-card full-width';
+      card.innerHTML = `
+        <div class="chart-title">Missing Diagnosis Trend Over Time</div>
+        <div class="chart-container">
+          <canvas id="trendChart"></canvas>
+        </div>
+      `;
+      container.appendChild(card);
+      
+      const ctx = document.getElementById('trendChart').getContext('2d');
+      
+      const allDates = Object.keys(detailedData.byDate).sort();
+      const last7Dates = allDates.slice(-7);
+      
+      const officeColors = [
+        '#8b5cf6', '#6366f1', '#3b82f6', '#0ea5e9', '#06b6d4', 
+        '#14b8a6', '#10b981', '#84cc16', '#eab308'
+      ];
+      
+      const datasets = allOffices.map((office, index) => ({
+        label: office,
+        data: last7Dates.map(date => detailedData.byDate[date]?.[office] || 0),
+        borderColor: officeColors[index],
+        backgroundColor: officeColors[index] + '33',
+        borderWidth: 2,
+        tension: 0.3,
+        fill: false
+      }));
+      
+      charts.trendChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: last7Dates,
+          datasets: datasets
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { 
+              position: 'top',
+              labels: { boxWidth: 12, padding: 10 }
+            },
+            tooltip: {
+              backgroundColor: 'rgba(0, 0, 0, 0.8)',
+              padding: 12
+            }
+          },
+          scales: {
+            y: {
+              beginAtZero: true,
+              ticks: { precision: 0 }
+            }
+          }
+        }
+      });
+    }
+
+    function createTopReferralSourcesChart(container) {
+      const card = document.createElement('div');
+      card.className = 'chart-card';
+      card.innerHTML = `
+        <div class="chart-title">Top 5 Referral Sources</div>
+        <div class="chart-container">
+          <canvas id="topReferralSources"></canvas>
+        </div>
+      `;
+      container.appendChild(card);
+      
+      const ctx = document.getElementById('topReferralSources').getContext('2d');
+      
+      const sorted = Object.entries(detailedData.referralSources || {})
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5);
+      
+      charts.topReferralSources = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: sorted.map(([source]) => source),
+          datasets: [{
+            label: 'Count',
+            data: sorted.map(([, count]) => count),
+            backgroundColor: '#06b6d4',
+            borderColor: '#0891b2',
+            borderWidth: 2,
+            borderRadius: 8
+          }]
+        },
+        options: {
+          indexAxis: 'y',
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              backgroundColor: 'rgba(0, 0, 0, 0.8)',
+              padding: 12
+            }
+          },
+          scales: {
+            x: {
+              beginAtZero: true,
+              ticks: { precision: 0 }
+            }
+          }
+        }
+      });
+    }
+
+    function createDetailTable(container) {
+      const card = document.createElement('div');
+      card.className = 'chart-card full-width';
+      card.innerHTML = `
+        <div class="chart-title">Missing Diagnosis Details</div>
+        <div style="overflow-x: auto;">
+          <table class="heatmap-table" id="detailTable"></table>
+        </div>
+      `;
+      container.appendChild(card);
+      
+      const table = document.getElementById('detailTable');
+      
+      let html = '<thead><tr><th>Office</th><th>Date</th><th>Patient Name</th><th>MRN</th><th>Aging</th><th>RAP Days</th><th>Referral Source</th></tr></thead>';
+      html += '<tbody>';
+      
+      const records = detailedData.missingDxRecords || [];
+      const displayRecords = records.slice(0, 100); // Show first 100
+      
+      displayRecords.forEach(record => {
+        html += `<tr>
+          <td style="text-align: left;">${record.office}</td>
+          <td>${record.date}</td>
+          <td style="text-align: left;">${record.patientName}</td>
+          <td>${record.mrn}</td>
+          <td>${record.aging}</td>
+          <td>${record.rapDays}</td>
+          <td style="text-align: left;">${record.referralSource}</td>
+        </tr>`;
+      });
+      
+      html += '</tbody>';
+      table.innerHTML = html;
+      
+      if (records.length > 100) {
+        const note = document.createElement('p');
+        note.style.marginTop = '10px';
+        note.style.fontSize = '13px';
+        note.style.color = '#64748b';
+        note.textContent = `Showing first 100 of ${records.length} records`;
+        card.appendChild(note);
+      }
+    }
+
+    async function downloadDXReport() {
+      const btn = document.getElementById('downloadBtn');
+      btn.disabled = true;
+      btn.textContent = '⏳ Downloading...';
+      setStatus('ok', 'Downloading...');
+      
+      try {
+        const response = await fetch('/api/dx/download', { method: 'POST' });
+        const result = await response.json();
+        
+        if (result.success) {
+          setStatus('ok', 'Complete!');
+        } else {
+          throw new Error(result.error || 'Download failed');
+        }
+      } catch (error) {
+        setStatus('error', 'Failed');
+        addLogEntry({ type: 'error', message: `Error: ${error.message}`, timestamp: new Date().toISOString() });
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '⬇️ Download Now';
+      }
+    }
       const card = document.createElement('div');
       card.className = 'chart-card full-width';
       card.innerHTML = `
@@ -807,30 +1158,6 @@
       if (type === 'high') return 'heatmap-cell-high';
       if (type === 'medium') return 'heatmap-cell-medium';
       return 'heatmap-cell-low';
-    }
-
-    async function downloadEOEReport() {
-      const btn = document.getElementById('downloadBtn');
-      btn.disabled = true;
-      btn.textContent = '⏳ Downloading...';
-      setStatus('ok', 'Downloading...');
-      
-      try {
-        const response = await fetch('/api/eoe/download', { method: 'POST' });
-        const result = await response.json();
-        
-        if (result.success) {
-          setStatus('ok', 'Complete!');
-        } else {
-          throw new Error(result.error || 'Download failed');
-        }
-      } catch (error) {
-        setStatus('error', 'Failed');
-        addLogEntry({ type: 'error', message: `Error: ${error.message}`, timestamp: new Date().toISOString() });
-      } finally {
-        btn.disabled = false;
-        btn.textContent = '⬇️ Download Now';
-      }
     }
 
     function setStatus(type, message) {

@@ -310,6 +310,11 @@ app.get('/eoe', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'eoe.html'));
 });
 
+// Serve DX report page
+app.get('/dx', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'dx.html'));
+});
+
 // API: Trigger EOE report download
 app.post('/api/eoe/download', async (req, res) => {
   try {
@@ -355,6 +360,253 @@ app.post('/api/eoe/download', async (req, res) => {
     io.emit('log', { type: 'error', message: `Error: ${errorMsg}` });
     io.emit('eoe-complete', { success: false, error: errorMsg });
     res.status(500).json({ success: false, error: errorMsg });
+  }
+});
+
+// API: Trigger DX report download
+app.post('/api/dx/download', async (req, res) => {
+  try {
+    downloadLogs = []; // Clear previous logs
+    
+    const DXReportDownloader = (await import('./automation/dxDownloader.js')).default;
+    const downloader = new DXReportDownloader(io);
+    const results = await downloader.run();
+    
+    // Store results in a JSON file
+    const dxDataPath = path.join(DATA_DIR, 'dx_data.json');
+    let existingData = [];
+    try {
+      const fileContent = await fs.readFile(dxDataPath, 'utf-8');
+      existingData = JSON.parse(fileContent);
+    } catch (e) {
+      // File doesn't exist yet
+    }
+    
+    // Update or add new results - replace existing records for same date and location
+    results.forEach(newRecord => {
+      const existingIndex = existingData.findIndex(
+        record => record.location === newRecord.location && record.date === newRecord.date
+      );
+      
+      if (existingIndex !== -1) {
+        existingData[existingIndex] = newRecord;
+      } else {
+        existingData.push(newRecord);
+      }
+    });
+    
+    await fs.writeFile(dxDataPath, JSON.stringify(existingData, null, 2));
+    
+    // Notify clients to refresh data
+    io.emit('dx-complete', { success: true, results });
+    
+    res.json({ success: true, results });
+  } catch (error) {
+    const errorMsg = error.message;
+    io.emit('log', { type: 'error', message: `Error: ${errorMsg}` });
+    io.emit('dx-complete', { success: false, error: errorMsg });
+    res.status(500).json({ success: false, error: errorMsg });
+  }
+});
+
+// API: Get DX analytics
+app.get('/api/dx/analytics', async (req, res) => {
+  try {
+    const dxDataPath = path.join(DATA_DIR, 'dx_data.json');
+    const fileContent = await fs.readFile(dxDataPath, 'utf-8');
+    const data = JSON.parse(fileContent);
+    
+    // Group by location
+    const analytics = {};
+    data.forEach(record => {
+      if (!analytics[record.location]) {
+        analytics[record.location] = [];
+      }
+      analytics[record.location].push({
+        date: record.date,
+        count: record.count
+      });
+    });
+    
+    // Sort by date
+    Object.keys(analytics).forEach(location => {
+      analytics[location].sort((a, b) => a.date.localeCompare(b.date));
+    });
+    
+    res.json(analytics);
+  } catch (error) {
+    res.json({});
+  }
+});
+
+// API: Get detailed DX analytics from Excel files
+app.get('/api/dx/detailed-analytics', async (req, res) => {
+  try {
+    const files = await fs.readdir(DATA_DIR);
+    const dxFiles = files.filter(f => f.startsWith('DX_Not_Ready_') && f.endsWith('.xlsx'));
+    
+    const allOffices = [
+      'Nightingale - Taunton',
+      'Aspire - Dublin',
+      'Aspire - San Diego',
+      'Aspire - Scottsdale',
+      'Aspire - Yuba City',
+      'Nightingale - Las Vegas',
+      'Nightingale - Minnetonka',
+      'Nightingale - Pompano Beach',
+      'Nightingale - Willowbrook'
+    ];
+    
+    const detailedData = {
+      byOffice: {},
+      byDate: {},
+      agingBuckets: {},
+      rapRiskBuckets: {},
+      referralSources: {},
+      missingDxRecords: []
+    };
+    
+    // Initialize all offices
+    allOffices.forEach(office => {
+      detailedData.byOffice[office] = {
+        total: 0,
+        missingDx: 0,
+        percentMissingDx: 0,
+        agingBuckets: {
+          '0-2 days': 0,
+          '3-7 days': 0,
+          '8-14 days': 0,
+          '15+ days': 0
+        },
+        rapRiskBuckets: {
+          'Critical (0-3d)': 0,
+          'High (4-7d)': 0,
+          'Medium (8-14d)': 0,
+          'Low (15+d)': 0
+        },
+        byDate: {}
+      };
+    });
+    
+    for (const file of dxFiles) {
+      const filepath = path.join(DATA_DIR, file);
+      const match = file.match(/DX_Not_Ready_(.+)_(\d{4}-\d{2}-\d{2})\.xlsx/);
+      
+      if (match) {
+        const location = match[1].replace(/_/g, ' ');
+        const date = match[2];
+        
+        try {
+          const workbook = XLSX.readFile(filepath);
+          const sheet = workbook.Sheets[workbook.SheetNames[0]];
+          const allRows = XLSX.utils.sheet_to_json(sheet, { range: 1 });
+          
+          if (allRows.length === 0) continue;
+          
+          const headerRow = allRows[0];
+          const records = allRows.slice(1);
+          
+          // Map column names
+          const colMap = {};
+          Object.keys(headerRow).forEach(key => {
+            const value = headerRow[key];
+            if (value === 'Diagnosis' || value === 'Primary Diagnosis') colMap.diagnosis = key;
+            else if (value === 'Days Until RAP Cancellation') colMap.rapDays = key;
+            else if (value === 'Aging') colMap.aging = key;
+            else if (value === 'Referral Source' || value === 'Intake User') colMap.referralSource = key;
+            else if (value === 'Patient Name') colMap.patientName = key;
+            else if (value === 'MRN') colMap.mrn = key;
+          });
+          
+          detailedData.byOffice[location].total += records.length;
+          
+          if (!detailedData.byDate[date]) {
+            detailedData.byDate[date] = {};
+            allOffices.forEach(office => {
+              detailedData.byDate[date][office] = 0;
+            });
+          }
+          
+          records.forEach(record => {
+            const diagnosis = record[colMap.diagnosis] || '';
+            const isMissingDx = !diagnosis || diagnosis.toString().trim() === '';
+            
+            if (isMissingDx) {
+              detailedData.byOffice[location].missingDx++;
+              detailedData.byDate[date][location]++;
+              
+              // Aging buckets
+              const aging = parseInt(record[colMap.aging]) || 0;
+              if (aging <= 2) {
+                detailedData.byOffice[location].agingBuckets['0-2 days']++;
+                detailedData.agingBuckets['0-2 days'] = (detailedData.agingBuckets['0-2 days'] || 0) + 1;
+              } else if (aging <= 7) {
+                detailedData.byOffice[location].agingBuckets['3-7 days']++;
+                detailedData.agingBuckets['3-7 days'] = (detailedData.agingBuckets['3-7 days'] || 0) + 1;
+              } else if (aging <= 14) {
+                detailedData.byOffice[location].agingBuckets['8-14 days']++;
+                detailedData.agingBuckets['8-14 days'] = (detailedData.agingBuckets['8-14 days'] || 0) + 1;
+              } else {
+                detailedData.byOffice[location].agingBuckets['15+ days']++;
+                detailedData.agingBuckets['15+ days'] = (detailedData.agingBuckets['15+ days'] || 0) + 1;
+              }
+              
+              // RAP Risk buckets
+              const rapDays = parseInt(record[colMap.rapDays]) || 0;
+              if (rapDays <= 3) {
+                detailedData.byOffice[location].rapRiskBuckets['Critical (0-3d)']++;
+                detailedData.rapRiskBuckets['Critical (0-3d)'] = (detailedData.rapRiskBuckets['Critical (0-3d)'] || 0) + 1;
+              } else if (rapDays <= 7) {
+                detailedData.byOffice[location].rapRiskBuckets['High (4-7d)']++;
+                detailedData.rapRiskBuckets['High (4-7d)'] = (detailedData.rapRiskBuckets['High (4-7d)'] || 0) + 1;
+              } else if (rapDays <= 14) {
+                detailedData.byOffice[location].rapRiskBuckets['Medium (8-14d)']++;
+                detailedData.rapRiskBuckets['Medium (8-14d)'] = (detailedData.rapRiskBuckets['Medium (8-14d)'] || 0) + 1;
+              } else {
+                detailedData.byOffice[location].rapRiskBuckets['Low (15+d)']++;
+                detailedData.rapRiskBuckets['Low (15+d)'] = (detailedData.rapRiskBuckets['Low (15+d)'] || 0) + 1;
+              }
+              
+              // Referral sources
+              const referralSource = record[colMap.referralSource] || 'Unknown';
+              detailedData.referralSources[referralSource] = (detailedData.referralSources[referralSource] || 0) + 1;
+              
+              // Store detail record
+              detailedData.missingDxRecords.push({
+                office: location,
+                date: date,
+                patientName: record[colMap.patientName] || '',
+                mrn: record[colMap.mrn] || '',
+                aging: aging,
+                rapDays: rapDays,
+                referralSource: referralSource
+              });
+            }
+          });
+          
+          // Calculate percentage
+          if (detailedData.byOffice[location].total > 0) {
+            detailedData.byOffice[location].percentMissingDx = 
+              Math.round((detailedData.byOffice[location].missingDx / detailedData.byOffice[location].total) * 100);
+          }
+          
+        } catch (e) {
+          console.error(`Error parsing ${file}:`, e.message);
+        }
+      }
+    }
+    
+    res.json(detailedData);
+  } catch (error) {
+    console.error('Error in DX detailed analytics:', error);
+    res.json({
+      byOffice: {},
+      byDate: {},
+      agingBuckets: {},
+      rapRiskBuckets: {},
+      referralSources: {},
+      missingDxRecords: []
+    });
   }
 });
 
@@ -710,5 +962,50 @@ cron.schedule(eoeSchedule, async () => {
     console.error('❌ Scheduled EOE report failed:', error.message);
     io.emit('log', { type: 'error', message: `Scheduled EOE report failed: ${error.message}` });
     io.emit('eoe-complete', { success: false, error: error.message });
+  }
+});
+
+// Schedule automatic DX reports
+const dxSchedule = process.env.DX_SCHEDULE || '0 9 * * *';
+console.log(`🩺 Scheduled DX reports: ${dxSchedule} (Server timezone: ${Intl.DateTimeFormat().resolvedOptions().timeZone})`);
+
+cron.schedule(dxSchedule, async () => {
+  console.log('⏰ Running scheduled DX report...');
+  try {
+    const DXReportDownloader = (await import('./automation/dxDownloader.js')).default;
+    const downloader = new DXReportDownloader(io);
+    const results = await downloader.run();
+    
+    // Store results
+    const dxDataPath = path.join(DATA_DIR, 'dx_data.json');
+    let existingData = [];
+    try {
+      const fileContent = await fs.readFile(dxDataPath, 'utf-8');
+      existingData = JSON.parse(fileContent);
+    } catch (e) {
+      // File doesn't exist yet
+    }
+    
+    // Update or add new results
+    results.forEach(newRecord => {
+      const existingIndex = existingData.findIndex(
+        record => record.location === newRecord.location && record.date === newRecord.date
+      );
+      
+      if (existingIndex !== -1) {
+        existingData[existingIndex] = newRecord;
+      } else {
+        existingData.push(newRecord);
+      }
+    });
+    
+    await fs.writeFile(dxDataPath, JSON.stringify(existingData, null, 2));
+    
+    io.emit('dx-complete', { success: true, results });
+    console.log('✅ Scheduled DX report completed successfully');
+  } catch (error) {
+    console.error('❌ Scheduled DX report failed:', error.message);
+    io.emit('log', { type: 'error', message: `Scheduled DX report failed: ${error.message}` });
+    io.emit('dx-complete', { success: false, error: error.message });
   }
 });

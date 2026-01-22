@@ -20,7 +20,8 @@ const SWAP_USERS = [
   'Aspire - Yuba City',
   'Nightingale - Las Vegas',
   'Nightingale - Minnetonka',
-  'Nightingale - Pompano Beach'
+  'Nightingale - Pompano Beach',
+  'Nightingale - Willowbrook'
 ];
 
 class KinnserReportDownloader {
