@@ -2,6 +2,7 @@ import { chromium } from 'playwright';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
+import fs from 'fs/promises';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, '..', '.env') });
@@ -39,6 +40,23 @@ class DXReportDownloader {
     console.log(`[${timestamp}]${message}`);
     if (this.io) {
       this.io.emit('log', { type, message, timestamp: new Date().toISOString() });
+    }
+  }
+
+  async deleteOldDXFiles() {
+    this.log('info', '🗑️ Deleting old DX files...');
+    try {
+      const files = await fs.readdir(this.downloadPath);
+      const dxFiles = files.filter(f => f.startsWith('DX_Not_Ready_') && f.endsWith('.xlsx'));
+      
+      for (const file of dxFiles) {
+        await fs.unlink(path.join(this.downloadPath, file));
+        this.log('info', `   Deleted: ${file}`);
+      }
+      
+      this.log('success', `✅ Deleted ${dxFiles.length} old DX files`);
+    } catch (error) {
+      this.log('error', `❌ Error deleting old files: ${error.message}`);
     }
   }
 
@@ -412,6 +430,9 @@ class DXReportDownloader {
 
   async run() {
     try {
+      // Delete old DX files before downloading new ones
+      await this.deleteOldDXFiles();
+      
       await this.initialize();
       await this.login();
       
