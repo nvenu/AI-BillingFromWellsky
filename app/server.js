@@ -505,7 +505,7 @@ app.get('/api/dx/detailed-analytics', async (req, res) => {
           if (allRows.length === 0) continue;
           
           const headerRow = allRows[0];
-          const records = allRows.slice(1);
+          let records = allRows.slice(1);
           
           // Map column names - handle the actual Excel structure
           const colMap = {};
@@ -526,6 +526,24 @@ app.get('/api/dx/detailed-analytics', async (req, res) => {
           
           // Debug: log column mapping
           console.log(`[DX] File: ${file}, Columns mapped:`, colMap);
+          
+          // Deduplicate records based on Patient Name + MRN
+          const seen = new Set();
+          const originalCount = records.length;
+          records = records.filter(record => {
+            const patientName = record[colMap.patientName] || '';
+            const mrn = record[colMap.mrn] || '';
+            const key = `${patientName}|${mrn}`;
+            if (seen.has(key)) {
+              return false; // Duplicate, skip
+            }
+            seen.add(key);
+            return true;
+          });
+          const duplicatesRemoved = originalCount - records.length;
+          if (duplicatesRemoved > 0) {
+            console.log(`[DX] ${file}: Removed ${duplicatesRemoved} duplicate records`);
+          }
           
           detailedData.byOffice[location].total += records.length;
           
