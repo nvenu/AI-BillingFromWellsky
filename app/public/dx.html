@@ -3,9 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>DX Report - Kinnser Dashboard</title>
+  <title>Missing Diagnosis Dashboard - Kinnser</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='0.9em' font-size='90'>🩺</text></svg>">
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@2.0.0/dist/chartjs-plugin-annotation.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.0.0"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -21,72 +23,71 @@
       min-height: 100vh;
       background: #F1F5F9;
     }
+    .nav-bar {
+      padding: 15px 30px;
+      background: #ffffff;
+      border-bottom: 2px solid #CBD5E1;
+      display: flex;
+      align-items: center;
+      gap: 15px;
+    }
+    .nav-bar span {
+      font-size: 14px;
+      font-weight: 800;
+      color: #64748b;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    .nav-btn {
+      padding: 10px 20px;
+      border: 2px solid;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
     .top-section {
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 0;
       border-bottom: 2px solid #CBD5E1;
       background: #ffffff;
-      flex-shrink: 0;
     }
     .controls-panel {
-      padding: 30px;
+      padding: 25px 30px;
       background: #ffffff;
       border-right: 1px solid #E2E8F0;
-      overflow-y: auto;
-      max-height: 50vh;
     }
     .log-panel {
-      padding: 30px;
+      padding: 25px 30px;
       background: #263238;
+      max-height: 200px;
       overflow-y: auto;
-      max-height: 50vh;
-    }
-    .charts-panel {
-      padding: 30px;
-      background: #F1F5F9;
-      flex: 1;
     }
     header {
-      margin-bottom: 20px;
-      padding-bottom: 15px;
+      margin-bottom: 15px;
+      padding-bottom: 12px;
       border-bottom: 2px solid #CBD5E1;
     }
     h1 { 
-      font-size: 26px; 
+      font-size: 24px; 
       font-weight: 900; 
       color: #1e293b;
       margin-bottom: 5px;
-      letter-spacing: -0.5px;
     }
     .subtitle { 
-      font-size: 13px; 
+      font-size: 12px; 
       color: #64748b; 
       font-weight: 600;
     }
     .controls {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-      gap: 12px;
-      padding: 20px;
-      background: #ffffff;
-      border-radius: 12px;
-      border: 2px solid #CBD5E1;
-    }
-    .control-group { 
-      display: flex; 
-      flex-direction: column; 
-      gap: 8px; 
-    }
-    label { 
-      font-size: 11px; 
-      font-weight: 800; 
-      color: #64748b; 
-      text-transform: uppercase;
-      letter-spacing: 1px;
+      display: flex;
+      gap: 15px;
+      align-items: center;
     }
     button {
-      padding: 12px 16px;
+      padding: 12px 20px;
       border: 2px solid #CBD5E1;
       border-radius: 8px;
       font-size: 14px;
@@ -98,24 +99,21 @@
     }
     button:hover {
       background: #E2E8F0;
-      border-color: #94a3b8;
       transform: translateY(-1px);
     }
-    .btn-success {
-      background: #10b981;
+    .btn-primary {
+      background: #8b5cf6;
       color: white;
-      border-color: #059669;
+      border-color: #7c3aed;
     }
-    .btn-success:hover {
-      background: #059669;
-      border-color: #047857;
+    .btn-primary:hover {
+      background: #7c3aed;
     }
     .status {
       padding: 10px 16px;
       border-radius: 8px;
       font-size: 13px;
       font-weight: 700;
-      text-align: center;
     }
     .status-ok {
       background: #d1fae5;
@@ -127,221 +125,214 @@
       color: #991b1b;
       border: 2px solid #ef4444;
     }
+    
+    /* KPI Section */
+    .kpi-section {
+      padding: 20px 30px;
+      background: #ffffff;
+      border-bottom: 2px solid #CBD5E1;
+    }
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 20px;
+    }
+    .kpi-card {
+      background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
+      border-radius: 12px;
+      padding: 20px;
+      color: white;
+      text-align: center;
+      box-shadow: 0 4px 12px rgba(139, 92, 246, 0.3);
+    }
+    .kpi-card.warning {
+      background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+      box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
+    }
+    .kpi-card.danger {
+      background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+      box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
+    }
+    .kpi-value {
+      font-size: 36px;
+      font-weight: 900;
+      margin-bottom: 5px;
+    }
+    .kpi-label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      opacity: 0.9;
+    }
+    
+    /* Charts Section */
+    .charts-panel {
+      padding: 25px 30px;
+      background: #F1F5F9;
+    }
     .charts-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
-      gap: 25px;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 20px;
     }
     .chart-card {
       background: #ffffff;
       border-radius: 12px;
-      padding: 25px;
+      padding: 20px;
       border: 2px solid #CBD5E1;
-      transition: all 0.3s;
-      position: relative;
-      overflow: hidden;
     }
     .chart-card:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 8px 16px rgba(0, 0, 0, 0.1);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
       border-color: #94a3b8;
-      background: #E2E8F0;
     }
     .chart-card.full-width {
       grid-column: 1 / -1;
     }
     .chart-title {
-      font-size: 18px;
+      font-size: 16px;
       font-weight: 800;
       color: #1e293b;
-      margin-bottom: 18px;
-      padding-bottom: 12px;
-      border-bottom: 2px solid #CBD5E1;
-      letter-spacing: -0.3px;
+      margin-bottom: 5px;
+    }
+    .chart-subtitle {
+      font-size: 11px;
+      color: #64748b;
+      margin-bottom: 15px;
+      font-style: italic;
     }
     .chart-container { 
       position: relative; 
-      height: 400px; 
+      height: 300px; 
     }
     .chart-container.tall { 
-      height: 500px; 
+      height: 350px; 
     }
     .loading, .no-data {
       text-align: center;
-      padding: 60px 20px;
+      padding: 40px 20px;
       color: #64748b;
       background: #ffffff;
       border-radius: 12px;
-      font-size: 16px;
+      font-size: 14px;
       font-weight: 600;
       border: 2px dashed #CBD5E1;
     }
+    
+    /* Log Viewer */
     .log-viewer {
       color: #ECEFF1;
-      font-family: 'SF Mono', 'Monaco', 'Menlo', 'Courier New', monospace;
-      font-size: 13px;
-      line-height: 1.6;
+      font-family: 'SF Mono', 'Monaco', 'Menlo', monospace;
+      font-size: 12px;
+      line-height: 1.5;
     }
     .log-viewer h3 {
       color: #fff;
-      font-size: 20px;
-      font-weight: 800;
-      margin-bottom: 20px;
-      padding-bottom: 15px;
-      border-bottom: 2px solid #475569;
-      letter-spacing: 0.5px;
+      font-size: 14px;
+      font-weight: 700;
+      margin-bottom: 10px;
     }
     .log-entry {
-      padding: 10px 14px;
-      margin-bottom: 6px;
-      border-radius: 8px;
+      padding: 6px 10px;
+      margin-bottom: 4px;
+      border-radius: 4px;
       background: rgba(255,255,255,0.05);
-      border-left: 4px solid transparent;
-      transition: all 0.2s;
-      backdrop-filter: blur(10px);
-    }
-    .log-entry:hover {
-      background: rgba(255,255,255,0.08);
-      transform: translateX(4px);
+      border-left: 3px solid transparent;
     }
     .log-time { 
       color: #B0BEC5; 
-      margin-right: 10px; 
-      font-size: 11px;
-      font-weight: 700;
+      margin-right: 8px; 
+      font-size: 10px;
     }
-    .log-info { 
-      color: #4DD0E1;
-      border-left-color: #4DD0E1;
-    }
-    .log-success { 
-      color: #81C784;
-      border-left-color: #81C784;
-    }
-    .log-error { 
-      color: #E57373;
-      border-left-color: #E57373;
-      background: rgba(229, 115, 115, 0.1);
-    }
-    .heatmap-container {
-      overflow-x: auto;
-    }
-    .heatmap-table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 13px;
-    }
-    .heatmap-table th,
-    .heatmap-table td {
-      padding: 12px;
-      text-align: center;
-      border: 1px solid #CBD5E1;
-    }
-    .heatmap-table th {
-      background: #475569;
-      color: white;
-      font-weight: 700;
-      text-transform: uppercase;
-      font-size: 12px;
-      letter-spacing: 0.5px;
-    }
-    .heatmap-table td {
-      font-weight: 600;
-      background: #ffffff;
-      color: #1e293b;
-    }
-    .heatmap-table tbody td:first-child {
-      text-align: left;
-      font-weight: 700;
-      color: #1e293b;
+    .log-info { color: #4DD0E1; border-left-color: #4DD0E1; }
+    .log-success { color: #81C784; border-left-color: #81C784; }
+    .log-error { color: #E57373; border-left-color: #E57373; }
+    
+    /* Detail Table */
+    .detail-section {
+      padding: 25px 30px;
       background: #F1F5F9;
     }
-    .heatmap-cell-0 { background: #E8F5E9; color: #2E7D32; }
-    .heatmap-cell-low { background: #FFF9C4; color: #F57F17; }
-    .heatmap-cell-medium { background: #FFE082; color: #E65100; }
-    .heatmap-cell-high { background: #FFAB91; color: #BF360C; }
-    .heatmap-cell-critical { background: #EF5350; color: white; }
-    .info-box {
-      background: #dbeafe;
-      border: 2px solid #3b82f6;
-      border-radius: 8px;
-      padding: 16px;
-      margin-bottom: 20px;
-      font-size: 13px;
-      line-height: 1.6;
+    .detail-card {
+      background: #ffffff;
+      border-radius: 12px;
+      padding: 20px;
+      border: 2px solid #CBD5E1;
     }
-    .info-box-title {
+    .detail-title {
+      font-size: 18px;
       font-weight: 800;
-      color: #1e40af;
-      margin-bottom: 8px;
-      font-size: 14px;
+      color: #1e293b;
+      margin-bottom: 15px;
+      padding-bottom: 10px;
+      border-bottom: 2px solid #CBD5E1;
     }
-    .info-box-content {
-      color: #1e3a8a;
+    .detail-table-container {
+      max-height: 400px;
+      overflow-y: auto;
     }
-    .risk-legend {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-      gap: 12px;
-      margin-top: 8px;
-    }
-    .risk-item {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-    .risk-badge {
-      padding: 4px 12px;
-      border-radius: 6px;
-      font-weight: 700;
+    .detail-table {
+      width: 100%;
+      border-collapse: collapse;
       font-size: 12px;
-      white-space: nowrap;
     }
-    .risk-badge-critical { background: #EF5350; color: white; }
-    .risk-badge-high { background: #FFAB91; color: #BF360C; }
-    .risk-badge-medium { background: #FFE082; color: #E65100; }
-    .risk-badge-low { background: #FFF9C4; color: #F57F17; }
+    .detail-table th {
+      background: #475569;
+      color: white;
+      padding: 10px 12px;
+      text-align: left;
+      font-weight: 700;
+      text-transform: uppercase;
+      font-size: 11px;
+      position: sticky;
+      top: 0;
+    }
+    .detail-table td {
+      padding: 10px 12px;
+      border-bottom: 1px solid #E2E8F0;
+    }
+    .detail-table tbody tr:hover {
+      background: #F1F5F9;
+    }
+    .rap-critical {
+      background: #fee2e2 !important;
+      color: #991b1b;
+      font-weight: 700;
+    }
+    .rap-high {
+      background: #ffedd5 !important;
+      color: #9a3412;
+      font-weight: 600;
+    }
+    .aging-highlight {
+      background: #fef3c7 !important;
+    }
   </style>
   <script src="/socket.io/socket.io.js"></script>
 </head>
 <body>
   <div class="container">
-    <div style="padding: 20px 30px; background: #ffffff; border-bottom: 2px solid #CBD5E1;">
-      <div style="display: flex; align-items: center; gap: 15px;">
-        <span style="font-size: 14px; font-weight: 800; color: #64748b; text-transform: uppercase; letter-spacing: 1px;">📑 Reports:</span>
-        <button onclick="window.location.href='/'" style="padding: 10px 20px; background: #667eea; color: white; border: 2px solid #5a67d8; border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer; transition: all 0.2s;">
-          📋 Past Due Visits
-        </button>
-        <button onclick="window.location.href='/deviation'" style="padding: 10px 20px; background: #0ea5e9; color: white; border: 2px solid #0284c7; border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer; transition: all 0.2s;">
-          📊 Deviation Report
-        </button>
-        <button onclick="window.location.href='/dx'" style="padding: 10px 20px; background: #8b5cf6; color: white; border: 2px solid #7c3aed; border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer; transition: all 0.2s;">
-          🩺 DX Report
-        </button>
-      </div>
+    <!-- Navigation Bar -->
+    <div class="nav-bar">
+      <span>📑 Reports:</span>
+      <button class="nav-btn" onclick="window.location.href='/'" style="background: #667eea; color: white; border-color: #5a67d8;">📋 Past Due Visits</button>
+      <button class="nav-btn" onclick="window.location.href='/deviation'" style="background: #0ea5e9; color: white; border-color: #0284c7;">📊 Deviation</button>
+      <button class="nav-btn" onclick="window.location.href='/eoe'" style="background: #10b981; color: white; border-color: #059669;">📋 EOE</button>
+      <button class="nav-btn" onclick="window.location.href='/dx'" style="background: #8b5cf6; color: white; border-color: #7c3aed;">🩺 DX Report</button>
     </div>
 
+    <!-- Top Section: Controls & Log -->
     <div class="top-section">
       <div class="controls-panel">
         <header>
           <h1>🩺 Missing Diagnosis Dashboard</h1>
-          <p class="subtitle">Track missing diagnosis records across locations • 📅 Auto-download: Daily at 2:30 PM IST (9:00 AM UTC)</p>
+          <p class="subtitle">Claims blocked due to missing diagnosis • Auto-download: Daily at 2:30 PM IST</p>
         </header>
-
         <div class="controls">
-          <div class="control-group">
-            <label>&nbsp;</label>
-            <button class="btn-success" onclick="downloadEOEReport()" id="downloadBtn">
-              ⬇️ Download Now
-            </button>
-          </div>
-          <div class="control-group">
-            <label>Status</label>
-            <span id="status" class="status status-ok">Ready</span>
-          </div>
+          <button class="btn-primary" onclick="downloadDXReport()" id="downloadBtn">⬇️ Download Now</button>
+          <span id="status" class="status status-ok">Ready</span>
         </div>
       </div>
-
       <div class="log-panel">
         <div class="log-viewer">
           <h3>📋 Activity Log</h3>
@@ -350,45 +341,81 @@
       </div>
     </div>
 
+    <!-- KPI Section -->
+    <div class="kpi-section">
+      <div class="kpi-grid">
+        <div class="kpi-card">
+          <div class="kpi-value" id="kpiTotalMissing">0</div>
+          <div class="kpi-label">Total Claims Blocked – Missing Diagnosis</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-value" id="kpiPercentMissing">0%</div>
+          <div class="kpi-label">% of Not-Ready Due to Missing Diagnosis</div>
+        </div>
+        <div class="kpi-card danger">
+          <div class="kpi-value" id="kpiUrgent">0</div>
+          <div class="kpi-label">Urgent (≤ 7 Days Left to File)</div>
+        </div>
+        <div class="kpi-card warning">
+          <div class="kpi-value" id="kpiTotalNotReady">0</div>
+          <div class="kpi-label">Total Not-Ready Claims</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-value" id="kpiOfficesAffected">0</div>
+          <div class="kpi-label">Offices Affected</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Charts Section -->
     <div class="charts-panel">
       <div id="chartsContainer" class="charts-grid">
         <div class="loading">Loading dashboard...</div>
       </div>
     </div>
+
+    <!-- Detail Table Section -->
+    <div class="detail-section">
+      <div class="detail-card">
+        <div class="detail-title">📋 Missing Diagnosis Records (Action Required)</div>
+        <div class="detail-table-container">
+          <table class="detail-table" id="detailTable">
+            <thead>
+              <tr>
+                <th>Patient Name</th>
+                <th>MRN</th>
+                <th>Office</th>
+                <th>Insurance</th>
+                <th>Episode Start</th>
+                <th>Billing Period</th>
+                <th>Days Left to File</th>
+              </tr>
+            </thead>
+            <tbody id="detailTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script>
+    Chart.register(ChartDataLabels);
+    
     let detailedData = null;
     let charts = {};
     const socket = io();
 
     const allOffices = [
-      'Nightingale - Taunton',
-      'Aspire - Dublin',
-      'Aspire - San Diego',
-      'Aspire - Scottsdale',
-      'Aspire - Yuba City',
-      'Nightingale - Las Vegas',
-      'Nightingale - Minnetonka',
-      'Nightingale - Pompano Beach',
-      'Nightingale - Willowbrook'
+      'Nightingale - Taunton', 'Aspire - Dublin', 'Aspire - San Diego',
+      'Aspire - Scottsdale', 'Aspire - Yuba City', 'Nightingale - Las Vegas',
+      'Nightingale - Minnetonka', 'Nightingale - Pompano Beach', 'Nightingale - Willowbrook'
     ];
 
-    socket.on('log', (log) => {
-      addLogEntry(log);
-    });
-
-    socket.on('logs', (logs) => {
-      logs.forEach(log => addLogEntry(log));
-    });
-
+    socket.on('log', (log) => addLogEntry(log));
+    socket.on('logs', (logs) => logs.forEach(log => addLogEntry(log)));
     socket.on('dx-complete', (result) => {
       loadData();
-      if (result.success) {
-        setStatus('ok', 'Download complete');
-      } else {
-        setStatus('error', 'Download failed');
-      }
+      setStatus(result.success ? 'ok' : 'error', result.success ? 'Download complete' : 'Download failed');
     });
 
     function addLogEntry(log) {
@@ -398,30 +425,61 @@
       entry.className = `log-entry log-${log.type}`;
       entry.innerHTML = `<span class="log-time">[${time}]</span>${log.message}`;
       logContent.appendChild(entry);
-      logContent.parentElement.scrollTop = logContent.parentElement.scrollHeight;
+      logContent.scrollTop = logContent.scrollHeight;
     }
 
     loadData();
 
     async function loadData() {
-      const container = document.getElementById('chartsContainer');
-      container.innerHTML = '<div class="loading">Loading data...</div>';
+      document.getElementById('chartsContainer').innerHTML = '<div class="loading">Loading data...</div>';
       
       try {
         const response = await fetch('/api/dx/detailed-analytics');
         detailedData = await response.json();
-        
+        updateKPIs();
         renderCharts();
+        renderDetailTable();
         setStatus('ok', 'Data loaded');
       } catch (error) {
-        container.innerHTML = `<div class="error">Failed to load data: ${error.message}</div>`;
+        document.getElementById('chartsContainer').innerHTML = `<div class="no-data">Failed to load: ${error.message}</div>`;
         setStatus('error', 'Load failed');
       }
     }
 
+    function updateKPIs() {
+      // Calculate totals
+      let totalMissing = 0;
+      let totalNotReady = 0;
+      let urgent = 0;
+      let officesAffected = 0;
+
+      allOffices.forEach(office => {
+        const data = detailedData.byOffice[office];
+        if (data) {
+          totalMissing += data.missingDx || 0;
+          totalNotReady += data.total || 0;
+          if (data.missingDx > 0) officesAffected++;
+        }
+      });
+
+      // Count urgent from records (days left to file <= 7)
+      const records = detailedData.missingDxRecords || [];
+      records.forEach(r => {
+        const daysLeft = parseInt(r.daysLeftToFile) || 999;
+        if (daysLeft <= 7 && daysLeft > 0) urgent++;
+      });
+
+      const percentMissing = totalNotReady > 0 ? Math.round((totalMissing / totalNotReady) * 100) : 0;
+
+      document.getElementById('kpiTotalMissing').textContent = totalMissing;
+      document.getElementById('kpiPercentMissing').textContent = percentMissing + '%';
+      document.getElementById('kpiUrgent').textContent = urgent;
+      document.getElementById('kpiTotalNotReady').textContent = totalNotReady;
+      document.getElementById('kpiOfficesAffected').textContent = officesAffected;
+    }
+
     function renderCharts() {
       const container = document.getElementById('chartsContainer');
-      
       Object.values(charts).forEach(chart => chart.destroy());
       charts = {};
       
@@ -432,56 +490,39 @@
       
       container.innerHTML = '';
       
-      // 1. Missing Diagnosis Count by Office
       createMissingDxByOfficeChart(container);
-      
-      // 2. % Missing Diagnosis by Office
-      createPercentMissingDxChart(container);
-      
-      // 3. Aging Buckets
-      createAgingBucketsChart(container);
-      
-      // 4. RAP Risk Buckets
-      createRAPRiskBucketsChart(container);
-      
-      // 5. Missing Diagnosis Trend Over Time
+      createPercentImpactChart(container);
+      createAgingChart(container);
+      createRAPRiskChart(container);
       createTrendChart(container);
-      
-      // 6. Top 5 Referral Sources
-      createTopReferralSourcesChart(container);
-      
-      // 7. Detail Table
-      createDetailTable(container);
+      createTopContributorsChart(container);
     }
 
     function createMissingDxByOfficeChart(container) {
       const card = document.createElement('div');
       card.className = 'chart-card';
       card.innerHTML = `
-        <div class="chart-title">Missing Diagnosis Count by Office</div>
-        <div class="chart-container">
-          <canvas id="missingDxByOffice"></canvas>
-        </div>
+        <div class="chart-title">Missing Diagnosis – by Office</div>
+        <div class="chart-subtitle">Claims blocked due to missing diagnosis by office</div>
+        <div class="chart-container"><canvas id="missingByOffice"></canvas></div>
       `;
       container.appendChild(card);
       
-      const ctx = document.getElementById('missingDxByOffice').getContext('2d');
+      const ctx = document.getElementById('missingByOffice').getContext('2d');
+      const data = allOffices.map(o => detailedData.byOffice[o]?.missingDx || 0);
+      const total = data.reduce((a, b) => a + b, 0);
       
-      const gradient = ctx.createLinearGradient(0, 0, 0, 400);
-      gradient.addColorStop(0, '#8b5cf6');
-      gradient.addColorStop(1, '#6366f1');
-      
-      charts.missingDxByOffice = new Chart(ctx, {
+      charts.missingByOffice = new Chart(ctx, {
         type: 'bar',
         data: {
-          labels: allOffices,
+          labels: allOffices.map(o => o.replace(' - ', '\n')),
           datasets: [{
-            label: 'Missing Diagnosis Count',
-            data: allOffices.map(office => detailedData.byOffice[office]?.missingDx || 0),
-            backgroundColor: gradient,
+            label: 'Missing Diagnosis',
+            data: data,
+            backgroundColor: '#8b5cf6',
             borderColor: '#7c3aed',
             borderWidth: 2,
-            borderRadius: 8
+            borderRadius: 6
           }]
         },
         options: {
@@ -489,45 +530,49 @@
           maintainAspectRatio: false,
           plugins: {
             legend: { display: false },
-            tooltip: {
-              backgroundColor: 'rgba(0, 0, 0, 0.8)',
-              padding: 12
+            datalabels: {
+              anchor: 'end',
+              align: 'top',
+              formatter: (value) => {
+                const pct = total > 0 ? Math.round((value / total) * 100) : 0;
+                return `${value} (${pct}%)`;
+              },
+              font: { weight: 'bold', size: 10 },
+              color: '#1e293b'
             }
           },
           scales: {
-            y: {
-              beginAtZero: true,
-              ticks: { precision: 0 }
-            }
+            y: { beginAtZero: true, ticks: { precision: 0 } },
+            x: { ticks: { font: { size: 9 } } }
           }
         }
       });
     }
 
-    function createPercentMissingDxChart(container) {
+    function createPercentImpactChart(container) {
       const card = document.createElement('div');
       card.className = 'chart-card';
       card.innerHTML = `
-        <div class="chart-title">% Missing Diagnosis by Office</div>
-        <div class="chart-container">
-          <canvas id="percentMissingDx"></canvas>
-        </div>
+        <div class="chart-title">% Impact by Office</div>
+        <div class="chart-subtitle">% of each office's not-ready claims caused by missing diagnosis</div>
+        <div class="chart-container"><canvas id="percentImpact"></canvas></div>
       `;
       container.appendChild(card);
       
-      const ctx = document.getElementById('percentMissingDx').getContext('2d');
+      const ctx = document.getElementById('percentImpact').getContext('2d');
+      const data = allOffices.map(o => detailedData.byOffice[o]?.percentMissingDx || 0);
       
-      charts.percentMissingDx = new Chart(ctx, {
+      charts.percentImpact = new Chart(ctx, {
         type: 'bar',
         data: {
-          labels: allOffices,
+          labels: allOffices.map(o => o.replace(' - ', '\n')),
           datasets: [{
-            label: '% Missing Diagnosis',
-            data: allOffices.map(office => detailedData.byOffice[office]?.percentMissingDx || 0),
-            backgroundColor: '#f59e0b',
-            borderColor: '#d97706',
+            label: '% Missing Dx',
+            data: data,
+            backgroundColor: '#a78bfa',
+            borderColor: '#8b5cf6',
             borderWidth: 2,
-            borderRadius: 8
+            borderRadius: 6
           }]
         },
         options: {
@@ -535,58 +580,69 @@
           maintainAspectRatio: false,
           plugins: {
             legend: { display: false },
-            tooltip: {
-              backgroundColor: 'rgba(0, 0, 0, 0.8)',
-              padding: 12,
-              callbacks: {
-                label: function(context) {
-                  return context.parsed.y + '%';
+            datalabels: {
+              anchor: 'end',
+              align: 'top',
+              formatter: (value) => value + '%',
+              font: { weight: 'bold', size: 10 },
+              color: '#1e293b'
+            },
+            annotation: {
+              annotations: {
+                targetLine: {
+                  type: 'line',
+                  yMin: 10,
+                  yMax: 10,
+                  borderColor: '#ef4444',
+                  borderWidth: 2,
+                  borderDash: [6, 6],
+                  label: {
+                    display: true,
+                    content: 'Target: 10%',
+                    position: 'end',
+                    backgroundColor: '#ef4444',
+                    color: 'white',
+                    font: { size: 10 }
+                  }
                 }
               }
             }
           },
           scales: {
-            y: {
-              beginAtZero: true,
-              max: 100,
-              ticks: {
-                callback: function(value) {
-                  return value + '%';
-                }
-              }
-            }
+            y: { beginAtZero: true, max: 100, ticks: { callback: v => v + '%' } },
+            x: { ticks: { font: { size: 9 } } }
           }
         }
       });
     }
 
-    function createAgingBucketsChart(container) {
+    function createAgingChart(container) {
       const card = document.createElement('div');
       card.className = 'chart-card';
       card.innerHTML = `
-        <div class="chart-title">Aging Buckets</div>
-        <div class="chart-container">
-          <canvas id="agingBuckets"></canvas>
-        </div>
+        <div class="chart-title">Aging of Missing Diagnosis Records</div>
+        <div class="chart-subtitle">How long claims have been blocked due to missing diagnosis</div>
+        <div class="chart-container"><canvas id="agingChart"></canvas></div>
       `;
       container.appendChild(card);
       
-      const ctx = document.getElementById('agingBuckets').getContext('2d');
-      
+      const ctx = document.getElementById('agingChart').getContext('2d');
       const buckets = ['0-2 days', '3-7 days', '8-14 days', '15+ days'];
-      const colors = ['#10b981', '#f59e0b', '#f97316', '#ef4444'];
+      const colors = ['#22c55e', '#eab308', '#f97316', '#ef4444'];
+      const data = buckets.map(b => detailedData.agingBuckets[b] || 0);
+      const total = data.reduce((a, b) => a + b, 0);
       
-      charts.agingBuckets = new Chart(ctx, {
+      charts.agingChart = new Chart(ctx, {
         type: 'bar',
         data: {
           labels: buckets,
           datasets: [{
             label: 'Count',
-            data: buckets.map(bucket => detailedData.agingBuckets[bucket] || 0),
+            data: data,
             backgroundColor: colors,
-            borderColor: colors,
+            borderColor: colors.map(c => c),
             borderWidth: 2,
-            borderRadius: 8
+            borderRadius: 6
           }]
         },
         options: {
@@ -594,48 +650,49 @@
           maintainAspectRatio: false,
           plugins: {
             legend: { display: false },
-            tooltip: {
-              backgroundColor: 'rgba(0, 0, 0, 0.8)',
-              padding: 12
+            datalabels: {
+              anchor: 'end',
+              align: 'top',
+              formatter: (value) => {
+                const pct = total > 0 ? Math.round((value / total) * 100) : 0;
+                return `${value} (${pct}%)`;
+              },
+              font: { weight: 'bold', size: 11 },
+              color: '#1e293b'
             }
           },
-          scales: {
-            y: {
-              beginAtZero: true,
-              ticks: { precision: 0 }
-            }
-          }
+          scales: { y: { beginAtZero: true, ticks: { precision: 0 } } }
         }
       });
     }
 
-    function createRAPRiskBucketsChart(container) {
+    function createRAPRiskChart(container) {
       const card = document.createElement('div');
       card.className = 'chart-card';
       card.innerHTML = `
-        <div class="chart-title">RAP Risk Buckets</div>
-        <div class="chart-container">
-          <canvas id="rapRiskBuckets"></canvas>
-        </div>
+        <div class="chart-title">RAP Risk Distribution (Missing Diagnosis Only)</div>
+        <div class="chart-subtitle">RAP cancellation risk for missing diagnosis claims</div>
+        <div class="chart-container"><canvas id="rapRiskChart"></canvas></div>
       `;
       container.appendChild(card);
       
-      const ctx = document.getElementById('rapRiskBuckets').getContext('2d');
-      
+      const ctx = document.getElementById('rapRiskChart').getContext('2d');
       const buckets = ['Critical (0-3d)', 'High (4-7d)', 'Medium (8-14d)', 'Low (15+d)'];
-      const colors = ['#ef4444', '#f97316', '#f59e0b', '#10b981'];
+      const colors = ['#991b1b', '#ef4444', '#f59e0b', '#22c55e'];
+      const data = buckets.map(b => detailedData.rapRiskBuckets[b] || 0);
+      const total = data.reduce((a, b) => a + b, 0);
       
-      charts.rapRiskBuckets = new Chart(ctx, {
+      charts.rapRiskChart = new Chart(ctx, {
         type: 'bar',
         data: {
-          labels: buckets,
+          labels: ['Critical\n(0-3d)', 'High\n(4-7d)', 'Medium\n(8-14d)', 'Low\n(15+d)'],
           datasets: [{
             label: 'Count',
-            data: buckets.map(bucket => detailedData.rapRiskBuckets[bucket] || 0),
+            data: data,
             backgroundColor: colors,
             borderColor: colors,
             borderWidth: 2,
-            borderRadius: 8
+            borderRadius: 6
           }]
         },
         options: {
@@ -643,17 +700,18 @@
           maintainAspectRatio: false,
           plugins: {
             legend: { display: false },
-            tooltip: {
-              backgroundColor: 'rgba(0, 0, 0, 0.8)',
-              padding: 12
+            datalabels: {
+              anchor: 'end',
+              align: 'top',
+              formatter: (value) => {
+                const pct = total > 0 ? Math.round((value / total) * 100) : 0;
+                return `${value} (${pct}%)`;
+              },
+              font: { weight: 'bold', size: 11 },
+              color: '#1e293b'
             }
           },
-          scales: {
-            y: {
-              beginAtZero: true,
-              ticks: { precision: 0 }
-            }
-          }
+          scales: { y: { beginAtZero: true, ticks: { precision: 0 } } }
         }
       });
     }
@@ -663,89 +721,72 @@
       card.className = 'chart-card full-width';
       card.innerHTML = `
         <div class="chart-title">Missing Diagnosis Trend Over Time</div>
-        <div class="chart-container">
-          <canvas id="trendChart"></canvas>
-        </div>
+        <div class="chart-subtitle">Daily trend of claims blocked due to missing diagnosis</div>
+        <div class="chart-container tall"><canvas id="trendChart"></canvas></div>
       `;
       container.appendChild(card);
       
       const ctx = document.getElementById('trendChart').getContext('2d');
-      
-      const allDates = Object.keys(detailedData.byDate).sort();
+      const allDates = Object.keys(detailedData.byDate || {}).sort();
       const last7Dates = allDates.slice(-7);
       
       const officeColors = [
-        '#8b5cf6', '#6366f1', '#3b82f6', '#0ea5e9', '#06b6d4', 
-        '#14b8a6', '#10b981', '#84cc16', '#eab308'
+        '#ef4444', '#f97316', '#eab308', '#22c55e', '#14b8a6',
+        '#3b82f6', '#8b5cf6', '#ec4899', '#6366f1'
       ];
       
-      const datasets = allOffices.map((office, index) => ({
-        label: office,
-        data: last7Dates.map(date => detailedData.byDate[date]?.[office] || 0),
-        borderColor: officeColors[index],
-        backgroundColor: officeColors[index] + '33',
+      const datasets = allOffices.map((office, i) => ({
+        label: office.split(' - ')[1] || office,
+        data: last7Dates.map(d => detailedData.byDate[d]?.[office] || 0),
+        borderColor: officeColors[i],
+        backgroundColor: officeColors[i] + '33',
         borderWidth: 2,
         tension: 0.3,
-        fill: false
+        fill: false,
+        pointRadius: 4
       }));
       
       charts.trendChart = new Chart(ctx, {
         type: 'line',
-        data: {
-          labels: last7Dates,
-          datasets: datasets
-        },
+        data: { labels: last7Dates, datasets: datasets },
         options: {
           responsive: true,
           maintainAspectRatio: false,
           plugins: {
-            legend: { 
-              position: 'top',
-              labels: { boxWidth: 12, padding: 10 }
-            },
-            tooltip: {
-              backgroundColor: 'rgba(0, 0, 0, 0.8)',
-              padding: 12
-            }
+            legend: { position: 'top', labels: { boxWidth: 12, padding: 8, font: { size: 10 } } },
+            datalabels: { display: false }
           },
-          scales: {
-            y: {
-              beginAtZero: true,
-              ticks: { precision: 0 }
-            }
-          }
+          scales: { y: { beginAtZero: true, ticks: { precision: 0 } } }
         }
       });
     }
 
-    function createTopReferralSourcesChart(container) {
+    function createTopContributorsChart(container) {
       const card = document.createElement('div');
-      card.className = 'chart-card';
+      card.className = 'chart-card full-width';
       card.innerHTML = `
-        <div class="chart-title">Top 5 Referral Sources</div>
-        <div class="chart-container">
-          <canvas id="topReferralSources"></canvas>
-        </div>
+        <div class="chart-title">Top Contributors</div>
+        <div class="chart-subtitle">Top contributors to missing diagnosis issues (Referral Sources)</div>
+        <div class="chart-container"><canvas id="topContributors"></canvas></div>
       `;
       container.appendChild(card);
       
-      const ctx = document.getElementById('topReferralSources').getContext('2d');
+      const ctx = document.getElementById('topContributors').getContext('2d');
+      const sources = detailedData.referralSources || {};
+      const sorted = Object.entries(sources).sort((a, b) => b[1] - a[1]).slice(0, 5);
+      const total = Object.values(sources).reduce((a, b) => a + b, 0);
       
-      const sorted = Object.entries(detailedData.referralSources || {})
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 5);
-      
-      charts.topReferralSources = new Chart(ctx, {
+      charts.topContributors = new Chart(ctx, {
         type: 'bar',
         data: {
-          labels: sorted.map(([source]) => source),
+          labels: sorted.map(([name]) => name.length > 25 ? name.substring(0, 25) + '...' : name),
           datasets: [{
             label: 'Count',
             data: sorted.map(([, count]) => count),
-            backgroundColor: '#06b6d4',
-            borderColor: '#0891b2',
+            backgroundColor: '#8b5cf6',
+            borderColor: '#7c3aed',
             borderWidth: 2,
-            borderRadius: 8
+            borderRadius: 6
           }]
         },
         options: {
@@ -754,63 +795,55 @@
           maintainAspectRatio: false,
           plugins: {
             legend: { display: false },
-            tooltip: {
-              backgroundColor: 'rgba(0, 0, 0, 0.8)',
-              padding: 12
+            datalabels: {
+              anchor: 'end',
+              align: 'right',
+              formatter: (value) => {
+                const pct = total > 0 ? Math.round((value / total) * 100) : 0;
+                return `${value} (${pct}%)`;
+              },
+              font: { weight: 'bold', size: 11 },
+              color: '#1e293b'
             }
           },
-          scales: {
-            x: {
-              beginAtZero: true,
-              ticks: { precision: 0 }
-            }
-          }
+          scales: { x: { beginAtZero: true, ticks: { precision: 0 } } }
         }
       });
     }
 
-    function createDetailTable(container) {
-      const card = document.createElement('div');
-      card.className = 'chart-card full-width';
-      card.innerHTML = `
-        <div class="chart-title">Missing Diagnosis Details</div>
-        <div style="overflow-x: auto;">
-          <table class="heatmap-table" id="detailTable"></table>
-        </div>
-      `;
-      container.appendChild(card);
+    function renderDetailTable() {
+      const tbody = document.getElementById('detailTableBody');
+      const records = (detailedData.missingDxRecords || [])
+        .slice(0, 100);
       
-      const table = document.getElementById('detailTable');
-      
-      let html = '<thead><tr><th>Office</th><th>Date</th><th>Patient Name</th><th>MRN</th><th>Aging</th><th>RAP Days</th><th>Referral Source</th></tr></thead>';
-      html += '<tbody>';
-      
-      const records = detailedData.missingDxRecords || [];
-      const displayRecords = records.slice(0, 100); // Show first 100
-      
-      displayRecords.forEach(record => {
-        html += `<tr>
-          <td style="text-align: left;">${record.office}</td>
-          <td>${record.date}</td>
-          <td style="text-align: left;">${record.patientName}</td>
-          <td>${record.mrn}</td>
-          <td>${record.aging}</td>
-          <td>${record.rapDays}</td>
-          <td style="text-align: left;">${record.referralSource}</td>
-        </tr>`;
-      });
-      
-      html += '</tbody>';
-      table.innerHTML = html;
-      
-      if (records.length > 100) {
-        const note = document.createElement('p');
-        note.style.marginTop = '10px';
-        note.style.fontSize = '13px';
-        note.style.color = '#64748b';
-        note.textContent = `Showing first 100 of ${records.length} records`;
-        card.appendChild(note);
+      if (records.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: #64748b;">No missing diagnosis records found</td></tr>';
+        return;
       }
+      
+      tbody.innerHTML = records.map(r => {
+        let daysClass = '';
+        const daysLeft = parseInt(r.daysLeftToFile) || 0;
+        if (daysLeft > 0 && daysLeft <= 3) daysClass = 'rap-critical';
+        else if (daysLeft > 0 && daysLeft <= 7) daysClass = 'rap-high';
+        
+        // Format episode start date if it's a number (Excel date)
+        let episodeStart = r.episodeStart;
+        if (typeof episodeStart === 'number') {
+          const date = new Date((episodeStart - 25569) * 86400 * 1000);
+          episodeStart = date.toLocaleDateString();
+        }
+        
+        return `<tr>
+          <td>${r.patientName || '-'}</td>
+          <td>${r.mrn || '-'}</td>
+          <td>${r.office || '-'}</td>
+          <td>${r.insurance || '-'}</td>
+          <td>${episodeStart || '-'}</td>
+          <td>${r.billingPeriod || '-'}</td>
+          <td class="${daysClass}">${r.daysLeftToFile || '-'}</td>
+        </tr>`;
+      }).join('');
     }
 
     async function downloadDXReport() {
@@ -822,12 +855,8 @@
       try {
         const response = await fetch('/api/dx/download', { method: 'POST' });
         const result = await response.json();
-        
-        if (result.success) {
-          setStatus('ok', 'Complete!');
-        } else {
-          throw new Error(result.error || 'Download failed');
-        }
+        if (!result.success) throw new Error(result.error || 'Download failed');
+        setStatus('ok', 'Complete!');
       } catch (error) {
         setStatus('error', 'Failed');
         addLogEntry({ type: 'error', message: `Error: ${error.message}`, timestamp: new Date().toISOString() });
@@ -835,329 +864,6 @@
         btn.disabled = false;
         btn.textContent = '⬇️ Download Now';
       }
-    }
-      const card = document.createElement('div');
-      card.className = 'chart-card full-width';
-      card.innerHTML = `
-        <div class="chart-title">Root Cause by Office</div>
-        <div class="chart-container tall">
-          <canvas id="rootCauseByOffice"></canvas>
-        </div>
-      `;
-      container.appendChild(card);
-      
-      const ctx = document.getElementById('rootCauseByOffice').getContext('2d');
-      
-      const rootCauseCategories = ['Missing Orders', 'Missing F2F', 'RAP Issues', 'PCR Tracking Missing', 'Service Date Mismatch', 'Medicare Missing'];
-      const colors = ['#EF5350', '#FF7043', '#FFA726', '#FFCA28', '#66BB6A', '#42A5F5'];
-      
-      const datasets = rootCauseCategories.map((category, index) => ({
-        label: category,
-        data: allOffices.map(office => detailedData.byOffice[office]?.rootCauses[category] || 0),
-        backgroundColor: colors[index],
-        borderColor: colors[index],
-        borderWidth: 1
-      }));
-      
-      charts.rootCauseByOffice = new Chart(ctx, {
-        type: 'bar',
-        data: {
-          labels: allOffices,
-          datasets: datasets
-        },
-        options: {
-          indexAxis: 'y',
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: {
-            legend: { position: 'top' },
-            tooltip: {
-              backgroundColor: 'rgba(0, 0, 0, 0.8)',
-              padding: 12
-            }
-          },
-          scales: {
-            x: {
-              stacked: true,
-              beginAtZero: true,
-              ticks: { precision: 0 }
-            },
-            y: {
-              stacked: true
-            }
-          }
-        }
-      });
-    }
-
-    function createOverallRootCauseSummaryChart(container) {
-      const card = document.createElement('div');
-      card.className = 'chart-card';
-      card.innerHTML = `
-        <div class="chart-title">Overall Root Cause Summary</div>
-        <div class="chart-container">
-          <canvas id="overallRootCause"></canvas>
-        </div>
-      `;
-      container.appendChild(card);
-      
-      const ctx = document.getElementById('overallRootCause').getContext('2d');
-      
-      const rootCauseCategories = ['Missing Orders', 'Missing F2F', 'RAP Issues', 'PCR Tracking Missing', 'Service Date Mismatch', 'Medicare Missing'];
-      const colors = ['#EF5350', '#FF7043', '#FFA726', '#FFCA28', '#66BB6A', '#42A5F5'];
-      
-      charts.overallRootCause = new Chart(ctx, {
-        type: 'bar',
-        data: {
-          labels: rootCauseCategories,
-          datasets: [{
-            label: 'Total Count',
-            data: rootCauseCategories.map(cat => detailedData.rootCauses[cat] || 0),
-            backgroundColor: colors,
-            borderColor: colors,
-            borderWidth: 1
-          }]
-        },
-        options: {
-          indexAxis: 'y',
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: {
-            legend: { display: false },
-            tooltip: {
-              backgroundColor: 'rgba(0, 0, 0, 0.8)',
-              padding: 12
-            }
-          },
-          scales: {
-            x: {
-              beginAtZero: true,
-              ticks: { precision: 0 }
-            }
-          }
-        }
-      });
-    }
-
-    function createRiskDistributionChart(container) {
-      const card = document.createElement('div');
-      card.className = 'chart-card full-width';
-      card.innerHTML = `
-        <div class="chart-title">RAP Risk Distribution by Office</div>
-        <div class="chart-container tall">
-          <canvas id="riskDistribution"></canvas>
-        </div>
-      `;
-      container.appendChild(card);
-      
-      const ctx = document.getElementById('riskDistribution').getContext('2d');
-      
-      const riskBuckets = ['Critical', 'High', 'Medium', 'Low'];
-      const riskColors = {
-        'Critical': '#EF5350',
-        'High': '#FF7043',
-        'Medium': '#FFA726',
-        'Low': '#66BB6A'
-      };
-      
-      const datasets = riskBuckets.map(bucket => ({
-        label: bucket + ' (0-3d, 4-7d, 8-14d, 15+d)',
-        data: allOffices.map(office => detailedData.byOffice[office]?.riskBuckets[bucket] || 0),
-        backgroundColor: riskColors[bucket],
-        borderColor: riskColors[bucket],
-        borderWidth: 1
-      }));
-      
-      charts.riskDistribution = new Chart(ctx, {
-        type: 'bar',
-        data: {
-          labels: allOffices,
-          datasets: datasets
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: {
-            legend: { position: 'top' },
-            tooltip: {
-              backgroundColor: 'rgba(0, 0, 0, 0.8)',
-              padding: 12
-            }
-          },
-          scales: {
-            x: {
-              stacked: true
-            },
-            y: {
-              stacked: true,
-              beginAtZero: true,
-              ticks: { precision: 0 }
-            }
-          }
-        }
-      });
-    }
-
-    function createOfficeComparisonChart(container) {
-      const card = document.createElement('div');
-      card.className = 'chart-card';
-      card.innerHTML = `
-        <div class="chart-title">Office Comparison – Total EOE Not Ready</div>
-        <div class="chart-container">
-          <canvas id="officeComparison"></canvas>
-        </div>
-      `;
-      container.appendChild(card);
-      
-      const ctx = document.getElementById('officeComparison').getContext('2d');
-      
-      const gradient = ctx.createLinearGradient(0, 0, 0, 400);
-      gradient.addColorStop(0, '#00ACC1');
-      gradient.addColorStop(0.5, '#00BCD4');
-      gradient.addColorStop(1, '#607D8B');
-      
-      charts.officeComparison = new Chart(ctx, {
-        type: 'bar',
-        data: {
-          labels: allOffices,
-          datasets: [{
-            label: 'Total EOE Not Ready',
-            data: allOffices.map(office => detailedData.byOffice[office]?.total || 0),
-            backgroundColor: gradient,
-            borderColor: '#0097A7',
-            borderWidth: 2,
-            borderRadius: 8
-          }]
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: {
-            legend: { display: false },
-            tooltip: {
-              backgroundColor: 'rgba(0, 0, 0, 0.8)',
-              padding: 12
-            }
-          },
-          scales: {
-            y: {
-              beginAtZero: true,
-              ticks: { precision: 0 }
-            }
-          }
-        }
-      });
-    }
-
-    function create7DayTrendChart(container) {
-      const card = document.createElement('div');
-      card.className = 'chart-card full-width';
-      card.innerHTML = `
-        <div class="chart-title">7-Day Trend Line (All Offices)</div>
-        <div class="chart-container">
-          <canvas id="trendLine"></canvas>
-        </div>
-      `;
-      container.appendChild(card);
-      
-      const ctx = document.getElementById('trendLine').getContext('2d');
-      
-      // Get all dates and sort them
-      const allDates = Object.keys(detailedData.byDate).sort();
-      const last7Dates = allDates.slice(-7);
-      
-      const officeColors = [
-        '#EF5350', '#FF7043', '#FFA726', '#FFCA28', '#66BB6A', 
-        '#42A5F5', '#AB47BC', '#26C6DA', '#EC407A'
-      ];
-      
-      const datasets = allOffices.map((office, index) => ({
-        label: office,
-        data: last7Dates.map(date => detailedData.byDate[date]?.[office] || 0),
-        borderColor: officeColors[index],
-        backgroundColor: officeColors[index] + '33',
-        borderWidth: 2,
-        tension: 0.3,
-        fill: false
-      }));
-      
-      charts.trendLine = new Chart(ctx, {
-        type: 'line',
-        data: {
-          labels: last7Dates,
-          datasets: datasets
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: {
-            legend: { 
-              position: 'top',
-              labels: { boxWidth: 12, padding: 10 }
-            },
-            tooltip: {
-              backgroundColor: 'rgba(0, 0, 0, 0.8)',
-              padding: 12
-            }
-          },
-          scales: {
-            y: {
-              beginAtZero: true,
-              ticks: { precision: 0 }
-            }
-          }
-        }
-      });
-    }
-
-    function createRiskHeatmap(container) {
-      const card = document.createElement('div');
-      card.className = 'chart-card full-width';
-      card.innerHTML = `
-        <div class="chart-title">Risk Heatmap</div>
-        <div class="heatmap-container">
-          <table class="heatmap-table" id="heatmapTable"></table>
-        </div>
-      `;
-      container.appendChild(card);
-      
-      const table = document.getElementById('heatmapTable');
-      const riskBuckets = ['Critical (0-3d)', 'High (4-7d)', 'Medium (8-14d)', 'Low (15+d)'];
-      
-      // Create header
-      let headerHTML = '<thead><tr><th>Office</th>';
-      riskBuckets.forEach(bucket => {
-        headerHTML += `<th>${bucket}</th>`;
-      });
-      headerHTML += '</tr></thead>';
-      
-      // Create body
-      let bodyHTML = '<tbody>';
-      allOffices.forEach(office => {
-        bodyHTML += `<tr><td style="text-align: left; font-weight: 700;">${office}</td>`;
-        
-        const critical = detailedData.byOffice[office]?.riskBuckets['Critical'] || 0;
-        const high = detailedData.byOffice[office]?.riskBuckets['High'] || 0;
-        const medium = detailedData.byOffice[office]?.riskBuckets['Medium'] || 0;
-        const low = detailedData.byOffice[office]?.riskBuckets['Low'] || 0;
-        
-        bodyHTML += `<td class="${getHeatmapClass(critical, 'critical')}">${critical}</td>`;
-        bodyHTML += `<td class="${getHeatmapClass(high, 'high')}">${high}</td>`;
-        bodyHTML += `<td class="${getHeatmapClass(medium, 'medium')}">${medium}</td>`;
-        bodyHTML += `<td class="${getHeatmapClass(low, 'low')}">${low}</td>`;
-        bodyHTML += '</tr>';
-      });
-      bodyHTML += '</tbody>';
-      
-      table.innerHTML = headerHTML + bodyHTML;
-    }
-
-    function getHeatmapClass(value, type) {
-      if (value === 0) return 'heatmap-cell-0';
-      if (type === 'critical') return 'heatmap-cell-critical';
-      if (type === 'high') return 'heatmap-cell-high';
-      if (type === 'medium') return 'heatmap-cell-medium';
-      return 'heatmap-cell-low';
     }
 
     function setStatus(type, message) {

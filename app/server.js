@@ -506,17 +506,25 @@ app.get('/api/dx/detailed-analytics', async (req, res) => {
           const headerRow = allRows[0];
           const records = allRows.slice(1);
           
-          // Map column names
+          // Map column names - handle the actual Excel structure
           const colMap = {};
           Object.keys(headerRow).forEach(key => {
-            const value = headerRow[key];
+            const value = String(headerRow[key] || '').trim();
             if (value === 'Diagnosis' || value === 'Primary Diagnosis') colMap.diagnosis = key;
-            else if (value === 'Days Until RAP Cancellation') colMap.rapDays = key;
+            else if (value === 'Days Until RAP Cancellation' || value === 'Days Left to File') colMap.rapDays = key;
             else if (value === 'Aging') colMap.aging = key;
-            else if (value === 'Referral Source' || value === 'Intake User') colMap.referralSource = key;
+            else if (value === 'Referral Source') colMap.referralSource = key;
+            else if (value === 'Intake User') colMap.intakeUser = key;
             else if (value === 'Patient Name') colMap.patientName = key;
             else if (value === 'MRN') colMap.mrn = key;
+            else if (value === 'Created Date' || value === 'Create Date' || value === 'Episode Start Date') colMap.createdDate = key;
+            else if (value === 'Branch') colMap.branch = key;
+            else if (value === 'Insurance') colMap.insurance = key;
+            else if (value === 'Billing Period') colMap.billingPeriod = key;
           });
+          
+          // Debug: log column mapping
+          console.log(`[DX] File: ${file}, Columns mapped:`, colMap);
           
           detailedData.byOffice[location].total += records.length;
           
@@ -571,15 +579,23 @@ app.get('/api/dx/detailed-analytics', async (req, res) => {
               const referralSource = record[colMap.referralSource] || 'Unknown';
               detailedData.referralSources[referralSource] = (detailedData.referralSources[referralSource] || 0) + 1;
               
-              // Store detail record
+              // Intake users
+              const intakeUser = record[colMap.intakeUser] || 'Unknown';
+              if (!detailedData.intakeUsers) detailedData.intakeUsers = {};
+              detailedData.intakeUsers[intakeUser] = (detailedData.intakeUsers[intakeUser] || 0) + 1;
+              
+              // Store detail record with actual available columns
               detailedData.missingDxRecords.push({
                 office: location,
                 date: date,
                 patientName: record[colMap.patientName] || '',
                 mrn: record[colMap.mrn] || '',
-                aging: aging,
-                rapDays: rapDays,
-                referralSource: referralSource
+                insurance: record[colMap.insurance] || '',
+                episodeStart: record[colMap.createdDate] || '',
+                billingPeriod: record[colMap.billingPeriod] || '',
+                daysLeftToFile: record[colMap.rapDays] || '',
+                referralSource: referralSource,
+                intakeUser: intakeUser
               });
             }
           });

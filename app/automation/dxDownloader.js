@@ -209,19 +209,42 @@ class DXReportDownloader {
       throw new Error('Insurance dropdown not found');
     }
     
-    this.log('info', '⏳ Waiting for records to load...');
-    await this.page.waitForTimeout(5000);
+    this.log('info', '⏳ Waiting for records to load after insurance selection...');
     
-    // Wait for loading to complete after insurance selection
+    // Wait a moment for loading to start
+    await this.page.waitForTimeout(1000);
+    
+    // Wait for loading indicator to disappear OR table data to appear
     try {
-      await this.page.waitForSelector('.loading, [ng-show*="loading"]', { 
-        state: 'hidden', 
-        timeout: 15000 
+      // Wait for loading to complete by checking for:
+      // 1. Loading indicator to disappear
+      // 2. OR table rows to appear (actual data)
+      await Promise.race([
+        this.page.waitForSelector('.loading, [ng-show*="loading"], .spinner, .ks-loading', { 
+          state: 'hidden', 
+          timeout: 60000 
+        }),
+        this.page.waitForSelector('table tbody tr td', { 
+          state: 'visible', 
+          timeout: 60000 
+        })
+      ]);
+      this.log('info', '   Initial load detected');
+      
+      // Now wait for table rows to be visible (confirms data is loaded)
+      await this.page.waitForSelector('table tbody tr', { 
+        state: 'visible', 
+        timeout: 60000 
       });
-      this.log('info', '   Loading completed');
+      this.log('success', '✅ Table data loaded');
+      
     } catch (e) {
-      this.log('info', '   No loading indicator found');
+      this.log('info', '   Could not detect loading completion, waiting additional time...');
+      await this.page.waitForTimeout(10000);
     }
+    
+    // Additional wait to ensure records are fully rendered
+    await this.page.waitForTimeout(2000);
     
     // Check if there are records
     this.log('info', '🔢 Checking for records...');
