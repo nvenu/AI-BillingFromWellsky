@@ -310,6 +310,11 @@ app.get('/eoe', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'eoe.html'));
 });
 
+// Serve Unbilled report page
+app.get('/unbilled', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'unbilled.html'));
+});
+
 // Serve DX report page
 app.get('/dx', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'dx.html'));
@@ -648,6 +653,105 @@ app.get('/api/dx/detailed-analytics', async (req, res) => {
       referralSources: {},
       missingDxRecords: []
     });
+  }
+});
+
+// API: Trigger Unbilled report download
+app.post('/api/unbilled/download', async (req, res) => {
+  try {
+    downloadLogs = []; // Clear previous logs
+    
+    const UnbilledReportDownloader = (await import('./automation/unbilledDownloader.js')).default;
+    const downloader = new UnbilledReportDownloader(io);
+    const result = await downloader.run();
+    
+    // Notify clients to refresh data
+    io.emit('unbilled-complete', { success: true, result });
+    
+    res.json({ success: true, result });
+  } catch (error) {
+    const errorMsg = error.message;
+    io.emit('log', { type: 'error', message: `Error: ${errorMsg}` });
+    io.emit('unbilled-complete', { success: false, error: errorMsg });
+    res.status(500).json({ success: false, error: errorMsg });
+  }
+});
+
+// API: Get Unbilled report analytics from Excel file
+app.get('/api/unbilled/analytics', async (req, res) => {
+  try {
+    const files = await fs.readdir(DATA_DIR);
+    const unbilledFiles = files.filter(f => f.startsWith('Managed_Care_Unbilled_') && f.endsWith('.xlsx'));
+    
+    if (unbilledFiles.length === 0) {
+      return res.json({ records: [], summary: {} });
+    }
+    
+    // Get the most recent file
+    const latestFile = unbilledFiles.sort().reverse()[0];
+    const filepath = path.join(DATA_DIR, latestFile);
+    
+    const workbook = XLSX.readFile(filepath);
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const allRows = XLSX.utils.sheet_to_json(sheet);
+    
+    if (allRows.length === 0) {
+      return res.json({ records: [], summary: {} });
+    }
+    
+    // Deduplicate based on Patient Name + MRN
+    const seen = new Set();
+    const records = allRows.filter(row => {
+      const patientName = row['Patient Name'] || row['Patient'] || '';
+      const mrn = row['MRN'] || row['Patient MRN'] || '';
+      const key = `${patientName}|${mrn}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    
+    // Calculate summary statistics
+    const summary = {
+      totalRecords: records.length,
+      byBranch: {},
+      byPayerType: {},
+      byInsurance: {},
+      byStatus: {},
+      totalUnbilledAmount: 0
+    };
+    
+    records.forEach(record => {
+      // By Branch
+      const branch = record['Branch'] || record['Office'] || 'Unknown';
+      summary.byBranch[branch] = (summary.byBranch[branch] || 0) + 1;
+      
+      // By Payer Type
+      const payerType = record['Payer Type'] || record['PayerType'] || 'Unknown';
+      summary.byPayerType[payerType] = (summary.byPayerType[payerType] || 0) + 1;
+      
+      // By Insurance
+      const insurance = record['Insurance'] || record['Payer'] || 'Unknown';
+      summary.byInsurance[insurance] = (summary.byInsurance[insurance] || 0) + 1;
+      
+      // By Status
+      const status = record['Status'] || record['Claim Status'] || 'Unknown';
+      summary.byStatus[status] = (summary.byStatus[status] || 0) + 1;
+      
+      // Total unbilled amount
+      const amount = parseFloat(record['Amount'] || record['Unbilled Amount'] || record['Total'] || 0);
+      if (!isNaN(amount)) {
+        summary.totalUnbilledAmount += amount;
+      }
+    });
+    
+    res.json({ 
+      records: records.slice(0, 500), // Limit to 500 records for display
+      summary,
+      fileDate: latestFile.match(/(\d{4}-\d{2}-\d{2})/)?.[1] || 'Unknown'
+    });
+  } catch (error) {
+    console.error('Error in unbilled analytics:', error);
+    res.json({ records: [], summary: {} });
   }
 });
 

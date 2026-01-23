@@ -94,7 +94,38 @@ class DXReportDownloader {
     await this.page.waitForLoadState('domcontentloaded');
     await this.page.waitForTimeout(5000);
     
+    // Check for and close any popup if present
+    await this.closePopupIfPresent();
+    
     this.log('success', '✅ Logged in successfully');
+  }
+
+  async closePopupIfPresent() {
+    try {
+      const closeSelectors = [
+        'button.close',
+        '.modal-close',
+        '[aria-label="Close"]',
+        '.popup-close',
+        'button[data-dismiss="modal"]',
+        '.pendo-close-guide-x',
+        'button.pendo-close-guide-x',
+        '.close-button',
+        '[class*="close"]'
+      ];
+      
+      for (const selector of closeSelectors) {
+        const closeBtn = await this.page.$(selector);
+        if (closeBtn && await closeBtn.isVisible()) {
+          await closeBtn.click();
+          this.log('info', '✅ Closed popup');
+          await this.page.waitForTimeout(1000);
+          return;
+        }
+      }
+    } catch (e) {
+      // No popup to close, continue
+    }
   }
 
   async navigateToBillingManager() {
