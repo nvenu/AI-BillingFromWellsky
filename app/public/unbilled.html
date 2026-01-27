@@ -197,6 +197,9 @@
       position: relative; 
       height: 400px; 
     }
+    .chart-container.tall { 
+      height: 500px; 
+    }
     .loading, .no-data {
       text-align: center;
       padding: 60px 20px;
@@ -327,6 +330,18 @@
     let charts = {};
     const socket = io();
 
+    const allOffices = [
+      'Nightingale - Taunton',
+      'Aspire - Dublin',
+      'Aspire - San Diego',
+      'Aspire - Scottsdale',
+      'Aspire - Yuba City',
+      'Nightingale - Las Vegas',
+      'Nightingale - Minnetonka',
+      'Nightingale - Pompano Beach',
+      'Nightingale - Willowbrook'
+    ];
+
     socket.on('log', (log) => {
       addLogEntry(log);
     });
@@ -366,6 +381,8 @@
         const response = await fetch('/api/unbilled/analytics');
         analyticsData = await response.json();
         
+        console.log('Analytics data:', analyticsData);
+        
         renderKPIs();
         renderCharts();
         setStatus('ok', 'Data loaded');
@@ -397,7 +414,7 @@
           <div class="kpi-label">Total Visits</div>
         </div>
         <div class="kpi-card">
-          <div class="kpi-value">${Object.keys(analyticsData.byPayerType).length}</div>
+          <div class="kpi-value">${Object.keys(analyticsData.byPayerType || {}).length}</div>
           <div class="kpi-label">Payer Types</div>
         </div>
       `;
@@ -416,24 +433,91 @@
       
       container.innerHTML = '';
       
-      // 1. Trend Line - Total Unbilled Over Time
+      // 1. By Office - Total Unbilled
+      createByOfficeChart(container);
+      
+      // 2. Trend Line - Total Unbilled Over Time
       createTrendChart(container);
       
-      // 2. By Payer Type
+      // 3. By Payer Type
       createPayerTypeChart(container);
       
-      // 3. Aging Summary
+      // 4. Aging Summary
       createAgingSummaryChart(container);
       
-      // 4. Visits Trend
-      createVisitsTrendChart(container);
+      // 5. Visits by Office
+      createVisitsByOfficeChart(container);
+    }
+
+    function createByOfficeChart(container) {
+      const card = document.createElement('div');
+      card.className = 'chart-card full-width';
+      card.innerHTML = `
+        <div class="chart-title">Total Unbilled by Office</div>
+        <div class="chart-container tall">
+          <canvas id="byOfficeChart"></canvas>
+        </div>
+      `;
+      container.appendChild(card);
+      
+      const ctx = document.getElementById('byOfficeChart').getContext('2d');
+      
+      const officeData = allOffices.map(office => 
+        analyticsData.byOffice[office]?.totalUnbilled || 0
+      );
+      
+      const gradient = ctx.createLinearGradient(0, 0, 0, 400);
+      gradient.addColorStop(0, '#f59e0b');
+      gradient.addColorStop(1, '#d97706');
+      
+      charts.byOffice = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: allOffices,
+          datasets: [{
+            label: 'Total Unbilled ($)',
+            data: officeData,
+            backgroundColor: gradient,
+            borderColor: '#d97706',
+            borderWidth: 2,
+            borderRadius: 8
+          }]
+        },
+        options: {
+          indexAxis: 'y',
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              backgroundColor: 'rgba(0, 0, 0, 0.8)',
+              padding: 12,
+              callbacks: {
+                label: function(context) {
+                  return `$${context.parsed.x.toLocaleString()}`;
+                }
+              }
+            }
+          },
+          scales: {
+            x: {
+              beginAtZero: true,
+              ticks: {
+                callback: function(value) {
+                  return '$' + value.toLocaleString();
+                }
+              }
+            }
+          }
+        }
+      });
     }
 
     function createTrendChart(container) {
       const card = document.createElement('div');
       card.className = 'chart-card full-width';
       card.innerHTML = `
-        <div class="chart-title">Total Unbilled Trend</div>
+        <div class="chart-title">Total Unbilled Trend (All Offices)</div>
         <div class="chart-container">
           <canvas id="trendChart"></canvas>
         </div>
@@ -442,7 +526,7 @@
       
       const ctx = document.getElementById('trendChart').getContext('2d');
       
-      const dates = Object.keys(analyticsData.byDate).sort();
+      const dates = Object.keys(analyticsData.byDate || {}).sort();
       const unbilledData = dates.map(date => analyticsData.byDate[date].totalUnbilled);
       
       charts.trend = new Chart(ctx, {
@@ -503,8 +587,8 @@
       
       const ctx = document.getElementById('payerTypeChart').getContext('2d');
       
-      const payerTypes = Object.keys(analyticsData.byPayerType);
-      const amounts = Object.values(analyticsData.byPayerType);
+      const payerTypes = Object.keys(analyticsData.byPayerType || {});
+      const amounts = Object.values(analyticsData.byPayerType || {});
       
       const colors = payerTypes.map((_, index) => {
         const hue = (index * 360 / payerTypes.length);
@@ -568,7 +652,7 @@
       const ctx = document.getElementById('agingChart').getContext('2d');
       
       const agingBuckets = ['0-30', '31-60', '61-90', '91-120', '121-150', '151-180', '181-210', '211-240', '241+'];
-      const amounts = agingBuckets.map(bucket => analyticsData.agingSummary[bucket] || 0);
+      const amounts = agingBuckets.map(bucket => parseFloat(analyticsData.agingSummary[bucket] || 0));
       
       const colors = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#f97316', '#dc2626', '#7f1d1d'];
       
@@ -606,11 +690,11 @@
       });
     }
 
-    function createVisitsTrendChart(container) {
+    function createVisitsByOfficeChart(container) {
       const card = document.createElement('div');
       card.className = 'chart-card';
       card.innerHTML = `
-        <div class="chart-title">Total Visits Trend</div>
+        <div class="chart-title">Total Visits by Office</div>
         <div class="chart-container">
           <canvas id="visitsChart"></canvas>
         </div>
@@ -619,13 +703,14 @@
       
       const ctx = document.getElementById('visitsChart').getContext('2d');
       
-      const dates = Object.keys(analyticsData.byDate).sort();
-      const visitsData = dates.map(date => analyticsData.byDate[date].totalVisits);
+      const visitsData = allOffices.map(office => 
+        analyticsData.byOffice[office]?.totalVisits || 0
+      );
       
       charts.visits = new Chart(ctx, {
         type: 'bar',
         data: {
-          labels: dates,
+          labels: allOffices,
           datasets: [{
             label: 'Total Visits',
             data: visitsData,
