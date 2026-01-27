@@ -907,7 +907,7 @@ app.get('/api/eoe/detailed-analytics', async (req, res) => {
           // Process each record for root causes and risk buckets
           records.forEach((record, idx) => {
             // Track insurance
-            const insurance = record[colMap.insurance] || 'Unknown';
+            const insurance = record[colMap.insurance] || 'Private';
             if (!detailedData.byInsurance[insurance]) {
               detailedData.byInsurance[insurance] = 0;
             }
