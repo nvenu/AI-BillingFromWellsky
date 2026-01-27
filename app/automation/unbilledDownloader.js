@@ -2,6 +2,7 @@ import { chromium } from 'playwright';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
+import fs from 'fs/promises';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, '..', '.env') });
@@ -340,21 +341,40 @@ class UnbilledReportDownloader {
     }
     
     this.log('info', '⏳ Waiting for summary to load...');
-    await this.page.waitForTimeout(3000);
     
-    // Wait for loading indicator to disappear
+    // Wait for loading indicator to disappear first
     try {
-      await this.page.waitForSelector('.loading-message, .loading', { 
+      await this.page.waitForSelector('.loading-message, .loading, [class*="loading"]', { 
         state: 'hidden', 
-        timeout: 30000 
+        timeout: 60000 
       });
-      this.log('info', '   Summary loaded');
+      this.log('info', '   Loading indicator disappeared');
     } catch (e) {
-      this.log('info', '   Loading indicator timeout (may be normal)');
+      this.log('info', '   Loading indicator timeout');
     }
     
-    // Additional wait for data to populate
+    // Wait for summary section to appear
+    this.log('info', '   Waiting for summary section to appear...');
     await this.page.waitForTimeout(5000);
+    
+    // Wait for specific summary elements to be visible
+    try {
+      await this.page.waitForSelector('.report-summary, .summary-section, [class*="summary"]', { 
+        state: 'visible', 
+        timeout: 15000 
+      });
+      this.log('info', '   Summary section visible');
+    } catch (e) {
+      this.log('info', '   Summary section selector not found, continuing...');
+    }
+    
+    // Additional wait for data to fully populate
+    await this.page.waitForTimeout(3000);
+    
+    // Take a screenshot for debugging
+    const screenshotPath = path.join(this.downloadPath, `unbilled_summary_${Date.now()}.png`);
+    await this.page.screenshot({ path: screenshotPath, fullPage: true });
+    this.log('info', `   Screenshot saved: ${screenshotPath}`);
     
     // Extract the Report Summary data
     const summaryData = await this.page.evaluate(() => {
@@ -370,9 +390,28 @@ class UnbilledReportDownloader {
         // Get all text content from the page
         const bodyText = document.body.textContent || '';
         
-        // Extract Total Unbilled - look for pattern like "$230.00" after "Total Unbilled"
-        const unbilledMatch = bodyText.match(/Total\s+Unbilled[:\s]*\$?([\d,]+\.?\d*)/i);
-        if (unbilledMatch) data.totalUnbilled = unbilledMatch[1].replace(/,/g, '');
+        // Log the body text for debugging (first 500 chars)
+        console.log('Body text preview:', bodyText.substring(0, 500));
+        
+        // Try multiple patterns for Total Unbilled
+        let unbilledMatch = bodyText.match(/Total\s+Unbilled[:\s]*\$?([\d,]+\.?\d*)/i);
+        if (!unbilledMatch) {
+          // Try looking in specific elements
+          const summaryElements = document.querySelectorAll('.summary-value, .total-value, [class*="total"], [class*="summary"]');
+          for (const el of summaryElements) {
+            const text = el.textContent || '';
+            if (text.includes('Unbilled') || el.previousElementSibling?.textContent?.includes('Unbilled')) {
+              const match = text.match(/\$?([\d,]+\.?\d*)/);
+              if (match) {
+                data.totalUnbilled = match[1].replace(/,/g, '');
+                console.log('Found unbilled in element:', text);
+                break;
+              }
+            }
+          }
+        } else {
+          data.totalUnbilled = unbilledMatch[1].replace(/,/g, '');
+        }
         
         // Extract Total Charges
         const chargesMatch = bodyText.match(/Total\s+Charges[:\s]*\$?([\d,]+\.?\d*)/i);
@@ -382,17 +421,23 @@ class UnbilledReportDownloader {
         const visitsMatch = bodyText.match(/Total\s+Visits[:\s]*([\d,]+)/i);
         if (visitsMatch) data.totalVisits = visitsMatch[1].replace(/,/g, '');
         
-        // Extract Payer Type data
-        const payerSection = bodyText.match(/Total\s+Unbilled\s+By\s+Payer\s+Type([\s\S]*?)Aging\s+Summary/i);
+        // Extract Payer Type data - look for the section between headers
+        const payerSection = bodyText.match(/Total\s+Unbilled\s+By\s+Payer\s+Type([\s\S]*?)(?:Aging\s+Summary|$)/i);
         if (payerSection) {
           const payerText = payerSection[1];
-          // Match patterns like "Medicare (HMO/Per Visit)$230.00"
-          const payerMatches = payerText.matchAll(/([A-Za-z\s\(\)\/\-]+?)\$?([\d,]+\.?\d*)/g);
-          for (const match of payerMatches) {
-            const payerName = match[1].trim();
-            const amount = match[2].replace(/,/g, '');
-            if (payerName && amount && parseFloat(amount) > 0) {
-              data.byPayerType[payerName] = amount;
+          console.log('Payer section:', payerText.substring(0, 200));
+          
+          // Match patterns like "Medicare (HMO/Per Visit)$230.00" or "Medicare (HMO/Per Visit) $230.00"
+          const lines = payerText.split('\n');
+          for (const line of lines) {
+            const match = line.match(/([A-Za-z\s\(\)\/\-]+?)\s*\$?\s*([\d,]+\.?\d*)/);
+            if (match) {
+              const payerName = match[1].trim();
+              const amount = match[2].replace(/,/g, '');
+              if (payerName && amount && parseFloat(amount) > 0 && payerName.length > 3) {
+                data.byPayerType[payerName] = amount;
+                console.log('Found payer:', payerName, '=', amount);
+              }
             }
           }
         }
@@ -402,14 +447,19 @@ class UnbilledReportDownloader {
         const agingSection = bodyText.match(/Aging\s+Summary([\s\S]*?)$/i);
         if (agingSection) {
           const agingText = agingSection[1];
+          console.log('Aging section:', agingText.substring(0, 200));
+          
           agingBuckets.forEach(bucket => {
             const regex = new RegExp(bucket.replace('+', '\\+') + '[:\\s]*\\$?([\\d,]+\\.?\\d*)', 'i');
             const match = agingText.match(regex);
             if (match) {
               data.agingSummary[bucket] = match[1].replace(/,/g, '');
+              console.log('Found aging bucket:', bucket, '=', match[1]);
             }
           });
         }
+        
+        console.log('Final extracted data:', JSON.stringify(data, null, 2));
         
       } catch (e) {
         console.error('Error extracting summary:', e);
