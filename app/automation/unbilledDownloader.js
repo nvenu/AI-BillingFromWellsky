@@ -6,6 +6,18 @@ import dotenv from 'dotenv';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, '..', '.env') });
 
+const SWAP_USERS = [
+  'Nightingale - Taunton',
+  'Aspire - Dublin',
+  'Aspire - San Diego',
+  'Aspire - Scottsdale',
+  'Aspire - Yuba City',
+  'Nightingale - Las Vegas',
+  'Nightingale - Minnetonka',
+  'Nightingale - Pompano Beach',
+  'Nightingale - Willowbrook'
+];
+
 class UnbilledReportDownloader {
   constructor(io = null) {
     this.username = process.env.KINNSER_USERNAME;
@@ -19,9 +31,7 @@ class UnbilledReportDownloader {
     this.page = null;
     this.io = io;
     this.downloadPath = path.join(__dirname, '..', 'data');
-    
-    // All offices to process (using "All Branches" to get combined data)
-    this.processAllBranches = true;
+    this.currentSwapUser = null;
   }
 
   log(type, message) {
@@ -123,6 +133,47 @@ class UnbilledReportDownloader {
     } catch (e) {
       // No popup to close, continue
     }
+  }
+
+  async selectSwapUser(swapUser) {
+    this.log('info', `� Selecting swapUser: ${swapUser}...`);
+    
+    const swapUserSelectors = [
+      '#swapUser',
+      'select#swapUser'
+    ];
+    
+    let userSelected = false;
+    for (const selector of swapUserSelectors) {
+      try {
+        const element = await this.page.$(selector);
+        if (element) {
+          await this.page.selectOption(selector, swapUser);
+          this.log('success', `✅ Selected swapUser: ${swapUser}`);
+          userSelected = true;
+          break;
+        }
+      } catch (e) {
+        // Try next
+      }
+    }
+    
+    if (!userSelected) {
+      throw new Error('swapUser dropdown not found');
+    }
+    
+    // Wait for the page to start reloading
+    await this.page.waitForTimeout(2000);
+    
+    // Wait for navigation that happens automatically
+    try {
+      await this.page.waitForLoadState('domcontentloaded', { timeout: 15000 });
+      this.log('info', '   Page reloaded after swapUser change');
+    } catch (e) {
+      this.log('info', '   Page did not reload, continuing...');
+    }
+    
+    await this.page.waitForTimeout(3000);
   }
 
   async navigateToBillingManager() {
@@ -289,20 +340,21 @@ class UnbilledReportDownloader {
     }
     
     this.log('info', '⏳ Waiting for summary to load...');
-    await this.page.waitForTimeout(5000);
+    await this.page.waitForTimeout(3000);
     
     // Wait for loading indicator to disappear
     try {
       await this.page.waitForSelector('.loading-message, .loading', { 
         state: 'hidden', 
-        timeout: 60000 
+        timeout: 30000 
       });
       this.log('info', '   Summary loaded');
     } catch (e) {
-      this.log('info', '   Loading check: ' + e.message);
+      this.log('info', '   Loading indicator timeout (may be normal)');
     }
     
-    await this.page.waitForTimeout(3000);
+    // Additional wait for data to populate
+    await this.page.waitForTimeout(5000);
     
     // Extract the Report Summary data
     const summaryData = await this.page.evaluate(() => {
@@ -368,11 +420,7 @@ class UnbilledReportDownloader {
     
     this.log('success', `✅ Extracted summary: $${summaryData.totalUnbilled} unbilled, ${summaryData.totalVisits} visits`);
     
-    const date = new Date().toISOString().split('T')[0];
-    return {
-      date: date,
-      ...summaryData
-    };
+    return summaryData;
   }
 
   async close() {
@@ -387,16 +435,69 @@ class UnbilledReportDownloader {
     try {
       await this.initialize();
       await this.login();
-      await this.navigateToBillingManager();
-      await this.navigateToUnbilledReport();
       
-      // Extract summary data (all branches combined)
-      const summaryData = await this.extractReportSummary();
+      const allResults = [];
+      const date = new Date().toISOString().split('T')[0];
       
-      this.log('success', '🎉 Unbilled Report extraction completed!');
-      return summaryData;
+      for (const swapUser of SWAP_USERS) {
+        this.log('info', `\n========== Processing swapUser: ${swapUser} (${SWAP_USERS.indexOf(swapUser) + 1}/${SWAP_USERS.length}) ==========`);
+        
+        try {
+          const currentUrl = this.page.url();
+          
+          if (currentUrl.includes('login')) {
+            await this.login();
+          }
+          
+          await this.selectSwapUser(swapUser);
+          this.currentSwapUser = swapUser;
+          
+          await this.navigateToBillingManager();
+          await this.navigateToUnbilledReport();
+          const summaryData = await this.extractReportSummary();
+          
+          this.log('success', `✅ Completed for ${swapUser}`);
+          
+          allResults.push({ 
+            office: swapUser,
+            date: date,
+            ...summaryData,
+            success: true
+          });
+          
+          // Navigate back to inbox
+          this.log('info', '🏠 Returning to inbox...');
+          await this.page.goto('https://kinnser.net/AM/Message/inbox.cfm', { waitUntil: 'domcontentloaded' });
+          await this.page.waitForTimeout(5000);
+          
+        } catch (error) {
+          this.log('error', `❌ Failed for ${swapUser}: ${error.message}`);
+          allResults.push({ 
+            office: swapUser,
+            date: date,
+            totalUnbilled: '0',
+            totalCharges: '0',
+            totalVisits: '0',
+            byPayerType: {},
+            agingSummary: {},
+            success: false,
+            error: error.message
+          });
+          
+          try {
+            await this.page.goto('https://kinnser.net/AM/Message/inbox.cfm', { waitUntil: 'domcontentloaded' });
+            await this.page.waitForTimeout(5000);
+          } catch (recoveryError) {
+            this.log('error', `❌ Recovery failed: ${recoveryError.message}`);
+          }
+        }
+      }
+      
+      this.log('success', '\n🎉 All Unbilled reports complete!');
+      
+      return allResults;
     } catch (error) {
-      this.log('error', `❌ Error: ${error.message}`);
+      this.log('error', `❌ Fatal error: ${error.message}`);
       throw error;
     } finally {
       await this.close();

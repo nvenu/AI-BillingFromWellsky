@@ -663,7 +663,7 @@ app.post('/api/unbilled/download', async (req, res) => {
     
     const UnbilledReportDownloader = (await import('./automation/unbilledDownloader.js')).default;
     const downloader = new UnbilledReportDownloader(io);
-    const result = await downloader.run();
+    const results = await downloader.run();
     
     // Store results in a JSON file
     const unbilledDataPath = path.join(DATA_DIR, 'unbilled_data.json');
@@ -675,21 +675,25 @@ app.post('/api/unbilled/download', async (req, res) => {
       // File doesn't exist yet
     }
     
-    // Update or add new result - replace existing record for same date
-    const existingIndex = existingData.findIndex(record => record.date === result.date);
-    
-    if (existingIndex !== -1) {
-      existingData[existingIndex] = result;
-    } else {
-      existingData.push(result);
-    }
+    // Update or add new results - replace existing records for same date and office
+    results.forEach(newRecord => {
+      const existingIndex = existingData.findIndex(
+        record => record.office === newRecord.office && record.date === newRecord.date
+      );
+      
+      if (existingIndex !== -1) {
+        existingData[existingIndex] = newRecord;
+      } else {
+        existingData.push(newRecord);
+      }
+    });
     
     await fs.writeFile(unbilledDataPath, JSON.stringify(existingData, null, 2));
     
     // Notify clients to refresh data
-    io.emit('unbilled-complete', { success: true, result });
+    io.emit('unbilled-complete', { success: true, results });
     
-    res.json({ success: true, result });
+    res.json({ success: true, results });
   } catch (error) {
     const errorMsg = error.message;
     io.emit('log', { type: 'error', message: `Error: ${errorMsg}` });
@@ -705,11 +709,21 @@ app.get('/api/unbilled/analytics', async (req, res) => {
     const fileContent = await fs.readFile(unbilledDataPath, 'utf-8');
     const data = JSON.parse(fileContent);
     
-    // Sort by date
-    data.sort((a, b) => a.date.localeCompare(b.date));
+    const allOffices = [
+      'Nightingale - Taunton',
+      'Aspire - Dublin',
+      'Aspire - San Diego',
+      'Aspire - Scottsdale',
+      'Aspire - Yuba City',
+      'Nightingale - Las Vegas',
+      'Nightingale - Minnetonka',
+      'Nightingale - Pompano Beach',
+      'Nightingale - Willowbrook'
+    ];
     
     // Calculate aggregated statistics
     const analytics = {
+      byOffice: {},
       byDate: {},
       byPayerType: {},
       agingSummary: {},
@@ -718,12 +732,51 @@ app.get('/api/unbilled/analytics', async (req, res) => {
       totalVisits: 0
     };
     
+    // Initialize all offices
+    allOffices.forEach(office => {
+      analytics.byOffice[office] = {
+        totalUnbilled: 0,
+        totalCharges: 0,
+        totalVisits: 0,
+        byDate: {}
+      };
+    });
+    
     data.forEach(record => {
-      // By date
-      analytics.byDate[record.date] = {
-        totalUnbilled: parseFloat(record.totalUnbilled) || 0,
-        totalCharges: parseFloat(record.totalCharges) || 0,
-        totalVisits: parseInt(record.totalVisits) || 0
+      const office = record.office;
+      const date = record.date;
+      const unbilled = parseFloat(record.totalUnbilled) || 0;
+      const charges = parseFloat(record.totalCharges) || 0;
+      const visits = parseInt(record.totalVisits) || 0;
+      
+      // By office
+      if (analytics.byOffice[office]) {
+        analytics.byOffice[office].totalUnbilled += unbilled;
+        analytics.byOffice[office].totalCharges += charges;
+        analytics.byOffice[office].totalVisits += visits;
+        analytics.byOffice[office].byDate[date] = {
+          totalUnbilled: unbilled,
+          totalCharges: charges,
+          totalVisits: visits
+        };
+      }
+      
+      // By date (all offices combined)
+      if (!analytics.byDate[date]) {
+        analytics.byDate[date] = {
+          totalUnbilled: 0,
+          totalCharges: 0,
+          totalVisits: 0,
+          byOffice: {}
+        };
+      }
+      analytics.byDate[date].totalUnbilled += unbilled;
+      analytics.byDate[date].totalCharges += charges;
+      analytics.byDate[date].totalVisits += visits;
+      analytics.byDate[date].byOffice[office] = {
+        totalUnbilled: unbilled,
+        totalCharges: charges,
+        totalVisits: visits
       };
       
       // Aggregate payer types
@@ -735,17 +788,22 @@ app.get('/api/unbilled/analytics', async (req, res) => {
       Object.entries(record.agingSummary || {}).forEach(([bucket, amount]) => {
         analytics.agingSummary[bucket] = (analytics.agingSummary[bucket] || 0) + parseFloat(amount);
       });
-      
-      // Latest totals
-      analytics.totalUnbilled = parseFloat(record.totalUnbilled) || 0;
-      analytics.totalCharges = parseFloat(record.totalCharges) || 0;
-      analytics.totalVisits = parseInt(record.totalVisits) || 0;
     });
+    
+    // Calculate latest totals (most recent date, all offices)
+    const dates = Object.keys(analytics.byDate).sort();
+    if (dates.length > 0) {
+      const latestDate = dates[dates.length - 1];
+      analytics.totalUnbilled = analytics.byDate[latestDate].totalUnbilled;
+      analytics.totalCharges = analytics.byDate[latestDate].totalCharges;
+      analytics.totalVisits = analytics.byDate[latestDate].totalVisits;
+    }
     
     res.json(analytics);
   } catch (error) {
     console.error('Error in unbilled analytics:', error);
     res.json({
+      byOffice: {},
       byDate: {},
       byPayerType: {},
       agingSummary: {},
@@ -1175,7 +1233,7 @@ cron.schedule(unbilledSchedule, async () => {
   try {
     const UnbilledReportDownloader = (await import('./automation/unbilledDownloader.js')).default;
     const downloader = new UnbilledReportDownloader(io);
-    const result = await downloader.run();
+    const results = await downloader.run();
     
     // Store results
     const unbilledDataPath = path.join(DATA_DIR, 'unbilled_data.json');
@@ -1187,18 +1245,22 @@ cron.schedule(unbilledSchedule, async () => {
       // File doesn't exist yet
     }
     
-    // Update or add new result
-    const existingIndex = existingData.findIndex(record => record.date === result.date);
-    
-    if (existingIndex !== -1) {
-      existingData[existingIndex] = result;
-    } else {
-      existingData.push(result);
-    }
+    // Update or add new results
+    results.forEach(newRecord => {
+      const existingIndex = existingData.findIndex(
+        record => record.office === newRecord.office && record.date === newRecord.date
+      );
+      
+      if (existingIndex !== -1) {
+        existingData[existingIndex] = newRecord;
+      } else {
+        existingData.push(newRecord);
+      }
+    });
     
     await fs.writeFile(unbilledDataPath, JSON.stringify(existingData, null, 2));
     
-    io.emit('unbilled-complete', { success: true, result });
+    io.emit('unbilled-complete', { success: true, results });
     console.log('✅ Scheduled Unbilled report completed successfully');
   } catch (error) {
     console.error('❌ Scheduled Unbilled report failed:', error.message);
