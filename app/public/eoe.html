@@ -444,6 +444,9 @@
       // 2. Overall Root Cause Summary (Horizontal Bar)
       createOverallRootCauseSummaryChart(container);
       
+      // 3. By Insurance (Top 10)
+      createByInsuranceChart(container);
+      
       // 3. RAP Risk Distribution by Office (Stacked Column)
       createRiskDistributionChart(container);
       
@@ -579,6 +582,72 @@
             tooltip: {
               backgroundColor: 'rgba(0, 0, 0, 0.8)',
               padding: 12
+            }
+          },
+          scales: {
+            x: {
+              beginAtZero: true,
+              ticks: { precision: 0 }
+            }
+          }
+        }
+      });
+    }
+
+    function createByInsuranceChart(container) {
+      const card = document.createElement('div');
+      card.className = 'chart-card';
+      card.innerHTML = `
+        <div class="chart-title">Top 10 Insurances - EOE Not Ready</div>
+        <div class="chart-container">
+          <canvas id="byInsurance"></canvas>
+        </div>
+      `;
+      container.appendChild(card);
+      
+      const ctx = document.getElementById('byInsurance').getContext('2d');
+      
+      // Sort insurances by count and get top 10
+      const insuranceEntries = Object.entries(detailedData.byInsurance || {})
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 10);
+      
+      const labels = insuranceEntries.map(([name]) => name);
+      const data = insuranceEntries.map(([, count]) => count);
+      
+      // Create gradient colors
+      const colors = labels.map((_, index) => {
+        const hue = (index * 360 / labels.length);
+        return `hsl(${hue}, 70%, 60%)`;
+      });
+      
+      charts.byInsurance = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: labels,
+          datasets: [{
+            label: 'EOE Not Ready Count',
+            data: data,
+            backgroundColor: colors,
+            borderColor: colors.map(c => c.replace('60%', '50%')),
+            borderWidth: 2,
+            borderRadius: 8
+          }]
+        },
+        options: {
+          indexAxis: 'y',
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              backgroundColor: 'rgba(0, 0, 0, 0.8)',
+              padding: 12,
+              callbacks: {
+                label: function(context) {
+                  return `${context.parsed.x} claims`;
+                }
+              }
             }
           },
           scales: {

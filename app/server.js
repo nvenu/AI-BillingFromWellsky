@@ -807,7 +807,8 @@ app.get('/api/eoe/detailed-analytics', async (req, res) => {
       byOffice: {},
       byDate: {},
       rootCauses: {},
-      riskBuckets: {}
+      riskBuckets: {},
+      byInsurance: {}  // Add insurance tracking
     };
     
     // Initialize all offices with zero data
@@ -864,6 +865,7 @@ app.get('/api/eoe/detailed-analytics', async (req, res) => {
             else if (value === 'Same Service Date Match') colMap.serviceDate = key;
             else if (value === 'Medicare #') colMap.medicare = key;
             else if (value === 'Days Until RAP Cancellation') colMap.daysPending = key;
+            else if (value === 'Insurance') colMap.insurance = key;  // Add insurance column
           });
           
           if (!detailedData.byOffice[location]) {
@@ -904,6 +906,13 @@ app.get('/api/eoe/detailed-analytics', async (req, res) => {
           
           // Process each record for root causes and risk buckets
           records.forEach((record, idx) => {
+            // Track insurance
+            const insurance = record[colMap.insurance] || 'Unknown';
+            if (!detailedData.byInsurance[insurance]) {
+              detailedData.byInsurance[insurance] = 0;
+            }
+            detailedData.byInsurance[insurance]++;
+            
             // Check what's missing (empty or no checkmark)
             // If the cell is empty or doesn't have a checkmark, it's missing
             const hasOrders = record[colMap.orders] && (record[colMap.orders] === '✔' || record[colMap.orders] === 'X');
@@ -981,7 +990,8 @@ app.get('/api/eoe/detailed-analytics', async (req, res) => {
       byOffice: {},
       byDate: {},
       rootCauses: {},
-      riskBuckets: {}
+      riskBuckets: {},
+      byInsurance: {}
     });
   }
 });

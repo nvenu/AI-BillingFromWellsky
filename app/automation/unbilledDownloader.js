@@ -50,13 +50,41 @@ class UnbilledReportDownloader {
   async initialize() {
     this.log('info', '🚀 Initializing browser...');
     this.browser = await chromium.launch({ 
-      headless: true,
+      headless: true,  // Production mode
       timeout: 60000,
-      downloadsPath: this.downloadPath
+      downloadsPath: this.downloadPath,
+      args: [
+        '--disable-blink-features=AutomationControlled',
+        '--disable-features=IsolateOrigins,site-per-process'
+      ]
     });
     
     const context = await this.browser.newContext({
-      acceptDownloads: true
+      acceptDownloads: true,
+      userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      viewport: { width: 1280, height: 720 },
+      locale: 'en-US',
+      timezoneId: 'America/New_York'
+    });
+    
+    // Remove automation indicators
+    await context.addInitScript(() => {
+      Object.defineProperty(navigator, 'webdriver', {
+        get: () => false,
+      });
+      
+      // Remove chrome automation properties
+      window.navigator.chrome = {
+        runtime: {},
+      };
+      
+      // Mock permissions
+      const originalQuery = window.navigator.permissions.query;
+      window.navigator.permissions.query = (parameters) => (
+        parameters.name === 'notifications' ?
+          Promise.resolve({ state: Notification.permission }) :
+          originalQuery(parameters)
+      );
     });
     
     this.page = await context.newPage();
@@ -65,29 +93,30 @@ class UnbilledReportDownloader {
   }
 
   async login() {
-    this.log('info', '🔐 Navigating to login page...');
-    await this.page.goto('https://kinnser.net/login.cfm', { waitUntil: 'domcontentloaded' });
+    this.log('info', '🔐 Logging into Kinnser...');
+    await this.page.goto('https://kinnser.net/', { waitUntil: 'domcontentloaded' });
     
-    this.log('info', '📝 Entering credentials...');
-    await this.page.fill('input[name="username"]', this.username);
-    await this.page.fill('input[name="password"]', this.password);
+    this.page.on('dialog', async dialog => {
+      this.log('info', `🔔 Dialog: ${dialog.message()}`);
+      await dialog.accept();
+    });
     
-    this.log('info', '🔓 Clicking login button...');
-    await this.page.click('input[type="submit"], button[type="submit"]');
+    await this.page.fill('input[type="text"]', this.username);
+    await this.page.fill('input[type="password"]', this.password);
+    await this.page.click('#login_btn');
     
+    this.log('info', '⏳ Waiting for login...');
     await this.page.waitForLoadState('domcontentloaded');
-    await this.page.waitForTimeout(3000);
+    await this.page.waitForTimeout(5000);
     
-    // Check for and close any popup
+    // Check for and close any popup if present
     await this.closePopupIfPresent();
     
-    this.log('success', '✅ Login successful');
+    this.log('success', '✅ Logged in successfully');
   }
 
   async closePopupIfPresent() {
-    this.log('info', '🔍 Checking for popup...');
     try {
-      // Look for common popup close buttons
       const closeSelectors = [
         'button.close',
         '.modal-close',
@@ -96,6 +125,7 @@ class UnbilledReportDownloader {
         'button[data-dismiss="modal"]',
         '.pendo-close-guide-x',
         'button.pendo-close-guide-x',
+        '.close-button',
         '[class*="close"]'
       ];
       
@@ -103,15 +133,13 @@ class UnbilledReportDownloader {
         const closeBtn = await this.page.$(selector);
         if (closeBtn && await closeBtn.isVisible()) {
           await closeBtn.click();
-          this.log('success', '✅ Closed popup');
+          this.log('info', '✅ Closed popup');
           await this.page.waitForTimeout(1000);
           return;
         }
       }
-      
-      this.log('info', '   No popup found');
     } catch (e) {
-      this.log('info', '   No popup to close');
+      // No popup to close, continue
     }
   }
 
@@ -119,10 +147,9 @@ class UnbilledReportDownloader {
     this.log('info', '📂 Looking for "Go To" menu...');
     
     const gotoSelectors = [
-      'text="Go To"',
-      'a:has-text("Go To")',
-      '#goto-menu',
-      '[data-toggle="dropdown"]:has-text("Go To")'
+      'a.menuButton[onclick*="gotoMenu"]',
+      'a[onclick*="buttonClick(event, \'gotoMenu\')"]',
+      'text="Go To"'
     ];
     
     let gotoClicked = false;
@@ -177,16 +204,19 @@ class UnbilledReportDownloader {
     await this.page.waitForTimeout(3000);
     
     // Wait for loading indicator to disappear
+    this.log('info', '⏳ Waiting for loading to complete...');
     try {
       await this.page.waitForSelector('.loading, [ng-show*="loading"], .spinner', { 
         state: 'hidden', 
         timeout: 30000 
       });
+      this.log('success', '✅ Loading completed');
     } catch (e) {
-      // Loading indicator might not be present
+      this.log('info', '   Loading indicator not found or already hidden');
     }
     
     await this.page.waitForTimeout(2000);
+    
     this.log('success', '✅ Billing Manager loaded');
   }
 
@@ -194,11 +224,19 @@ class UnbilledReportDownloader {
     this.log('info', '📊 Looking for "Managed Care Unbilled Report" link...');
     
     try {
-      await this.page.waitForSelector('#managed-care-unbilled-report-link, a:has-text("Managed Care Unbilled Report")', { 
-        state: 'visible', 
-        timeout: 15000 
+      // Wait for the link to exist in DOM
+      await this.page.waitForSelector('#managed-care-unbilled-report-link', { state: 'attached', timeout: 15000 });
+      
+      // Use JavaScript click directly (bypasses visibility check)
+      await this.page.evaluate(() => {
+        const link = document.querySelector('#managed-care-unbilled-report-link');
+        if (link) {
+          link.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          setTimeout(() => link.click(), 500);
+        }
       });
-      await this.page.click('#managed-care-unbilled-report-link, a:has-text("Managed Care Unbilled Report")');
+      
+      await this.page.waitForTimeout(2000);
       this.log('success', '✅ Clicked "Managed Care Unbilled Report"');
     } catch (e) {
       this.log('error', `❌ Failed to click Managed Care Unbilled Report: ${e.message}`);
@@ -207,59 +245,111 @@ class UnbilledReportDownloader {
     
     this.log('info', '⏳ Waiting for report page to load...');
     await this.page.waitForLoadState('domcontentloaded');
-    await this.page.waitForTimeout(3000);
+    await this.page.waitForTimeout(5000);
     
     // Wait for loading to complete
     try {
       await this.page.waitForSelector('.loading-message, .loading', { state: 'hidden', timeout: 30000 });
+      this.log('info', '   Loading completed');
     } catch (e) {
-      this.log('info', '   Loading indicator not found');
+      this.log('info', '   No loading indicator found');
     }
     
     await this.page.waitForTimeout(2000);
     this.log('success', '✅ Report page loaded');
     
-    // Click "Select All" for Branch
+    // Try to set filters directly via Angular scope
+    this.log('info', '🔧 Setting filters via Angular scope...');
+    try {
+      await this.page.evaluate(() => {
+        // Find the Angular controller scope
+        const element = document.querySelector('[ng-controller]') || document.querySelector('[ng-app]');
+        if (element) {
+          const scope = angular.element(element).scope();
+          if (scope) {
+            // Try to set all filters to select all
+            // This is a guess at the scope variable names - may need adjustment
+            if (scope.filters) {
+              scope.filters.selectAllBranches = true;
+              scope.filters.selectAllPayerTypes = true;
+              scope.filters.selectAllInsurances = true;
+            }
+            scope.$apply();
+          }
+        }
+      });
+      this.log('info', '   Attempted to set filters via scope');
+    } catch (e) {
+      this.log('info', `   Could not set via scope: ${e.message}`);
+    }
+    
+    await this.page.waitForTimeout(1000);
+    
+    // Click "Select All" for Branch and trigger Angular digest
     this.log('info', '🏢 Selecting all Branches...');
     try {
-      await this.page.waitForSelector('#filter_Branch_btn_select_all', { state: 'visible', timeout: 10000 });
-      await this.page.click('#filter_Branch_btn_select_all');
+      await this.page.evaluate(() => {
+        const btn = document.querySelector('#filter_Branch_btn_select_all');
+        if (btn) {
+          btn.click();
+          // Trigger Angular digest cycle
+          const scope = angular.element(btn).scope();
+          if (scope) {
+            scope.$apply();
+          }
+        }
+      });
+      await this.page.waitForTimeout(2000);
       this.log('success', '✅ Selected all Branches');
     } catch (e) {
-      this.log('error', `❌ Failed to select all Branches: ${e.message}`);
+      this.log('info', `   Branch filter error: ${e.message}`);
     }
     
-    await this.page.waitForTimeout(1000);
-    
-    // Click "Select All" for Payer Type
+    // Click "Select All" for Payer Type and trigger Angular digest
     this.log('info', '💳 Selecting all Payer Types...');
     try {
-      await this.page.waitForSelector('#filter_Payer_Type_btn_select_all', { state: 'visible', timeout: 10000 });
-      await this.page.click('#filter_Payer_Type_btn_select_all');
+      await this.page.evaluate(() => {
+        const btn = document.querySelector('#filter_Payer_Type_btn_select_all');
+        if (btn) {
+          btn.click();
+          // Trigger Angular digest cycle
+          const scope = angular.element(btn).scope();
+          if (scope) {
+            scope.$apply();
+          }
+        }
+      });
+      await this.page.waitForTimeout(2000);
       this.log('success', '✅ Selected all Payer Types');
     } catch (e) {
-      this.log('error', `❌ Failed to select all Payer Types: ${e.message}`);
+      this.log('info', `   Payer Type filter error: ${e.message}`);
     }
     
-    await this.page.waitForTimeout(1000);
-    
-    // Click "Select All" for Insurance
+    // Click "Select All" for Insurance and trigger Angular digest
     this.log('info', '🏥 Selecting all Insurances...');
     try {
-      await this.page.waitForSelector('#filter_Insurance_btn_select_all', { state: 'visible', timeout: 10000 });
-      await this.page.click('#filter_Insurance_btn_select_all');
+      await this.page.evaluate(() => {
+        const btn = document.querySelector('#filter_Insurance_btn_select_all');
+        if (btn) {
+          btn.click();
+          // Trigger Angular digest cycle
+          const scope = angular.element(btn).scope();
+          if (scope) {
+            scope.$apply();
+          }
+        }
+      });
+      await this.page.waitForTimeout(3000);
       this.log('success', '✅ Selected all Insurances');
     } catch (e) {
-      this.log('error', `❌ Failed to select all Insurances: ${e.message}`);
+      this.log('info', `   Insurance filter error: ${e.message}`);
     }
     
-    await this.page.waitForTimeout(1000);
-    
-    // Click "Apply Filters"
+    // Click "Apply Filters" using Playwright click
     this.log('info', '🔍 Clicking Apply Filters...');
+    
     try {
-      await this.page.waitForSelector('#aggrid_btnfetch1', { state: 'visible', timeout: 10000 });
-      await this.page.click('#aggrid_btnfetch1');
+      await this.page.click('#aggrid_btnfetch1', { timeout: 10000 });
       this.log('success', '✅ Clicked Apply Filters');
     } catch (e) {
       this.log('error', `❌ Failed to click Apply Filters: ${e.message}`);
@@ -268,27 +358,86 @@ class UnbilledReportDownloader {
     
     this.log('info', '⏳ Waiting for data to load...');
     
-    // Wait for loading to appear and disappear
-    await this.page.waitForTimeout(2000);
+    // Wait for loading to start
+    await this.page.waitForTimeout(3000);
+    
+    // Wait for loading indicator to appear and then disappear
     try {
-      await this.page.waitForSelector('.loading-message, .loading', { state: 'visible', timeout: 5000 });
-      this.log('info', '   Loading indicator appeared');
-      await this.page.waitForSelector('.loading-message, .loading', { state: 'hidden', timeout: 120000 });
-      this.log('info', '   Loading completed');
+      const loadingVisible = await this.page.$('.loading-message, .loading');
+      if (loadingVisible) {
+        this.log('info', '   Loading indicator detected, waiting for it to disappear...');
+        await this.page.waitForSelector('.loading-message, .loading', { 
+          state: 'hidden', 
+          timeout: 180000 
+        });
+        this.log('info', '   Loading indicator disappeared');
+      }
     } catch (e) {
-      this.log('info', '   Loading indicator not detected, waiting...');
-      await this.page.waitForTimeout(10000);
+      this.log('info', '   Loading indicator check: ' + e.message);
     }
     
-    // Wait for table to be visible
-    await this.page.waitForTimeout(5000);
-    this.log('success', '✅ Data loaded');
+    // After summary loads, wait 10 seconds for table to load
+    this.log('info', '   Waiting for table data to load (10 seconds)...');
+    await this.page.waitForTimeout(10000);
     
-    // Click Export
+    // Wait for table rows to appear and stabilize with actual data
+    this.log('info', '⏳ Waiting for table rows to load completely...');
+    
+    let previousRowCount = 0;
+    let stableCount = 0;
+    let maxAttempts = 20; // 20 attempts * 3 seconds = 60 seconds max wait
+    
+    for (let i = 0; i < maxAttempts; i++) {
+      await this.page.waitForTimeout(3000);
+      
+      const currentRowCount = await this.page.evaluate(() => {
+        return document.querySelectorAll('.ag-row').length;
+      });
+      
+      this.log('info', `   Attempt ${i + 1}/${maxAttempts}: Found ${currentRowCount} rows`);
+      
+      // Check if row count is stable and greater than 1 (1 row = no data)
+      if (currentRowCount === previousRowCount && currentRowCount > 1) {
+        stableCount++;
+        if (stableCount >= 3) {
+          this.log('success', `✅ Table fully loaded with ${currentRowCount} rows`);
+          break;
+        }
+      } else {
+        stableCount = 0;
+      }
+      
+      previousRowCount = currentRowCount;
+      
+      // If we're at the last attempt and still only have 1 or 0 rows, data didn't load
+      if (i === maxAttempts - 1 && currentRowCount <= 1) {
+        this.log('error', `❌ Table did not load properly - only ${currentRowCount} row(s) after ${maxAttempts * 3} seconds`);
+        this.log('error', '❌ The API request for table data (UnbilledPaged) is likely failing');
+        throw new Error('Table data did not load - API request failed');
+      }
+    }
+    
+    // Extra wait to ensure everything is ready
+    await this.page.waitForTimeout(2000);
+    
+    // Click Export using the file_upload icon
     this.log('info', '📥 Looking for Export button...');
     try {
-      await this.page.waitForSelector('text="EXPORT", div:has-text("EXPORT")', { state: 'visible', timeout: 15000 });
-      await this.page.click('text="EXPORT"');
+      // Wait for the export icon to be visible
+      await this.page.waitForSelector('i.material-icons:has-text("file_upload")', { 
+        state: 'visible', 
+        timeout: 15000 
+      });
+      
+      // Click using JavaScript since it's an icon
+      await this.page.evaluate(() => {
+        const icons = Array.from(document.querySelectorAll('i.material-icons'));
+        const exportIcon = icons.find(icon => icon.textContent.trim() === 'file_upload');
+        if (exportIcon) {
+          exportIcon.click();
+        }
+      });
+      
       this.log('success', '✅ Clicked Export');
     } catch (e) {
       this.log('error', `❌ Failed to click Export: ${e.message}`);
@@ -297,12 +446,21 @@ class UnbilledReportDownloader {
     
     this.log('info', '⏳ Waiting for export to prepare...');
     
-    // Wait for loading to complete
+    // Wait for loading to appear after export click
     await this.page.waitForTimeout(2000);
+    
     try {
-      await this.page.waitForSelector('.loading-message, .loading', { state: 'hidden', timeout: 60000 });
+      const loadingVisible = await this.page.$('.loading-message');
+      if (loadingVisible) {
+        this.log('info', '   Export loading indicator appeared');
+        await this.page.waitForSelector('.loading-message', { 
+          state: 'hidden', 
+          timeout: 180000 
+        });
+        this.log('info', '   Export loading completed');
+      }
     } catch (e) {
-      this.log('info', '   No loading indicator');
+      this.log('info', '   No export loading indicator');
     }
     
     // Wait for download
@@ -320,6 +478,23 @@ class UnbilledReportDownloader {
       return { downloaded: true, filename };
     } catch (e) {
       this.log('error', `❌ Download failed: ${e.message}`);
+      
+      // Take screenshot for debugging
+      const errorScreenshot = `download_error_${Date.now()}.png`;
+      await this.page.screenshot({ path: path.join(this.downloadPath, errorScreenshot), fullPage: true });
+      this.log('info', `   Screenshot saved: ${errorScreenshot}`);
+      
+      // Check if there's an error message on the page
+      const errorMessage = await this.page.evaluate(() => {
+        const errorEl = document.querySelector('.error-message, .alert-danger, [class*="error"]');
+        return errorEl ? errorEl.textContent : 'No error message found';
+      });
+      this.log('info', `   Page error: ${errorMessage}`);
+      
+      // Wait a bit before closing so you can see what's happening
+      this.log('info', '   Waiting 10 seconds for manual inspection...');
+      await this.page.waitForTimeout(10000);
+      
       throw new Error('Download failed');
     }
   }
