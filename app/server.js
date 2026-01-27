@@ -665,6 +665,27 @@ app.post('/api/unbilled/download', async (req, res) => {
     const downloader = new UnbilledReportDownloader(io);
     const result = await downloader.run();
     
+    // Store results in a JSON file
+    const unbilledDataPath = path.join(DATA_DIR, 'unbilled_data.json');
+    let existingData = [];
+    try {
+      const fileContent = await fs.readFile(unbilledDataPath, 'utf-8');
+      existingData = JSON.parse(fileContent);
+    } catch (e) {
+      // File doesn't exist yet
+    }
+    
+    // Update or add new result - replace existing record for same date
+    const existingIndex = existingData.findIndex(record => record.date === result.date);
+    
+    if (existingIndex !== -1) {
+      existingData[existingIndex] = result;
+    } else {
+      existingData.push(result);
+    }
+    
+    await fs.writeFile(unbilledDataPath, JSON.stringify(existingData, null, 2));
+    
     // Notify clients to refresh data
     io.emit('unbilled-complete', { success: true, result });
     
@@ -677,81 +698,61 @@ app.post('/api/unbilled/download', async (req, res) => {
   }
 });
 
-// API: Get Unbilled report analytics from Excel file
+// API: Get Unbilled report analytics from JSON file
 app.get('/api/unbilled/analytics', async (req, res) => {
   try {
-    const files = await fs.readdir(DATA_DIR);
-    const unbilledFiles = files.filter(f => f.startsWith('Managed_Care_Unbilled_') && f.endsWith('.xlsx'));
+    const unbilledDataPath = path.join(DATA_DIR, 'unbilled_data.json');
+    const fileContent = await fs.readFile(unbilledDataPath, 'utf-8');
+    const data = JSON.parse(fileContent);
     
-    if (unbilledFiles.length === 0) {
-      return res.json({ records: [], summary: {} });
-    }
+    // Sort by date
+    data.sort((a, b) => a.date.localeCompare(b.date));
     
-    // Get the most recent file
-    const latestFile = unbilledFiles.sort().reverse()[0];
-    const filepath = path.join(DATA_DIR, latestFile);
-    
-    const workbook = XLSX.readFile(filepath);
-    const sheet = workbook.Sheets[workbook.SheetNames[0]];
-    const allRows = XLSX.utils.sheet_to_json(sheet);
-    
-    if (allRows.length === 0) {
-      return res.json({ records: [], summary: {} });
-    }
-    
-    // Deduplicate based on Patient Name + MRN
-    const seen = new Set();
-    const records = allRows.filter(row => {
-      const patientName = row['Patient Name'] || row['Patient'] || '';
-      const mrn = row['MRN'] || row['Patient MRN'] || '';
-      const key = `${patientName}|${mrn}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-    
-    // Calculate summary statistics
-    const summary = {
-      totalRecords: records.length,
-      byBranch: {},
+    // Calculate aggregated statistics
+    const analytics = {
+      byDate: {},
       byPayerType: {},
-      byInsurance: {},
-      byStatus: {},
-      totalUnbilledAmount: 0
+      agingSummary: {},
+      totalUnbilled: 0,
+      totalCharges: 0,
+      totalVisits: 0
     };
     
-    records.forEach(record => {
-      // By Branch
-      const branch = record['Branch'] || record['Office'] || 'Unknown';
-      summary.byBranch[branch] = (summary.byBranch[branch] || 0) + 1;
+    data.forEach(record => {
+      // By date
+      analytics.byDate[record.date] = {
+        totalUnbilled: parseFloat(record.totalUnbilled) || 0,
+        totalCharges: parseFloat(record.totalCharges) || 0,
+        totalVisits: parseInt(record.totalVisits) || 0
+      };
       
-      // By Payer Type
-      const payerType = record['Payer Type'] || record['PayerType'] || 'Unknown';
-      summary.byPayerType[payerType] = (summary.byPayerType[payerType] || 0) + 1;
+      // Aggregate payer types
+      Object.entries(record.byPayerType || {}).forEach(([payer, amount]) => {
+        analytics.byPayerType[payer] = (analytics.byPayerType[payer] || 0) + parseFloat(amount);
+      });
       
-      // By Insurance
-      const insurance = record['Insurance'] || record['Payer'] || 'Unknown';
-      summary.byInsurance[insurance] = (summary.byInsurance[insurance] || 0) + 1;
+      // Aggregate aging summary
+      Object.entries(record.agingSummary || {}).forEach(([bucket, amount]) => {
+        analytics.agingSummary[bucket] = (analytics.agingSummary[bucket] || 0) + parseFloat(amount);
+      });
       
-      // By Status
-      const status = record['Status'] || record['Claim Status'] || 'Unknown';
-      summary.byStatus[status] = (summary.byStatus[status] || 0) + 1;
-      
-      // Total unbilled amount
-      const amount = parseFloat(record['Amount'] || record['Unbilled Amount'] || record['Total'] || 0);
-      if (!isNaN(amount)) {
-        summary.totalUnbilledAmount += amount;
-      }
+      // Latest totals
+      analytics.totalUnbilled = parseFloat(record.totalUnbilled) || 0;
+      analytics.totalCharges = parseFloat(record.totalCharges) || 0;
+      analytics.totalVisits = parseInt(record.totalVisits) || 0;
     });
     
-    res.json({ 
-      records: records.slice(0, 500), // Limit to 500 records for display
-      summary,
-      fileDate: latestFile.match(/(\d{4}-\d{2}-\d{2})/)?.[1] || 'Unknown'
-    });
+    res.json(analytics);
   } catch (error) {
     console.error('Error in unbilled analytics:', error);
-    res.json({ records: [], summary: {} });
+    res.json({
+      byDate: {},
+      byPayerType: {},
+      agingSummary: {},
+      totalUnbilled: 0,
+      totalCharges: 0,
+      totalVisits: 0
+    });
   }
 });
 
@@ -1164,3 +1165,45 @@ cron.schedule(dxSchedule, async () => {
     io.emit('dx-complete', { success: false, error: error.message });
   }
 });
+
+// Schedule automatic Unbilled reports - 3:30 PM IST = 10:00 AM UTC
+const unbilledSchedule = process.env.UNBILLED_SCHEDULE || '0 10 * * *';
+console.log(`💰 Scheduled Unbilled reports: ${unbilledSchedule} (Server timezone: ${Intl.DateTimeFormat().resolvedOptions().timeZone})`);
+
+cron.schedule(unbilledSchedule, async () => {
+  console.log('⏰ Running scheduled Unbilled report...');
+  try {
+    const UnbilledReportDownloader = (await import('./automation/unbilledDownloader.js')).default;
+    const downloader = new UnbilledReportDownloader(io);
+    const result = await downloader.run();
+    
+    // Store results
+    const unbilledDataPath = path.join(DATA_DIR, 'unbilled_data.json');
+    let existingData = [];
+    try {
+      const fileContent = await fs.readFile(unbilledDataPath, 'utf-8');
+      existingData = JSON.parse(fileContent);
+    } catch (e) {
+      // File doesn't exist yet
+    }
+    
+    // Update or add new result
+    const existingIndex = existingData.findIndex(record => record.date === result.date);
+    
+    if (existingIndex !== -1) {
+      existingData[existingIndex] = result;
+    } else {
+      existingData.push(result);
+    }
+    
+    await fs.writeFile(unbilledDataPath, JSON.stringify(existingData, null, 2));
+    
+    io.emit('unbilled-complete', { success: true, result });
+    console.log('✅ Scheduled Unbilled report completed successfully');
+  } catch (error) {
+    console.error('❌ Scheduled Unbilled report failed:', error.message);
+    io.emit('log', { type: 'error', message: `Scheduled Unbilled report failed: ${error.message}` });
+    io.emit('unbilled-complete', { success: false, error: error.message });
+  }
+});
+
