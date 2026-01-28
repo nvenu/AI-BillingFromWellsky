@@ -433,20 +433,29 @@
       
       container.innerHTML = '';
       
-      // 1. By Office - Total Unbilled
+      // 1. Total Unbilled by Office (Horizontal Bar)
       createByOfficeChart(container);
       
-      // 2. Trend Line - Total Unbilled Over Time
+      // 2. Trend Over Time - All Offices (Line Chart)
       createTrendChart(container);
       
-      // 3. By Payer Type
+      // 3. Office Comparison - Unbilled vs Charges (Grouped Bar)
+      createUnbilledVsChargesChart(container);
+      
+      // 4. By Payer Type (Horizontal Bar)
       createPayerTypeChart(container);
       
-      // 4. Aging Summary
+      // 5. Aging Summary Distribution (Doughnut)
       createAgingSummaryChart(container);
       
-      // 5. Visits by Office
+      // 6. Visits by Office (Bar Chart)
       createVisitsByOfficeChart(container);
+      
+      // 7. Unbilled Percentage by Office (Bar Chart showing %)
+      createUnbilledPercentageChart(container);
+      
+      // 8. 7-Day Trend by Office (Multi-line)
+      create7DayTrendByOfficeChart(container);
     }
 
     function createByOfficeChart(container) {
@@ -734,6 +743,216 @@
             y: {
               beginAtZero: true,
               ticks: { precision: 0 }
+            }
+          }
+        }
+      });
+    }
+
+    function createUnbilledVsChargesChart(container) {
+      const card = document.createElement('div');
+      card.className = 'chart-card full-width';
+      card.innerHTML = `
+        <div class="chart-title">Unbilled vs Total Charges by Office</div>
+        <div class="chart-container">
+          <canvas id="unbilledVsChargesChart"></canvas>
+        </div>
+      `;
+      container.appendChild(card);
+      
+      const ctx = document.getElementById('unbilledVsChargesChart').getContext('2d');
+      
+      const unbilledData = allOffices.map(office => 
+        analyticsData.byOffice[office]?.totalUnbilled || 0
+      );
+      
+      const chargesData = allOffices.map(office => 
+        analyticsData.byOffice[office]?.totalCharges || 0
+      );
+      
+      charts.unbilledVsCharges = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: allOffices,
+          datasets: [
+            {
+              label: 'Total Unbilled ($)',
+              data: unbilledData,
+              backgroundColor: '#ef4444',
+              borderColor: '#dc2626',
+              borderWidth: 2,
+              borderRadius: 8
+            },
+            {
+              label: 'Total Charges ($)',
+              data: chargesData,
+              backgroundColor: '#3b82f6',
+              borderColor: '#2563eb',
+              borderWidth: 2,
+              borderRadius: 8
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { 
+              position: 'top',
+              labels: { boxWidth: 15, padding: 15 }
+            },
+            tooltip: {
+              backgroundColor: 'rgba(0, 0, 0, 0.8)',
+              padding: 12,
+              callbacks: {
+                label: function(context) {
+                  return `${context.dataset.label}: $${context.parsed.y.toLocaleString()}`;
+                }
+              }
+            }
+          },
+          scales: {
+            y: {
+              beginAtZero: true,
+              ticks: {
+                callback: function(value) {
+                  return '$' + value.toLocaleString();
+                }
+              }
+            }
+          }
+        }
+      });
+    }
+
+    function createUnbilledPercentageChart(container) {
+      const card = document.createElement('div');
+      card.className = 'chart-card';
+      card.innerHTML = `
+        <div class="chart-title">Unbilled Percentage by Office</div>
+        <div class="chart-container">
+          <canvas id="unbilledPercentageChart"></canvas>
+        </div>
+      `;
+      container.appendChild(card);
+      
+      const ctx = document.getElementById('unbilledPercentageChart').getContext('2d');
+      
+      const percentageData = allOffices.map(office => {
+        const unbilled = analyticsData.byOffice[office]?.totalUnbilled || 0;
+        const charges = analyticsData.byOffice[office]?.totalCharges || 0;
+        return charges > 0 ? ((unbilled / charges) * 100).toFixed(1) : 0;
+      });
+      
+      charts.unbilledPercentage = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: allOffices,
+          datasets: [{
+            label: 'Unbilled %',
+            data: percentageData,
+            backgroundColor: '#f59e0b',
+            borderColor: '#d97706',
+            borderWidth: 2,
+            borderRadius: 8
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              backgroundColor: 'rgba(0, 0, 0, 0.8)',
+              padding: 12,
+              callbacks: {
+                label: function(context) {
+                  return `${context.parsed.y}% Unbilled`;
+                }
+              }
+            }
+          },
+          scales: {
+            y: {
+              beginAtZero: true,
+              max: 100,
+              ticks: {
+                callback: function(value) {
+                  return value + '%';
+                }
+              }
+            }
+          }
+        }
+      });
+    }
+
+    function create7DayTrendByOfficeChart(container) {
+      const card = document.createElement('div');
+      card.className = 'chart-card full-width';
+      card.innerHTML = `
+        <div class="chart-title">7-Day Unbilled Trend by Office</div>
+        <div class="chart-container tall">
+          <canvas id="trendByOfficeChart"></canvas>
+        </div>
+      `;
+      container.appendChild(card);
+      
+      const ctx = document.getElementById('trendByOfficeChart').getContext('2d');
+      
+      // Get all dates and sort them
+      const allDates = Object.keys(analyticsData.byDate || {}).sort();
+      const last7Dates = allDates.slice(-7);
+      
+      const officeColors = [
+        '#EF5350', '#FF7043', '#FFA726', '#FFCA28', '#66BB6A', 
+        '#42A5F6', '#AB47BC', '#26C6DA', '#EC407A'
+      ];
+      
+      const datasets = allOffices.map((office, index) => ({
+        label: office,
+        data: last7Dates.map(date => 
+          analyticsData.byDate[date]?.byOffice[office]?.totalUnbilled || 0
+        ),
+        borderColor: officeColors[index],
+        backgroundColor: officeColors[index] + '33',
+        borderWidth: 2,
+        tension: 0.3,
+        fill: false
+      }));
+      
+      charts.trendByOffice = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: last7Dates,
+          datasets: datasets
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { 
+              position: 'top',
+              labels: { boxWidth: 12, padding: 10 }
+            },
+            tooltip: {
+              backgroundColor: 'rgba(0, 0, 0, 0.8)',
+              padding: 12,
+              callbacks: {
+                label: function(context) {
+                  return `${context.dataset.label}: $${context.parsed.y.toLocaleString()}`;
+                }
+              }
+            }
+          },
+          scales: {
+            y: {
+              beginAtZero: true,
+              ticks: {
+                callback: function(value) {
+                  return '$' + value.toLocaleString();
+                }
+              }
             }
           }
         }
