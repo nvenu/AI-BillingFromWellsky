@@ -47,11 +47,51 @@ class KinnserReportDownloader {
     }
   }
 
+  async cleanupOldFiles() {
+    this.log('info', '🗑️  Cleaning up old Past Due Visits files (keeping last 7 days)...');
+    
+    try {
+      const files = await fs.readdir(this.dataDir);
+      const pastDueFiles = files.filter(f => f.includes('Past_Due_Visits') && f.endsWith('.xlsx'));
+      
+      // Calculate date 7 days ago
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+      
+      let deletedCount = 0;
+      
+      for (const file of pastDueFiles) {
+        const filepath = path.join(this.dataDir, file);
+        
+        // Extract date from filename (format: Location_Past_Due_Visits_YYYY-MM-DD.xlsx)
+        const dateMatch = file.match(/(\d{4}-\d{2}-\d{2})/);
+        
+        if (dateMatch) {
+          const fileDate = new Date(dateMatch[1]);
+          
+          // Delete if older than 7 days
+          if (fileDate < sevenDaysAgo) {
+            await fs.unlink(filepath);
+            this.log('info', `   🗑️  Deleted old file: ${file}`);
+            deletedCount++;
+          }
+        }
+      }
+      
+      this.log('success', `✅ Cleanup complete: Deleted ${deletedCount} old files, keeping last 7 days`);
+    } catch (error) {
+      this.log('error', `❌ Error during cleanup: ${error.message}`);
+    }
+  }
+
   async initialize() {
     await fs.mkdir(this.dataDir, { recursive: true });
     
     this.screenshotDir = path.join(__dirname, '..', 'public', 'screenshots');
     await fs.mkdir(this.screenshotDir, { recursive: true });
+    
+    // Clean up old files before starting
+    await this.cleanupOldFiles();
     
     this.log('info', '🚀 Initializing browser...');
     this.browser = await chromium.launch({ 
