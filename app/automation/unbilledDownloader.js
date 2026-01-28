@@ -46,7 +46,7 @@ class UnbilledReportDownloader {
   async initialize() {
     this.log('info', '🚀 Initializing browser...');
     this.browser = await chromium.launch({ 
-      headless: true,  // Production mode
+      headless: false,  // Show browser for debugging
       timeout: 60000,
       args: [
         '--disable-blink-features=AutomationControlled',
