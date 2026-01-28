@@ -390,51 +390,60 @@ class UnbilledReportDownloader {
         // Get all text content from the page
         const bodyText = document.body.textContent || '';
         
-        // Log the body text for debugging (first 500 chars)
-        console.log('Body text preview:', bodyText.substring(0, 500));
+        // Clean up the text - remove extra whitespace and normalize
+        const cleanText = bodyText.replace(/\s+/g, ' ').trim();
         
-        // Try multiple patterns for Total Unbilled
-        let unbilledMatch = bodyText.match(/Total\s+Unbilled[:\s]*\$?([\d,]+\.?\d*)/i);
-        if (!unbilledMatch) {
-          // Try looking in specific elements
-          const summaryElements = document.querySelectorAll('.summary-value, .total-value, [class*="total"], [class*="summary"]');
-          for (const el of summaryElements) {
-            const text = el.textContent || '';
-            if (text.includes('Unbilled') || el.previousElementSibling?.textContent?.includes('Unbilled')) {
-              const match = text.match(/\$?([\d,]+\.?\d*)/);
-              if (match) {
-                data.totalUnbilled = match[1].replace(/,/g, '');
-                console.log('Found unbilled in element:', text);
-                break;
-              }
-            }
+        console.log('Body text preview:', cleanText.substring(0, 500));
+        
+        // Extract Report Summary section
+        const summaryMatch = cleanText.match(/Report Summary\s+(.*?)\s+Total Unbilled By Payer Type/i);
+        if (summaryMatch) {
+          const summarySection = summaryMatch[1];
+          console.log('Summary section:', summarySection);
+          
+          // Extract values in order: Total Unbilled, Total Charges, Total Visits
+          const values = summarySection.match(/\$?([\d,]+\.?\d*)/g);
+          if (values && values.length >= 3) {
+            data.totalUnbilled = values[0].replace(/[$,]/g, '');
+            data.totalCharges = values[1].replace(/[$,]/g, '');
+            data.totalVisits = values[2].replace(/[$,]/g, '');
+            console.log('Extracted from summary:', data);
           }
-        } else {
-          data.totalUnbilled = unbilledMatch[1].replace(/,/g, '');
         }
         
-        // Extract Total Charges
-        const chargesMatch = bodyText.match(/Total\s+Charges[:\s]*\$?([\d,]+\.?\d*)/i);
-        if (chargesMatch) data.totalCharges = chargesMatch[1].replace(/,/g, '');
+        // Fallback: Try individual patterns
+        if (data.totalUnbilled === '0') {
+          const unbilledMatch = cleanText.match(/Total\s+Unbilled\s*\$?([\d,]+\.?\d*)/i);
+          if (unbilledMatch) data.totalUnbilled = unbilledMatch[1].replace(/,/g, '');
+        }
         
-        // Extract Total Visits
-        const visitsMatch = bodyText.match(/Total\s+Visits[:\s]*([\d,]+)/i);
-        if (visitsMatch) data.totalVisits = visitsMatch[1].replace(/,/g, '');
+        if (data.totalCharges === '0') {
+          const chargesMatch = cleanText.match(/Total\s+Charges\s*\$?([\d,]+\.?\d*)/i);
+          if (chargesMatch) data.totalCharges = chargesMatch[1].replace(/,/g, '');
+        }
         
-        // Extract Payer Type data - look for the section between headers
-        const payerSection = bodyText.match(/Total\s+Unbilled\s+By\s+Payer\s+Type([\s\S]*?)(?:Aging\s+Summary|$)/i);
-        if (payerSection) {
-          const payerText = payerSection[1];
-          console.log('Payer section:', payerText.substring(0, 200));
+        if (data.totalVisits === '0') {
+          const visitsMatch = cleanText.match(/Total\s+Visits\s*([\d,]+)/i);
+          if (visitsMatch) data.totalVisits = visitsMatch[1].replace(/,/g, '');
+        }
+        
+        // Extract Payer Type data
+        const payerMatch = cleanText.match(/Total Unbilled By Payer Type\s+(.*?)\s+Aging Summary/i);
+        if (payerMatch) {
+          const payerSection = payerMatch[1];
+          console.log('Payer section:', payerSection);
           
-          // Match patterns like "Medicare (HMO/Per Visit)$230.00" or "Medicare (HMO/Per Visit) $230.00"
-          const lines = payerText.split('\n');
-          for (const line of lines) {
-            const match = line.match(/([A-Za-z\s\(\)\/\-]+?)\s*\$?\s*([\d,]+\.?\d*)/);
+          // Split by dollar signs to find payer entries
+          const payerEntries = payerSection.split('$').filter(s => s.trim());
+          
+          for (let i = 0; i < payerEntries.length; i++) {
+            const entry = payerEntries[i].trim();
+            // Look for pattern: "PayerName Amount" where amount is at the end
+            const match = entry.match(/^(.+?)\s+([\d,]+\.?\d*)$/);
             if (match) {
               const payerName = match[1].trim();
               const amount = match[2].replace(/,/g, '');
-              if (payerName && amount && parseFloat(amount) > 0 && payerName.length > 3) {
+              if (payerName.length > 3 && parseFloat(amount) > 0) {
                 data.byPayerType[payerName] = amount;
                 console.log('Found payer:', payerName, '=', amount);
               }
@@ -443,20 +452,26 @@ class UnbilledReportDownloader {
         }
         
         // Extract Aging Summary
-        const agingBuckets = ['0-30', '31-60', '61-90', '91-120', '121-150', '151-180', '181-210', '211-240', '241+'];
-        const agingSection = bodyText.match(/Aging\s+Summary([\s\S]*?)$/i);
-        if (agingSection) {
-          const agingText = agingSection[1];
-          console.log('Aging section:', agingText.substring(0, 200));
+        const agingMatch = cleanText.match(/Aging Summary\s+(.*)$/i);
+        if (agingMatch) {
+          const agingSection = agingMatch[1];
+          console.log('Aging section:', agingSection);
           
-          agingBuckets.forEach(bucket => {
-            const regex = new RegExp(bucket.replace('+', '\\+') + '[:\\s]*\\$?([\\d,]+\\.?\\d*)', 'i');
-            const match = agingText.match(regex);
-            if (match) {
-              data.agingSummary[bucket] = match[1].replace(/,/g, '');
-              console.log('Found aging bucket:', bucket, '=', match[1]);
-            }
-          });
+          // The aging section has format: "0-30 31-60 61-90 ... $0.00 $0.00 $0.00 ..."
+          const agingBuckets = ['0-30', '31-60', '61-90', '91-120', '121-150', '151-180', '181-210', '211-240', '241+'];
+          
+          // Find all dollar amounts in the aging section
+          const amounts = agingSection.match(/\$?([\d,]+\.?\d*)/g);
+          
+          if (amounts && amounts.length >= agingBuckets.length) {
+            agingBuckets.forEach((bucket, index) => {
+              if (amounts[index]) {
+                const amount = amounts[index].replace(/[$,]/g, '');
+                data.agingSummary[bucket] = amount;
+                console.log('Found aging bucket:', bucket, '=', amount);
+              }
+            });
+          }
         }
         
         console.log('Final extracted data:', JSON.stringify(data, null, 2));
