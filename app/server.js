@@ -231,6 +231,17 @@ app.post('/api/deviation/download', async (req, res) => {
       // File doesn't exist yet
     }
     
+    // Clean up data older than 7 days
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    
+    existingData = existingData.filter(record => {
+      const recordDate = new Date(record.date);
+      return recordDate >= sevenDaysAgo;
+    });
+    
+    console.log(`🗑️  Cleaned up deviation data: keeping records from ${sevenDaysAgo.toISOString().split('T')[0]} onwards`);
+    
     // Update or add new results - replace existing records for same date and location
     results.forEach(newRecord => {
       const existingIndex = existingData.findIndex(
@@ -1094,6 +1105,17 @@ cron.schedule(deviationSchedule, async () => {
     } catch (e) {
       // File doesn't exist yet
     }
+    
+    // Clean up data older than 7 days
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    
+    existingData = existingData.filter(record => {
+      const recordDate = new Date(record.date);
+      return recordDate >= sevenDaysAgo;
+    });
+    
+    console.log(`🗑️  Cleaned up deviation data: keeping records from ${sevenDaysAgo.toISOString().split('T')[0]} onwards`);
     
     // Update or add new results - replace existing records for same date and location
     results.forEach(newRecord => {
