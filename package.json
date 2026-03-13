@@ -1,0 +1,38 @@
+{
+  "name": "kinnser-billing-automation",
+  "version": "1.0.0",
+  "description": "Automated billing record processing for Kinnser.net",
+  "main": "dist/server.js",
+  "scripts": {
+    "start": "ts-node server.ts",
+    "dev": "ts-node kinnser-billing-automation.ts",
+    "build": "tsc",
+    "prod": "node dist/server.js",
+    "pm2:start": "pm2 start ecosystem.config.js",
+    "pm2:stop": "pm2 stop kinnser-billing-automation",
+    "pm2:restart": "pm2 restart kinnser-billing-automation",
+    "pm2:logs": "pm2 logs kinnser-billing-automation"
+  },
+  "keywords": ["billing", "automation", "kinnser", "healthcare"],
+  "author": "SOLT Healthcare",
+  "license": "ISC",
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  },
+  "dependencies": {
+    "date-fns": "^4.1.0",
+    "dotenv": "^17.3.1",
+    "express": "^4.18.0",
+    "nodemailer": "^8.0.2",
+    "playwright": "^1.40.0",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.0",
+    "@types/node": "^20.0.0",
+    "@types/nodemailer": "^7.0.11",
+    "ts-node": "^10.9.0",
+    "typescript": "^5.0.0"
+  }
+}
