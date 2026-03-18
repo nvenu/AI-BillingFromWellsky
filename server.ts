@@ -609,7 +609,7 @@ app.get("/billing", (req: Request, res: Response) => {
               <li>Select an office to process billing records for that location</li>
               <li>The system validates insurance and authorization data automatically</li>
               <li>Valid records are selected and saved to Excel for review</li>
-              <li>Results are emailed to nvenu@solifetec.com with detailed reports</li>
+              <li>Results are emailed to configured recipients with detailed reports</li>
               <li><strong>Note:</strong> Create button is disabled - records are selected for verification only</li>
             </ul>
           </div>

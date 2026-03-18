@@ -294,14 +294,14 @@ All files are attached to this email for your review.
         `;
 
         await sendEmail({
-          to: "nvenu@solifetec.com",
+          to: process.env.EMAIL_RECIPIENTS || "nvenu@solifetec.com",
           subject: `Kinnser Billing Report - ${officeNames} - ${timestamp}`,
           body: emailBody,
           attachments: allAttachments
         });
         
         emailSent = true;
-        console.log(`✓ Email sent successfully to nvenu@solifetec.com`);
+        console.log(`✓ Email sent successfully to ${process.env.EMAIL_RECIPIENTS || "nvenu@solifetec.com"}`);
         console.log(`  Total attachments: ${allAttachments.length}`);
         console.log(`  - Ready Tab Excel: ${readyTabExcelCount}`);
         console.log(`  - Ready To Send Excel: ${readyToSendExcelCount}`);
