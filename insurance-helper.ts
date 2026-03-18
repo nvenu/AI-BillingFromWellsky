@@ -20,16 +20,26 @@ export class InsuranceHelper {
     const sheet = workbook.Sheets[sheetName];
     this.instructions = XLSX.utils.sheet_to_json(sheet);
 
-    // Build a set of insurance names that have "No changes are required except for identical claims"
+    // Build a set of insurance names that have either:
+    // 1. "No changes are required except for identical claims"
+    // 2. Exactly "Paper" as the remark
     this.instructions.forEach(instruction => {
-      if (instruction.Remarks && 
-          instruction.Remarks.toLowerCase().includes("no changes are required except for identical claims")) {
-        this.noChangesInsurances.add(instruction.Name.toLowerCase().trim());
+      if (instruction.Remarks) {
+        const remarkLower = instruction.Remarks.toLowerCase().trim();
+        
+        // Check for "no changes" remark
+        if (remarkLower.includes("no changes are required except for identical claims")) {
+          this.noChangesInsurances.add(instruction.Name.toLowerCase().trim());
+        }
+        // Check for exactly "paper" remark (case-insensitive)
+        else if (remarkLower === "paper") {
+          this.noChangesInsurances.add(instruction.Name.toLowerCase().trim());
+        }
       }
     });
 
     console.log(`Loaded ${this.instructions.length} insurance instructions`);
-    console.log(`Found ${this.noChangesInsurances.size} insurances with 'no changes' remark`);
+    console.log(`Found ${this.noChangesInsurances.size} insurances with 'no changes' or 'paper' remark`);
     console.log("Insurances to process:", Array.from(this.noChangesInsurances).sort());
   }
 
@@ -110,5 +120,29 @@ export class InsuranceHelper {
 
   getInstructionsByLocation(location: string): InsuranceInstruction[] {
     return this.instructions.filter(i => i.Location === location);
+  }
+
+  /**
+   * Get all unique insurance names that should be processed (have "no changes" remark)
+   */
+  getAllProcessableInsurances(): string[] {
+    return Array.from(this.noChangesInsurances).sort();
+  }
+
+  /**
+   * Get insurances by location that should be processed
+   * Includes insurances with "no changes" remark OR exactly "paper" remark
+   */
+  getProcessableInsurancesByLocation(location: string): string[] {
+    const locationInstructions = this.getInstructionsByLocation(location);
+    return locationInstructions
+      .filter(instruction => {
+        if (!instruction.Remarks) return false;
+        const remarkLower = instruction.Remarks.toLowerCase().trim();
+        return remarkLower.includes("no changes are required except for identical claims") || 
+               remarkLower === "paper";
+      })
+      .map(instruction => instruction.Name)
+      .sort();
   }
 }

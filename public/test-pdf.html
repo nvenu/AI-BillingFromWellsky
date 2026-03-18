@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Test PDF Download</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    
+    .container {
+      background: white;
+      border-radius: 16px;
+      padding: 40px;
+      max-width: 600px;
+      width: 100%;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+    }
+    
+    h1 {
+      font-size: 2rem;
+      color: #1a202c;
+      margin-bottom: 10px;
+    }
+    
+    .subtitle {
+      color: #718096;
+      margin-bottom: 30px;
+    }
+    
+    .info-box {
+      background: #edf2f7;
+      border-left: 4px solid #667eea;
+      padding: 16px;
+      border-radius: 8px;
+      margin-bottom: 30px;
+    }
+    
+    .info-box p {
+      color: #4a5568;
+      line-height: 1.6;
+      margin-bottom: 8px;
+    }
+    
+    .info-box p:last-child {
+      margin-bottom: 0;
+    }
+    
+    .test-btn {
+      width: 100%;
+      padding: 16px;
+      font-size: 1.1rem;
+      font-weight: 600;
+      border: none;
+      cursor: pointer;
+      border-radius: 8px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      transition: all 0.3s;
+    }
+    
+    .test-btn:hover:not(:disabled) {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+    }
+    
+    .test-btn:disabled {
+      background: #cbd5e0;
+      cursor: not-allowed;
+      transform: none;
+    }
+    
+    #results {
+      margin-top: 20px;
+      padding: 16px;
+      border-radius: 8px;
+      display: none;
+    }
+    
+    #results.loading {
+      background: #fff5e6;
+      border: 2px solid #ffa726;
+      display: block;
+    }
+    
+    #results.success {
+      background: #e8f5e9;
+      border: 2px solid #66bb6a;
+      display: block;
+    }
+    
+    #results.error {
+      background: #ffebee;
+      border: 2px solid #ef5350;
+      display: block;
+    }
+    
+    .spinner {
+      display: inline-block;
+      width: 16px;
+      height: 16px;
+      border: 3px solid rgba(0,0,0,0.1);
+      border-radius: 50%;
+      border-top-color: #667eea;
+      animation: spin 1s ease-in-out infinite;
+      margin-right: 8px;
+    }
+    
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🧪 Test PDF Download</h1>
+    <p class="subtitle">Test the PDF download functionality from Ready To Send tab</p>
+    
+    <div class="info-box">
+      <p><strong>What this test does:</strong></p>
+      <p>1. Logs into Kinnser</p>
+      <p>2. Selects Nightingale - Taunton office (MA)</p>
+      <p>3. Navigates to Billing Manager</p>
+      <p>4. Applies filters (Primary Payer = Ready)</p>
+      <p>5. Navigates to Ready To Send tab</p>
+      <p>6. Selects "All Insurances" from dropdown</p>
+      <p>7. Finds the first record with a print icon</p>
+      <p>8. Clicks the print icon</p>
+      <p>9. Captures the PDF from the new tab</p>
+      <p>10. Saves it to the downloads/ folder</p>
+    </div>
+    
+    <button class="test-btn" onclick="runTest()">
+      Run PDF Download Test
+    </button>
+    
+    <div id="results"></div>
+  </div>
+
+  <script>
+    async function runTest() {
+      const button = document.querySelector('.test-btn');
+      const results = document.getElementById('results');
+      
+      button.disabled = true;
+      results.className = 'loading';
+      results.innerHTML = '<div class="spinner"></div> Running test... This may take a minute...';
+      
+      try {
+        const response = await fetch('/test-pdf-download', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ officeValue: '1407132,Clinic' })
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok) {
+          results.className = 'success';
+          results.innerHTML = `
+            <strong>✓ Test Completed Successfully!</strong>
+            <p style="margin-top: 8px; color: #2d3748;">${data.message}</p>
+            <p style="margin-top: 8px; color: #4a5568;">Check the downloads/ folder for the PDF file.</p>
+          `;
+        } else {
+          results.className = 'error';
+          results.innerHTML = `
+            <strong>✗ Test Failed</strong>
+            <p style="margin-top: 8px; color: #c53030;">${data.error}</p>
+          `;
+        }
+      } catch (error) {
+        results.className = 'error';
+        results.innerHTML = `
+          <strong>✗ Connection Error</strong>
+          <p style="margin-top: 8px; color: #c53030;">Failed to connect to server. Make sure the server is running.</p>
+        `;
+      } finally {
+        button.disabled = false;
+      }
+    }
+  </script>
+</body>
+</html>

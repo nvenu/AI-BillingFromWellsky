@@ -5,7 +5,12 @@ dist/
 logs/
 *.xlsx
 *.png
-*.html
 debug-*
 selected-records-*
 SUMMARY-*
+downloads/
+*.pdf
+ready-to-send-*
+paper-claim-*
+test-pdf-download-*
+.DS_Store

@@ -1,10 +1,14 @@
 import "dotenv/config";
 import express, { Request, Response } from "express";
-import { loginAndProcessOffices } from "./kinnser-billing-automation";
+import { loginAndProcessOffices, testPDFDownload } from "./kinnser-billing-automation";
 import { OFFICES } from "./office-config";
+import { InsuranceHelper } from "./insurance-helper";
 
 const app = express();
 const PORT = process.env.PORT || 8080;
+
+// Load insurance data
+const insuranceHelper = new InsuranceHelper("Insurance Instructions.xlsx");
 
 app.use(express.json());
 app.use(express.static("public"));
@@ -19,8 +23,20 @@ app.get("/health", (req: Request, res: Response) => {
   });
 });
 
-// Home page
-app.get("/", (req: Request, res: Response) => {
+// API endpoint to get insurances for an office
+app.get("/api/insurances/:stateCode", (req: Request, res: Response) => {
+  try {
+    const { stateCode } = req.params;
+    const insurances = insuranceHelper.getProcessableInsurancesByLocation(stateCode);
+    res.json({ insurances });
+  } catch (error) {
+    console.error("Failed to get insurances:", error);
+    res.status(500).json({ error: "Failed to load insurances" });
+  }
+});
+
+// Billing automation page
+app.get("/billing", (req: Request, res: Response) => {
   // Generate office buttons
   const officeButtons = OFFICES.map(office => `
     <div class="office-card">
@@ -28,11 +44,11 @@ app.get("/", (req: Request, res: Response) => {
         <h3>${office.name}</h3>
         <span class="state-badge">${office.stateCode}</span>
       </div>
-      <button class="office-btn" onclick="runAutomation('${office.value}', '${office.name}', '${office.stateCode}')">
+      <button class="office-btn" onclick="showInsuranceModal('${office.value}', '${office.name}', '${office.stateCode}')">
         <svg class="btn-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path>
         </svg>
-        Process Office
+        Select Insurances
       </button>
     </div>
   `).join('\n');
@@ -388,6 +404,192 @@ app.get("/", (req: Request, res: Response) => {
             grid-template-columns: 1fr;
           }
         }
+        
+        /* Modal Styles */
+        .modal {
+          display: none;
+          position: fixed;
+          z-index: 1000;
+          left: 0;
+          top: 0;
+          width: 100%;
+          height: 100%;
+          background: rgba(0, 0, 0, 0.5);
+          animation: fadeIn 0.3s ease;
+        }
+        
+        .modal.show {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        
+        .modal-content {
+          background: white;
+          border-radius: 16px;
+          padding: 32px;
+          max-width: 600px;
+          width: 90%;
+          max-height: 80vh;
+          overflow-y: auto;
+          box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+          animation: slideUp 0.3s ease;
+        }
+        
+        @keyframes fadeIn {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+        
+        @keyframes slideUp {
+          from { 
+            opacity: 0;
+            transform: translateY(20px);
+          }
+          to { 
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+        
+        .modal-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 24px;
+          padding-bottom: 16px;
+          border-bottom: 2px solid #e2e8f0;
+        }
+        
+        .modal-header h2 {
+          font-size: 1.5rem;
+          color: #1a202c;
+        }
+        
+        .close-btn {
+          background: none;
+          border: none;
+          font-size: 28px;
+          color: #718096;
+          cursor: pointer;
+          padding: 0;
+          width: 32px;
+          height: 32px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border-radius: 4px;
+          transition: all 0.2s;
+        }
+        
+        .close-btn:hover {
+          background: #f7fafc;
+          color: #1a202c;
+        }
+        
+        .insurance-list {
+          margin: 20px 0;
+        }
+        
+        .insurance-item {
+          display: flex;
+          align-items: center;
+          padding: 12px;
+          border: 1px solid #e2e8f0;
+          border-radius: 8px;
+          margin-bottom: 8px;
+          transition: all 0.2s;
+        }
+        
+        .insurance-item:hover {
+          background: #f7fafc;
+          border-color: #cbd5e0;
+        }
+        
+        .insurance-item input[type="checkbox"] {
+          width: 20px;
+          height: 20px;
+          margin-right: 12px;
+          cursor: pointer;
+        }
+        
+        .insurance-item label {
+          cursor: pointer;
+          flex: 1;
+          font-size: 0.95rem;
+          color: #2d3748;
+        }
+        
+        .select-all-section {
+          margin-bottom: 16px;
+          padding: 12px;
+          background: #edf2f7;
+          border-radius: 8px;
+        }
+        
+        .select-all-section label {
+          display: flex;
+          align-items: center;
+          cursor: pointer;
+          font-weight: 600;
+          color: #2d3748;
+        }
+        
+        .select-all-section input[type="checkbox"] {
+          width: 20px;
+          height: 20px;
+          margin-right: 12px;
+          cursor: pointer;
+        }
+        
+        .modal-actions {
+          display: flex;
+          gap: 12px;
+          margin-top: 24px;
+          padding-top: 20px;
+          border-top: 2px solid #e2e8f0;
+        }
+        
+        .modal-btn {
+          flex: 1;
+          padding: 14px 24px;
+          font-size: 1rem;
+          font-weight: 600;
+          border: none;
+          border-radius: 8px;
+          cursor: pointer;
+          transition: all 0.3s;
+        }
+        
+        .modal-btn-primary {
+          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+          color: white;
+        }
+        
+        .modal-btn-primary:hover:not(:disabled) {
+          transform: translateY(-2px);
+          box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+        }
+        
+        .modal-btn-primary:disabled {
+          background: #cbd5e0;
+          cursor: not-allowed;
+        }
+        
+        .modal-btn-secondary {
+          background: #e2e8f0;
+          color: #2d3748;
+        }
+        
+        .modal-btn-secondary:hover {
+          background: #cbd5e0;
+        }
+        
+        .loading-spinner {
+          text-align: center;
+          padding: 20px;
+          color: #718096;
+        }
       </style>
     </head>
     <body>
@@ -442,8 +644,145 @@ app.get("/", (req: Request, res: Response) => {
         </div>
       </div>
 
+      <!-- Insurance Selection Modal -->
+      <div id="insuranceModal" class="modal">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h2>Select Insurances</h2>
+            <button class="close-btn" onclick="closeModal()">&times;</button>
+          </div>
+          
+          <div id="modalBody">
+            <div class="loading-spinner">Loading insurances...</div>
+          </div>
+          
+          <div class="modal-actions">
+            <button class="modal-btn modal-btn-secondary" onclick="closeModal()">Cancel</button>
+            <button id="processBtn" class="modal-btn modal-btn-primary" onclick="processSelectedInsurances()" disabled>
+              Process Selected
+            </button>
+          </div>
+        </div>
+      </div>
+
       <script>
-        async function runAutomation(officeValue, officeName, stateCode) {
+        let currentOffice = null;
+        
+        async function showInsuranceModal(officeValue, officeName, stateCode) {
+          console.log('showInsuranceModal called with:', { officeValue, officeName, stateCode });
+          currentOffice = { officeValue, officeName, stateCode };
+          console.log('currentOffice set to:', currentOffice);
+          
+          const modal = document.getElementById('insuranceModal');
+          const modalBody = document.getElementById('modalBody');
+          
+          modal.classList.add('show');
+          modalBody.innerHTML = '<div class="loading-spinner">Loading insurances...</div>';
+          
+          try {
+            const response = await fetch(\`/api/insurances/\${stateCode}\`);
+            const data = await response.json();
+            
+            if (data.insurances && data.insurances.length > 0) {
+              let html = \`
+                <div class="select-all-section">
+                  <label>
+                    <input type="checkbox" id="selectAll" onchange="toggleSelectAll(this)">
+                    Select All (\${data.insurances.length} insurances)
+                  </label>
+                </div>
+                <div class="insurance-list">
+              \`;
+              
+              data.insurances.forEach((insurance, index) => {
+                html += \`
+                  <div class="insurance-item">
+                    <input type="checkbox" id="insurance-\${index}" class="insurance-checkbox" 
+                           value="\${insurance}" onchange="updateProcessButton()">
+                    <label for="insurance-\${index}">\${insurance}</label>
+                  </div>
+                \`;
+              });
+              
+              html += '</div>';
+              modalBody.innerHTML = html;
+              
+              // Auto-select all insurances by default for convenience
+              setTimeout(() => {
+                const selectAllCheckbox = document.getElementById('selectAll');
+                if (selectAllCheckbox) {
+                  selectAllCheckbox.checked = true;
+                  toggleSelectAll(selectAllCheckbox);
+                }
+              }, 100);
+            } else {
+              modalBody.innerHTML = '<p style="color: #718096; text-align: center;">No insurances found for this office.</p>';
+            }
+          } catch (error) {
+            modalBody.innerHTML = '<p style="color: #ef5350; text-align: center;">Failed to load insurances. Please try again.</p>';
+          }
+        }
+        
+        function closeModal() {
+          console.log('closeModal called');
+          const modal = document.getElementById('insuranceModal');
+          modal.classList.remove('show');
+          // Don't reset currentOffice here - we need it for processing
+          // currentOffice = null;
+        }
+        
+        function toggleSelectAll(checkbox) {
+          const checkboxes = document.querySelectorAll('.insurance-checkbox');
+          checkboxes.forEach(cb => cb.checked = checkbox.checked);
+          updateProcessButton();
+        }
+        
+        function updateProcessButton() {
+          const checkboxes = document.querySelectorAll('.insurance-checkbox');
+          const anyChecked = Array.from(checkboxes).some(cb => cb.checked);
+          document.getElementById('processBtn').disabled = !anyChecked;
+          
+          const selectAll = document.getElementById('selectAll');
+          if (selectAll) {
+            const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+            const someChecked = Array.from(checkboxes).some(cb => cb.checked);
+            selectAll.checked = allChecked;
+            selectAll.indeterminate = someChecked && !allChecked;
+          }
+        }
+        
+        async function processSelectedInsurances() {
+          console.log('processSelectedInsurances called');
+          console.log('currentOffice before processing:', currentOffice);
+          
+          if (!currentOffice) {
+            console.error('No current office selected');
+            alert('Error: No office selected. Please try again.');
+            return;
+          }
+          
+          const checkboxes = document.querySelectorAll('.insurance-checkbox:checked');
+          const selectedInsurances = Array.from(checkboxes).map(cb => cb.value);
+          
+          console.log('Selected insurances:', selectedInsurances);
+          
+          if (selectedInsurances.length === 0) {
+            alert('Please select at least one insurance');
+            return;
+          }
+          
+          // Save office info before closing modal
+          const officeInfo = { ...currentOffice };
+          
+          closeModal();
+          console.log('Starting automation for:', officeInfo.officeName);
+          await runAutomation(officeInfo.officeValue, officeInfo.officeName, officeInfo.stateCode, selectedInsurances);
+          
+          // Reset after processing
+          currentOffice = null;
+        }
+        
+        async function runAutomation(officeValue, officeName, stateCode, selectedInsurances = null) {
           const buttons = document.querySelectorAll('button');
           buttons.forEach(btn => btn.disabled = true);
           
@@ -451,19 +790,24 @@ app.get("/", (req: Request, res: Response) => {
           results.style.display = 'block';
           results.className = 'loading';
           
+          const insuranceInfo = selectedInsurances ? 
+            \`<p style="color: #666; margin-top: 8px;">Processing \${selectedInsurances.length} selected insurance(s)...</p>\` : 
+            '';
+          
           results.innerHTML = \`
             <div class="result-header">
               <div class="spinner"></div>
               Processing <strong>\${officeName}</strong>...
             </div>
             <p style="color: #666; margin-top: 8px;">This may take several minutes. Please wait...</p>
+            \${insuranceInfo}
           \`;
           
           try {
             const response = await fetch('/run-automation', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ officeValue })
+              body: JSON.stringify({ officeValue, selectedInsurances })
             });
             
             const data = await response.json();
@@ -550,10 +894,13 @@ app.get("/health", (req: Request, res: Response) => {
 // API endpoint to run automation
 app.post("/run-automation", async (req: Request, res: Response) => {
   try {
-    const { officeValue } = req.body;
+    const { officeValue, selectedInsurances } = req.body;
     console.log(`Starting Kinnser automation for: ${officeValue}`);
+    if (selectedInsurances) {
+      console.log(`Selected insurances: ${selectedInsurances.join(', ')}`);
+    }
     
-    const result = await loginAndProcessOffices(officeValue);
+    const result = await loginAndProcessOffices(officeValue, selectedInsurances);
     
     res.json({
       success: true,
@@ -564,6 +911,27 @@ app.post("/run-automation", async (req: Request, res: Response) => {
     });
   } catch (error) {
     console.error("Automation failed:", error);
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error"
+    });
+  }
+});
+
+// TEST endpoint to test PDF download from Ready To Send
+app.post("/test-pdf-download", async (req: Request, res: Response) => {
+  try {
+    const { officeValue } = req.body;
+    console.log(`Starting PDF download test for: ${officeValue || 'MA-Nightingale___Taunton'}`);
+    
+    await testPDFDownload(officeValue);
+    
+    res.json({
+      success: true,
+      message: "PDF download test completed successfully"
+    });
+  } catch (error) {
+    console.error("PDF download test failed:", error);
     res.status(500).json({
       success: false,
       error: error instanceof Error ? error.message : "Unknown error"

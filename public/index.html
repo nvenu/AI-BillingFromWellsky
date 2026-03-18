@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SOLT Healthcare - Helper Functions</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      padding: 40px 20px;
+    }
+    
+    .container {
+      max-width: 800px;
+      margin: 0 auto;
+    }
+    
+    .header {
+      background: white;
+      border-radius: 16px;
+      padding: 40px;
+      margin-bottom: 30px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+      text-align: center;
+    }
+    
+    .header h1 {
+      font-size: 2.5rem;
+      color: #1a202c;
+      margin-bottom: 10px;
+    }
+    
+    .header p {
+      color: #718096;
+      font-size: 1.1rem;
+    }
+    
+    .tools-grid {
+      display: grid;
+      gap: 20px;
+    }
+    
+    .tool-card {
+      background: white;
+      border: 2px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 24px;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      display: flex;
+      align-items: center;
+      gap: 20px;
+    }
+    
+    .tool-card:hover {
+      border-color: #667eea;
+      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.15);
+      transform: translateY(-2px);
+    }
+    
+    .tool-icon {
+      font-size: 48px;
+      flex-shrink: 0;
+    }
+    
+    .tool-content {
+      flex: 1;
+    }
+    
+    .tool-content h3 {
+      font-size: 1.3rem;
+      color: #1a202c;
+      margin-bottom: 8px;
+    }
+    
+    .tool-content p {
+      color: #718096;
+      font-size: 0.95rem;
+    }
+    
+    .tool-arrow {
+      font-size: 28px;
+      color: #667eea;
+      flex-shrink: 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>🏥 SOLT Healthcare</h1>
+      <p>Helper Functions & Automation Tools</p>
+    </div>
+    
+    <div class="tools-grid">
+      <!-- Kinnser Billing Automation Tool -->
+      <div class="tool-card" onclick="window.location.href='/billing'">
+        <div class="tool-icon">🏥</div>
+        <div class="tool-content">
+          <h3>Kinnser Billing Automation</h3>
+          <p>Automated claims processing for all offices</p>
+        </div>
+        <div class="tool-arrow">→</div>
+      </div>
+      
+      <!-- Add more tools here as needed -->
+    </div>
+  </div>
+</body>
+</html>
