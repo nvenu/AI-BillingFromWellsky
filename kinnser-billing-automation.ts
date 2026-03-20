@@ -74,20 +74,26 @@ async function processOffice(page: Page, office: Office, insuranceHelper: Insura
       saveSelectedRecordsToExcel(selectedRecords, filename);
     }
 
-    // 7. Click Create button to submit claims
-    let readyToSendFiles: string[] = [];
+    // 7. Click Create button to submit claims (only if records were selected)
     if (selectedCount > 0) {
       await clickCreateButton(page);
       console.log(`✓ Claims creation initiated for ${office.name}`);
-      
-      // 8. Process Pending Approval workflow (returns files from Ready To Send)
-      readyToSendFiles = await processPendingApproval(page, insuranceHelper);
-      console.log(`✓ Pending Approval workflow completed for ${office.name}`);
     } else {
-      console.log(`No records selected for ${office.name}, skipping Create button`);
+      console.log(`No records selected in Ready tab for ${office.name}`);
+      console.log(`Will still process Pending Approval and Ready To Send tabs...`);
+    }
+    
+    // 8. ALWAYS process Pending Approval and Ready To Send (even if no records were selected in Ready)
+    let readyToSendFiles: string[] = [];
+    try {
+      readyToSendFiles = await processPendingApproval(page, insuranceHelper);
+      console.log(`✓ Pending Approval and Ready To Send workflow completed for ${office.name}`);
+    } catch (error) {
+      console.error(`⚠️  Error in Pending Approval/Ready To Send for ${office.name}:`, error);
+      console.log(`Continuing anyway...`);
     }
 
-    console.log(`✓ Successfully processed ${selectedCount} records for ${office.name}`);
+    console.log(`✓ Successfully processed ${office.name}`);
     return { records: selectedRecords, filename, readyToSendFiles };
     
   } catch (error) {
@@ -159,7 +165,7 @@ export async function loginAndProcessOffices(officeValue: string = 'all', select
       fs.mkdirSync(downloadsPath, { recursive: true });
     }
     
-    browser = await chromium.launch({ headless: false });
+    browser = await chromium.launch({ headless: true });
     const context = await browser.newContext({
       acceptDownloads: true
     });
@@ -243,17 +249,18 @@ export async function loginAndProcessOffices(officeValue: string = 'all', select
     // 5. Send email with all Excel files and PDFs
     let emailSent = false;
     const allAttachments = [...excelFiles, ...allReadyToSendFiles];
-    if (allAttachments.length > 0) {
-      console.log(`\n=== Sending Email ===`);
-      try {
-        const officeNames = officesToProcess.map(o => o.name).join(', ');
-        
-        // Count different file types
-        const readyTabExcelCount = excelFiles.length;
-        const readyToSendExcelCount = allReadyToSendFiles.filter(f => f.endsWith('.xlsx')).length;
-        const pdfCount = allReadyToSendFiles.filter(f => f.endsWith('.pdf')).length;
-        
-        const emailBody = `
+    
+    // ALWAYS send email, even if no records processed
+    console.log(`\n=== Sending Email ===`);
+    try {
+      const officeNames = officesToProcess.map(o => o.name).join(', ');
+      
+      // Count different file types
+      const readyTabExcelCount = excelFiles.length;
+      const readyToSendExcelCount = allReadyToSendFiles.filter(f => f.endsWith('.xlsx')).length;
+      const pdfCount = allReadyToSendFiles.filter(f => f.endsWith('.pdf')).length;
+      
+      const emailBody = `
 Kinnser Billing Automation Report
 Generated: ${format(new Date(), 'yyyy-MM-dd HH:mm:ss')}
 
@@ -265,6 +272,7 @@ ${summary.map(s => `${s.office}: ${s.count} records selected`).join('\n')}
 Total records selected from Ready tab: ${allSelectedRecords.length}
 Total offices processed: ${officesToProcess.length}
 
+${allSelectedRecords.length > 0 ? `
 READY TO SEND PROCESSING:
 - Electronic claims: Sent electronically
 - Paper claims: PDFs downloaded and attached
@@ -272,13 +280,13 @@ READY TO SEND PROCESSING:
 ATTACHED FILES (${allAttachments.length} total):
 
 1. Ready Tab Excel Files (${readyTabExcelCount}):
-${excelFiles.map(f => `   - ${f}`).join('\n')}
+${excelFiles.length > 0 ? excelFiles.map(f => `   - ${f}`).join('\n') : '   - None'}
 
 2. Ready To Send Files (${allReadyToSendFiles.length}):
    - Summary Excel: ${readyToSendExcelCount} file(s)
    - Electronic Claims Excel: Included if applicable
    - Paper Claims PDFs: ${pdfCount} file(s)
-${allReadyToSendFiles.map(f => `   - ${f}`).join('\n')}
+${allReadyToSendFiles.length > 0 ? allReadyToSendFiles.map(f => `   - ${f}`).join('\n') : '   - None'}
 
 WORKFLOW COMPLETED:
 ✓ Ready tab processing
@@ -291,23 +299,41 @@ WORKFLOW COMPLETED:
 ✓ Paper claims downloaded as PDFs
 
 All files are attached to this email for your review.
-        `;
+` : `
+NO RECORDS PROCESSED:
+- All records in Ready tab were skipped (insurances not in approved list or invalid authorization)
+- No claims were created
+- Pending Approval and Ready To Send tabs were checked but had no matching records
 
-        await sendEmail({
-          to: process.env.EMAIL_RECIPIENTS || "nvenu@solifetec.com",
-          subject: `Kinnser Billing Report - ${officeNames} - ${timestamp}`,
-          body: emailBody,
-          attachments: allAttachments
-        });
-        
-        emailSent = true;
-        console.log(`✓ Email sent successfully to ${process.env.EMAIL_RECIPIENTS || "nvenu@solifetec.com"}`);
+WORKFLOW COMPLETED:
+✓ Ready tab checked - 0 records selected
+✓ Pending Approval checked
+✓ Ready To Send checked
+
+No action was taken as no records met the processing criteria.
+`}
+      `;
+
+      await sendEmail({
+        to: process.env.EMAIL_RECIPIENTS || "nvenu@solifetec.com",
+        subject: `Kinnser Billing Report - ${officeNames} - ${timestamp}${allSelectedRecords.length === 0 ? ' [NO RECORDS PROCESSED]' : ''}`,
+        body: emailBody,
+        attachments: allAttachments
+      });
+      
+      emailSent = true;
+      console.log(`✓ Email sent successfully to ${process.env.EMAIL_RECIPIENTS || "nvenu@solifetec.com"}`);
+      if (allAttachments.length > 0) {
         console.log(`  Total attachments: ${allAttachments.length}`);
         console.log(`  - Ready Tab Excel: ${readyTabExcelCount}`);
         console.log(`  - Ready To Send Excel: ${readyToSendExcelCount}`);
         console.log(`  - PDFs: ${pdfCount}`);
-      } catch (emailError) {
-        console.error(`✗ Failed to send email:`, emailError);
+      } else {
+        console.log(`  No attachments (0 records processed)`);
+      }
+    } catch (emailError) {
+      console.error(`✗ Failed to send email:`, emailError);
+      if (allAttachments.length > 0) {
         console.log(`Files saved locally: ${allAttachments.join(', ')}`);
       }
     }
@@ -1057,6 +1083,32 @@ async function processPendingApproval(page: Page, insuranceHelper: InsuranceHelp
   console.log("\n=== PROCESSING PENDING APPROVAL ===");
   
   try {
+    // Navigate to Pending Approval tab
+    console.log("Navigating to Pending Approval tab...");
+    const currentUrl = page.url();
+    
+    // Check if we're already on Pending Approval page
+    if (!currentUrl.includes('pendingClaimsApproval') && !currentUrl.includes('pending')) {
+      console.log("Not on Pending Approval page, clicking the tab...");
+      try {
+        await page.waitForSelector('#pendingClaimsApproval', { timeout: 10000 });
+        await page.click('#pendingClaimsApproval');
+        console.log("✓ Clicked Pending Approval tab");
+        
+        // Wait for the page to load
+        await page.waitForLoadState('domcontentloaded', { timeout: 30000 });
+        await page.waitForTimeout(3000);
+        console.log("✓ Pending Approval page loaded");
+      } catch (navError) {
+        console.log("⚠️  Could not find Pending Approval tab link");
+        throw navError;
+      }
+    } else {
+      console.log("✓ Already on Pending Approval page");
+    }
+    
+    console.log("Current URL:", page.url());
+    
     // Wait for initial loading message to disappear
     console.log("Waiting for initial page load...");
     await page.waitForSelector('.loading-message', { state: 'hidden', timeout: 60000 });
@@ -1066,6 +1118,25 @@ async function processPendingApproval(page: Page, insuranceHelper: InsuranceHelp
     // Select "All Insurances" from dropdown
     console.log("\nSelecting 'All Insurances' from dropdown...");
     await page.waitForSelector('select[ng-model="insuranceKey"]', { timeout: 10000 });
+    
+    // First, check what's currently selected
+    const currentValuePA = await page.$eval('select[ng-model="insuranceKey"]', (select: any) => select.value);
+    console.log(`Current dropdown value: ${currentValuePA}`);
+    
+    // If already on "All Insurances", select something else first to trigger change event
+    if (currentValuePA === '1') {
+      console.log("Already on 'All Insurances', selecting different option first to trigger change...");
+      const optionsPA = await page.$$eval('select[ng-model="insuranceKey"] option', (opts) => 
+        opts.map(opt => (opt as HTMLOptionElement).value).filter(v => v && v !== '1')
+      );
+      if (optionsPA.length > 0) {
+        await page.selectOption('select[ng-model="insuranceKey"]', optionsPA[0]);
+        await page.waitForTimeout(1000);
+        console.log(`  Selected temporary option: ${optionsPA[0]}`);
+      }
+    }
+    
+    // Now select "All Insurances"
     await page.selectOption('select[ng-model="insuranceKey"]', '1'); // value="1" is "All Insurances"
     console.log("✓ Selected 'All Insurances'");
     
@@ -1079,180 +1150,16 @@ async function processPendingApproval(page: Page, insuranceHelper: InsuranceHelp
     // Check if there are no records to display
     const noRecordsMessage = await page.textContent('body');
     if (noRecordsMessage && noRecordsMessage.includes('There are currently no records to display.')) {
-      console.log("\n✓ No records found in Pending Approval - nothing to process");
+      console.log("\n✓ No records found in Pending Approval - nothing to approve");
       console.log("   This is normal if no claims were created or all were already processed");
-      return []; // Exit gracefully with empty array
-    }
-    
-    // Get all records with MRN and billing period
-    console.log("\nExtracting record details from table...");
-    const records = await page.evaluate(() => {
-      // First, find the column indices by reading the header
-      const headerCells = Array.from(document.querySelectorAll('table thead th, table thead td'));
-      const headers = headerCells.map(cell => cell.textContent?.trim().toLowerCase() || '');
-      
-      // Find column indices
-      const mrnIndex = headers.findIndex(h => h.includes('mrn'));
-      const billingPeriodIndex = headers.findIndex(h => h.includes('billing period'));
-      
-      console.log('Header columns:', headers);
-      console.log('MRN column index:', mrnIndex);
-      console.log('Billing Period column index:', billingPeriodIndex);
-      
-      const rows = Array.from(document.querySelectorAll('table tbody tr'));
-      return rows.map((row, index) => {
-        const cells = row.querySelectorAll('td');
-        const allCells = Array.from(cells).map(cell => cell.textContent?.trim() || '');
-        
-        // Extract MRN
-        const mrn = mrnIndex >= 0 && mrnIndex < cells.length 
-          ? cells[mrnIndex].textContent?.trim() || '' 
-          : '';
-        
-        // Extract Billing Period (format: "MM/DD/YYYY - MM/DD/YYYY")
-        const billingPeriodText = billingPeriodIndex >= 0 && billingPeriodIndex < cells.length
-          ? cells[billingPeriodIndex].textContent?.trim() || ''
-          : '';
-        
-        // Parse the date range
-        let billingPeriodStart = '';
-        let billingPeriodEnd = '';
-        if (billingPeriodText && billingPeriodText.includes(' - ')) {
-          const parts = billingPeriodText.split(' - ');
-          billingPeriodStart = parts[0]?.trim() || '';
-          billingPeriodEnd = parts[1]?.trim() || '';
-        }
-        
-        // Find Edit button
-        const editButton = row.querySelector('button[id*="edit"], button[ng-click*="edit"]');
-        const editButtonId = editButton?.id || '';
-        
-        return {
-          index,
-          mrn,
-          billingPeriodText,
-          billingPeriodStart,
-          billingPeriodEnd,
-          editButtonId,
-          allCells
-        };
-      });
-    });
-    
-    console.log(`\nFound ${records.length} records in Pending Approval`);
-    
-    // Log first few records for debugging
-    console.log("\n=== SAMPLE RECORDS (first 3) ===");
-    records.slice(0, 3).forEach((record, idx) => {
-      console.log(`\nRecord ${idx + 1}:`);
-      console.log(`  MRN: "${record.mrn}"`);
-      console.log(`  Billing Period: "${record.billingPeriodText}"`);
-      console.log(`  Billing Period Start: "${record.billingPeriodStart}"`);
-      console.log(`  Billing Period End: "${record.billingPeriodEnd}"`);
-      console.log(`  Edit Button ID: "${record.editButtonId}"`);
-      console.log(`  All Cells: [${record.allCells.join(' | ')}]`);
-    });
-    
-    // Additional check: if no records found, exit gracefully
-    if (records.length === 0) {
-      console.log("\n✓ No records to process in Pending Approval");
-      return [];
-    }
-    
-    // Check for duplicates with overlapping dates
-    console.log("\n=== CHECKING FOR DUPLICATE MRNs WITH OVERLAPPING DATES ===");
-    const duplicates = findDuplicatesWithOverlap(records);
-    
-    if (duplicates.length > 0) {
-      console.log(`\n⚠️  Found ${duplicates.length} duplicate MRN(s) with overlapping billing periods`);
-      
-      for (const dup of duplicates) {
-        console.log(`\nProcessing duplicate MRN: ${dup.mrn}`);
-        console.log(`  Records: ${dup.indices.join(', ')}`);
-        
-        // Process ALL duplicate records, not just the first one
-        for (let i = 0; i < dup.indices.length; i++) {
-          const recordIndex = dup.indices[i];
-          const record = records[recordIndex];
-          
-          if (record.editButtonId) {
-            console.log(`\n  Processing record ${i + 1}/${dup.indices.length} (index ${recordIndex})`);
-            console.log(`  Clicking Edit button: ${record.editButtonId}`);
-            await page.click(`#${record.editButtonId}`);
-            await page.waitForTimeout(2000);
-            
-            // Click OK button in popup
-            await page.waitForSelector('#modal_go', { timeout: 10000 });
-            await page.click('#modal_go');
-            console.log("  ✓ Clicked OK button");
-            await page.waitForTimeout(2000);
-            
-            // Select Type of Bill 327 - Adjustment Claim
-            await page.waitForSelector('#typeOfBill', { timeout: 10000 });
-            await page.selectOption('#typeOfBill', '6'); // value="6" is 327 - Adjustment Claim
-            console.log("  ✓ Selected Type of Bill 327 - Adjustment Claim");
-            await page.waitForTimeout(1000);
-            
-            // Click Save and Close
-            await page.waitForSelector('#submitBtn', { timeout: 10000 });
-            await page.click('#submitBtn');
-            console.log("  ✓ Clicked Save and Close");
-            
-            // Wait for page to reload
-            await page.waitForSelector('.loading-message', { state: 'hidden', timeout: 60000 });
-            await page.waitForTimeout(3000);
-            console.log(`  ✓ Record ${i + 1} processed successfully`);
-          } else {
-            console.log(`  ⚠️  No edit button found for record ${recordIndex}`);
-          }
-        }
-        
-        console.log(`\n✓ Completed processing all ${dup.indices.length} duplicate records for MRN ${dup.mrn}`);
-      }
+      console.log("   Continuing to Ready To Send tab...");
+      // Don't return - continue to Ready To Send
     } else {
-      console.log("✓ No duplicate MRNs with overlapping billing periods found");
+      // Process Pending Approval records
+      await processPendingApprovalRecords(page, insuranceHelper);
     }
     
-    // Select all records
-    console.log("\nSelecting all records for approval...");
-    const selectAllCheckbox = await page.$('input[type="checkbox"][ng-model*="selectAll"]');
-    if (selectAllCheckbox) {
-      await selectAllCheckbox.click();
-      console.log("✓ Selected all records");
-      await page.waitForTimeout(1000);
-    } else {
-      console.log("⚠️  Select all checkbox not found, selecting individually");
-      await page.$$eval('input[type="checkbox"]', checkboxes => {
-        checkboxes.forEach(cb => (cb as HTMLInputElement).checked = true);
-      });
-    }
-    
-    console.log("\n=== SELECTING ALL RECORDS FOR APPROVAL ===");
-    
-    // Select all records
-    console.log("Selecting all records for approval...");
-    const selectAllCheckbox2 = await page.$('input[type="checkbox"][ng-model*="selectAll"]');
-    if (selectAllCheckbox2) {
-      await selectAllCheckbox2.click();
-      console.log("✓ Selected all records");
-      await page.waitForTimeout(1000);
-    } else {
-      console.log("⚠️  Select all checkbox not found, selecting individually");
-      await page.$$eval('input[type="checkbox"]', checkboxes => {
-        checkboxes.forEach(cb => (cb as HTMLInputElement).checked = true);
-      });
-    }
-    
-    // Click Approve button
-    console.log("\nClicking Approve button...");
-    await page.waitForSelector('#claimsApproval', { timeout: 10000 });
-    await page.click('#claimsApproval');
-    console.log("✓ Clicked Approve button");
-    
-    // Wait for approval to process
-    await page.waitForTimeout(5000);
-    
-    // Navigate to Ready To Send tab
+    // ALWAYS navigate to Ready To Send tab
     console.log("\n=== Navigating to Ready To Send ===");
     await page.waitForSelector('#readyToSendClaims', { timeout: 10000 });
     await page.click('#readyToSendClaims');
@@ -1276,6 +1183,286 @@ async function processPendingApproval(page: Page, insuranceHelper: InsuranceHelp
   }
 }
 
+async function processPendingApprovalRecords(page: Page, insuranceHelper: InsuranceHelper): Promise<void> {
+    // Get all records with MRN and billing period
+    console.log("\nExtracting record details from table...");
+    const records = await page.evaluate(() => {
+      // First, find the column indices by reading the header
+      const headerCells = Array.from(document.querySelectorAll('table thead th, table thead td'));
+      const headers = headerCells.map(cell => cell.textContent?.trim().toLowerCase() || '');
+
+      // Find column indices
+      const mrnIndex = headers.findIndex(h => h.includes('mrn'));
+      const billingPeriodIndex = headers.findIndex(h => h.includes('billing period'));
+
+      console.log('Header columns:', headers);
+      console.log('MRN column index:', mrnIndex);
+      console.log('Billing Period column index:', billingPeriodIndex);
+
+      const rows = Array.from(document.querySelectorAll('table tbody tr'));
+      return rows.map((row, index) => {
+        const cells = row.querySelectorAll('td');
+        const allCells = Array.from(cells).map(cell => cell.textContent?.trim() || '');
+
+        // Extract MRN
+        const mrn = mrnIndex >= 0 && mrnIndex < cells.length
+          ? cells[mrnIndex].textContent?.trim() || ''
+          : '';
+
+        // Extract Billing Period (format: "MM/DD/YYYY - MM/DD/YYYY")
+        const billingPeriodText = billingPeriodIndex >= 0 && billingPeriodIndex < cells.length
+          ? cells[billingPeriodIndex].textContent?.trim() || ''
+          : '';
+
+        // Parse the date range
+        let billingPeriodStart = '';
+        let billingPeriodEnd = '';
+        if (billingPeriodText && billingPeriodText.includes(' - ')) {
+          const parts = billingPeriodText.split(' - ');
+          billingPeriodStart = parts[0]?.trim() || '';
+          billingPeriodEnd = parts[1]?.trim() || '';
+        }
+
+        // Find Edit button
+        const editButton = row.querySelector('button[id*="edit"], button[ng-click*="edit"]');
+        const editButtonId = editButton?.id || '';
+
+        return {
+          index,
+          mrn,
+          billingPeriodText,
+          billingPeriodStart,
+          billingPeriodEnd,
+          editButtonId,
+          allCells
+        };
+      });
+    });
+
+    console.log(`\nFound ${records.length} records in Pending Approval`);
+
+    // Log first few records for debugging
+    console.log("\n=== SAMPLE RECORDS (first 3) ===");
+    records.slice(0, 3).forEach((record, idx) => {
+      console.log(`\nRecord ${idx + 1}:`);
+      console.log(`  MRN: "${record.mrn}"`);
+      console.log(`  Billing Period: "${record.billingPeriodText}"`);
+      console.log(`  Billing Period Start: "${record.billingPeriodStart}"`);
+      console.log(`  Billing Period End: "${record.billingPeriodEnd}"`);
+      console.log(`  Edit Button ID: "${record.editButtonId}"`);
+      console.log(`  All Cells: [${record.allCells.join(' | ')}]`);
+    });
+
+    // Additional check: if no records found, exit gracefully
+    if (records.length === 0) {
+      console.log("\n✓ No records to process in Pending Approval");
+      return; // Exit function early
+    }
+
+    // Check for duplicates with overlapping dates
+    console.log("\n=== CHECKING FOR DUPLICATE MRNs WITH OVERLAPPING DATES ===");
+    const duplicates = findDuplicatesWithOverlap(records);
+
+    if (duplicates.length > 0) {
+      console.log(`\n⚠️  Found ${duplicates.length} duplicate MRN(s) with overlapping billing periods`);
+
+      for (const dup of duplicates) {
+        console.log(`\nProcessing duplicate MRN: ${dup.mrn}`);
+        console.log(`  Records: ${dup.indices.join(', ')}`);
+
+        // Process ALL duplicate records, not just the first one
+        for (let i = 0; i < dup.indices.length; i++) {
+          const recordIndex = dup.indices[i];
+          const record = records[recordIndex];
+
+          if (record.editButtonId) {
+            console.log(`\n  Processing record ${i + 1}/${dup.indices.length} (index ${recordIndex})`);
+            console.log(`  Clicking Edit button: ${record.editButtonId}`);
+            await page.click(`#${record.editButtonId}`);
+            await page.waitForTimeout(2000);
+
+            // Click OK button in popup
+            await page.waitForSelector('#modal_go', { timeout: 10000 });
+            await page.click('#modal_go');
+            console.log("  ✓ Clicked OK button");
+            await page.waitForTimeout(2000);
+
+            // Select Type of Bill 327 - Adjustment Claim
+            await page.waitForSelector('#typeOfBill', { timeout: 10000 });
+            await page.selectOption('#typeOfBill', '6'); // value="6" is 327 - Adjustment Claim
+            console.log("  ✓ Selected Type of Bill 327 - Adjustment Claim");
+            await page.waitForTimeout(1000);
+
+            // Click Save and Close
+            await page.waitForSelector('#submitBtn', { timeout: 10000 });
+            await page.click('#submitBtn');
+            console.log("  ✓ Clicked Save and Close");
+
+            // Wait for page to reload
+            await page.waitForSelector('.loading-message', { state: 'hidden', timeout: 60000 });
+            await page.waitForTimeout(3000);
+            console.log(`  ✓ Record ${i + 1} processed successfully`);
+          } else {
+            console.log(`  ⚠️  No edit button found for record ${recordIndex}`);
+          }
+        }
+
+        console.log(`\n✓ Completed processing all ${dup.indices.length} duplicate records for MRN ${dup.mrn}`);
+      }
+    } else {
+      console.log("✓ No duplicate MRNs with overlapping billing periods found");
+    }
+
+    console.log("\n=== SELECTING ALL RECORDS FOR APPROVAL ===");
+
+    // Try to find and click the "Select All" checkbox
+    console.log("Looking for 'Select All' checkbox...");
+    const selectAllCheckbox = await page.$('input[type="checkbox"][ng-model*="selectAll"], input[type="checkbox"][ng-click*="selectAll"]');
+
+    if (selectAllCheckbox) {
+      console.log("✓ Found 'Select All' checkbox, clicking it...");
+      await selectAllCheckbox.click();
+      await page.waitForTimeout(2000); // Wait for selection to propagate
+      console.log("✓ Clicked 'Select All' checkbox");
+    } else {
+      console.log("⚠️  'Select All' checkbox not found");
+    }
+
+    // Verify how many checkboxes are actually checked
+    const checkedCount = await page.evaluate(() => {
+      const checkboxes = Array.from(document.querySelectorAll('input[type="checkbox"]'));
+      const checked = checkboxes.filter(cb => (cb as HTMLInputElement).checked);
+      console.log(`Total checkboxes: ${checkboxes.length}, Checked: ${checked.length}`);
+      return checked.length;
+    });
+
+    console.log(`✓ Verified: ${checkedCount} checkboxes are checked`);
+
+    // If no checkboxes are checked, try clicking individual row checkboxes
+    if (checkedCount === 0) {
+      console.log("⚠️  No checkboxes checked! Trying to click individual row checkboxes...");
+      const rowCheckboxes = await page.$$('table tbody tr input[type="checkbox"]');
+      console.log(`Found ${rowCheckboxes.length} row checkboxes`);
+
+      for (let i = 0; i < rowCheckboxes.length; i++) {
+        try {
+          await rowCheckboxes[i].click();
+          console.log(`  ✓ Clicked checkbox ${i + 1}/${rowCheckboxes.length}`);
+          await page.waitForTimeout(200);
+        } catch (error) {
+          console.log(`  ⚠️  Failed to click checkbox ${i + 1}: ${error}`);
+        }
+      }
+
+      // Verify again
+      const checkedCountAfter = await page.evaluate(() => {
+        const checkboxes = Array.from(document.querySelectorAll('input[type="checkbox"]'));
+        return checkboxes.filter(cb => (cb as HTMLInputElement).checked).length;
+      });
+      console.log(`✓ After individual clicks: ${checkedCountAfter} checkboxes are checked`);
+    }
+
+    // Wait for any "checking" state to complete
+    console.log("\nWaiting for any 'checking' state to complete...");
+    await page.waitForTimeout(3000);
+
+    // Scroll to the Approve button (it's at the bottom of the page)
+    console.log("\nScrolling to Approve button...");
+    await page.evaluate(() => {
+      const approveButton = document.querySelector('#claimsApproval');
+      if (approveButton) {
+        approveButton.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    });
+    await page.waitForTimeout(1000);
+    console.log("✓ Scrolled to Approve button");
+
+    // Check if Approve button is enabled
+    const isDisabled = await page.evaluate(() => {
+      const button = document.querySelector('#claimsApproval') as HTMLButtonElement;
+      if (button) {
+        console.log('Approve button disabled:', button.disabled);
+        console.log('Approve button class:', button.className);
+        return button.disabled;
+      }
+      return true;
+    });
+
+    console.log(`Approve button disabled: ${isDisabled}`);
+
+    if (isDisabled) {
+      console.log("⚠️  Approve button is disabled! Attempting to force enable...");
+      await page.evaluate(() => {
+        const button = document.querySelector('#claimsApproval') as HTMLButtonElement;
+        if (button) {
+          button.disabled = false;
+          button.removeAttribute('disabled');
+        }
+      });
+      await page.waitForTimeout(500);
+    }
+
+    // Click Approve button with multiple fallback methods
+    console.log("\nClicking Approve button...");
+    let clickSuccess = false;
+
+    // Method 1: Normal click
+    try {
+      await page.click('#claimsApproval', { timeout: 5000 });
+      console.log("✓ Method 1: Normal click succeeded");
+      clickSuccess = true;
+    } catch (error) {
+      console.log("⚠️  Method 1 failed, trying Method 2...");
+
+      // Method 2: Force click
+      try {
+        await page.click('#claimsApproval', { force: true, timeout: 5000 });
+        console.log("✓ Method 2: Force click succeeded");
+        clickSuccess = true;
+      } catch (error2) {
+        console.log("⚠️  Method 2 failed, trying Method 3...");
+
+        // Method 3: JavaScript click
+        try {
+          await page.evaluate(() => {
+            const button = document.querySelector('#claimsApproval') as HTMLButtonElement;
+            if (button) button.click();
+          });
+          console.log("✓ Method 3: JavaScript click succeeded");
+          clickSuccess = true;
+        } catch (error3) {
+          console.log("⚠️  Method 3 failed, trying Method 4...");
+
+          // Method 4: Dispatch click event
+          try {
+            await page.evaluate(() => {
+              const button = document.querySelector('#claimsApproval');
+              if (button) {
+                const event = new MouseEvent('click', { bubbles: true, cancelable: true });
+                button.dispatchEvent(event);
+              }
+            });
+            console.log("✓ Method 4: Dispatch click event succeeded");
+            clickSuccess = true;
+          } catch (error4) {
+            console.log("✗ All click methods failed!");
+          }
+        }
+      }
+    }
+
+    if (clickSuccess) {
+      console.log("✓ Approve button clicked successfully");
+
+      // Wait for approval to process
+      console.log("Waiting for approval to process...");
+      await page.waitForTimeout(5000);
+      console.log("✓ Approval processing complete");
+    } else {
+      console.log("✗ Failed to click Approve button - skipping approval");
+    }
+}
+
 async function processReadyToSend(page: Page, insuranceHelper: InsuranceHelper): Promise<string[]> {
   console.log("\n=== PROCESSING READY TO SEND ===");
   
@@ -1283,6 +1470,38 @@ async function processReadyToSend(page: Page, insuranceHelper: InsuranceHelper):
     // Wait for loading to complete
     await page.waitForSelector('.loading-message', { state: 'hidden', timeout: 60000 });
     await page.waitForTimeout(2000);
+    
+    // Select "All Insurances" from dropdown
+    console.log("\nSelecting 'All Insurances' from dropdown...");
+    await page.waitForSelector('select[ng-model="insuranceKey"]', { timeout: 10000 });
+    
+    // First, check what's currently selected
+    const currentValueRTS = await page.$eval('select[ng-model="insuranceKey"]', (select: any) => select.value);
+    console.log(`Current dropdown value: ${currentValueRTS}`);
+    
+    // If already on "All Insurances", select something else first to trigger change event
+    if (currentValueRTS === '1') {
+      console.log("Already on 'All Insurances', selecting different option first to trigger change...");
+      const optionsRTS = await page.$$eval('select[ng-model="insuranceKey"] option', (opts) => 
+        opts.map(opt => (opt as HTMLOptionElement).value).filter(v => v && v !== '1')
+      );
+      if (optionsRTS.length > 0) {
+        await page.selectOption('select[ng-model="insuranceKey"]', optionsRTS[0]);
+        await page.waitForTimeout(1000);
+        console.log(`  Selected temporary option: ${optionsRTS[0]}`);
+      }
+    }
+    
+    // Now select "All Insurances"
+    await page.selectOption('select[ng-model="insuranceKey"]', '1'); // value="1" is "All Insurances"
+    console.log("✓ Selected 'All Insurances'");
+    
+    // Wait for loading message to appear and then disappear
+    console.log("Waiting for records to load...");
+    await page.waitForTimeout(2000); // Give time for loading to start
+    await page.waitForSelector('.loading-message', { state: 'hidden', timeout: 60000 });
+    await page.waitForTimeout(3000); // Extra time for records to render
+    console.log("✓ Records loaded");
     
     // Get all records with insurance information
     console.log("\nExtracting records from Ready To Send...");
@@ -1601,7 +1820,7 @@ export async function testPDFDownload(officeValue: string = '1407132,Clinic'): P
       console.log(`✓ Created downloads folder: ${downloadsPath}`);
     }
     
-    browser = await chromium.launch({ headless: false });
+    browser = await chromium.launch({ headless: true });
     const context = await browser.newContext({
       acceptDownloads: true
     });

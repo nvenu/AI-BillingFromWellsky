@@ -428,7 +428,7 @@ app.get("/billing", (req: Request, res: Response) => {
           background: white;
           border-radius: 16px;
           padding: 32px;
-          max-width: 600px;
+          max-width: 900px;
           width: 90%;
           max-height: 80vh;
           overflow-y: auto;
@@ -489,6 +489,9 @@ app.get("/billing", (req: Request, res: Response) => {
         
         .insurance-list {
           margin: 20px 0;
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+          gap: 8px;
         }
         
         .insurance-item {
@@ -497,7 +500,6 @@ app.get("/billing", (req: Request, res: Response) => {
           padding: 12px;
           border: 1px solid #e2e8f0;
           border-radius: 8px;
-          margin-bottom: 8px;
           transition: all 0.2s;
         }
         
