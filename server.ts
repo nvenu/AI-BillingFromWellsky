@@ -1,6 +1,6 @@
 import "dotenv/config";
 import express, { Request, Response } from "express";
-import { loginAndProcessOffices, testPDFDownload } from "./kinnser-billing-automation";
+import { loginAndProcessOffices, testPDFDownload, setLogBroadcaster } from "./kinnser-billing-automation";
 import { OFFICES } from "./office-config";
 import { InsuranceHelper } from "./insurance-helper";
 
@@ -10,8 +10,49 @@ const PORT = process.env.PORT || 8080;
 // Load insurance data
 const insuranceHelper = new InsuranceHelper("Insurance Instructions.xlsx");
 
+// Set up log broadcasting
+setLogBroadcaster(broadcastLog);
+
 app.use(express.json());
 app.use(express.static("public"));
+
+// Store SSE clients
+const sseClients: Response[] = [];
+
+// Function to broadcast logs to all connected clients
+export function broadcastLog(message: string) {
+  const timestamp = new Date().toISOString();
+  const logMessage = `data: ${JSON.stringify({ timestamp, message })}\n\n`;
+  
+  sseClients.forEach(client => {
+    try {
+      client.write(logMessage);
+    } catch (error) {
+      // Client disconnected, will be removed on next broadcast
+    }
+  });
+}
+
+// SSE endpoint for live logs
+app.get("/api/logs/stream", (req: Request, res: Response) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  
+  // Add this client to the list
+  sseClients.push(res);
+  
+  // Send initial connection message
+  res.write(`data: ${JSON.stringify({ timestamp: new Date().toISOString(), message: '✓ Connected to live log stream' })}\n\n`);
+  
+  // Remove client on disconnect
+  req.on('close', () => {
+    const index = sseClients.indexOf(res);
+    if (index !== -1) {
+      sseClients.splice(index, 1);
+    }
+  });
+});
 
 // Health check
 app.get("/health", (req: Request, res: Response) => {
@@ -597,8 +638,16 @@ app.get("/billing", (req: Request, res: Response) => {
     <body>
       <div class="container">
         <div class="header">
-          <h1>🏥 Kinnser Billing Automation</h1>
-          <p class="subtitle">SOLT Healthcare - Automated Claims Processing</p>
+          <div style="display: flex; align-items: center; gap: 20px; margin-bottom: 20px;">
+            <img src="/SOLT-LOGO-WITHOUT-TEXT.svg" alt="SOLT Healthcare" style="height: 60px; width: auto;">
+            <div style="flex: 1;">
+              <h1 style="margin: 0; display: flex; align-items: center; gap: 12px;">
+                <img src="/WS_HomeHealthHospice_Stacked.svg" alt="WellSky Kinnser" style="height: 40px; width: auto;">
+                <span>Kinnser Billing Automation</span>
+              </h1>
+              <p class="subtitle" style="margin: 8px 0 0 0;">SOLT Healthcare - Automated Claims Processing</p>
+            </div>
+          </div>
           
           <div class="info-box">
             <h3>
@@ -639,6 +688,33 @@ app.get("/billing", (req: Request, res: Response) => {
           </div>
           
           <div id="results"></div>
+          
+          <!-- Live Console Window -->
+          <div id="liveConsole" style="display: none;">
+            <h3 style="margin-top: 30px; color: #1a202c;">📊 Live Automation Console</h3>
+            <div id="consoleOutput" style="
+              background: #1a202c;
+              color: #00ff00;
+              font-family: 'Courier New', monospace;
+              font-size: 13px;
+              padding: 20px;
+              border-radius: 8px;
+              height: 400px;
+              overflow-y: auto;
+              margin-top: 10px;
+              box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            "></div>
+            <button onclick="clearConsole()" style="
+              margin-top: 10px;
+              padding: 10px 20px;
+              background: #ef5350;
+              color: white;
+              border: none;
+              border-radius: 6px;
+              cursor: pointer;
+              font-weight: 600;
+            ">Clear Console</button>
+          </div>
         </div>
         
         <div class="footer">
@@ -669,6 +745,58 @@ app.get("/billing", (req: Request, res: Response) => {
 
       <script>
         let currentOffice = null;
+        let eventSource = null;
+        
+        // Connect to live log stream
+        function connectToLogStream() {
+          if (eventSource) {
+            eventSource.close();
+          }
+          
+          eventSource = new EventSource('/api/logs/stream');
+          
+          eventSource.onmessage = function(event) {
+            const data = JSON.parse(event.data);
+            appendToConsole(data.timestamp, data.message);
+          };
+          
+          eventSource.onerror = function(error) {
+            console.error('SSE Error:', error);
+            appendToConsole(new Date().toISOString(), '⚠️  Connection lost. Reconnecting...');
+            setTimeout(connectToLogStream, 3000);
+          };
+        }
+        
+        function appendToConsole(timestamp, message) {
+          const consoleOutput = document.getElementById('consoleOutput');
+          const time = new Date(timestamp).toLocaleTimeString();
+          const logLine = document.createElement('div');
+          logLine.style.marginBottom = '4px';
+          logLine.innerHTML = '<span style="color: #888;">[' + time + ']</span> ' + escapeHtml(message);
+          consoleOutput.appendChild(logLine);
+          consoleOutput.scrollTop = consoleOutput.scrollHeight;
+        }
+        
+        function escapeHtml(text) {
+          const div = document.createElement('div');
+          div.textContent = text;
+          return div.innerHTML;
+        }
+        
+        function clearConsole() {
+          document.getElementById('consoleOutput').innerHTML = '';
+        }
+        
+        function showConsole() {
+          document.getElementById('liveConsole').style.display = 'block';
+        }
+        
+        function hideConsole() {
+          document.getElementById('liveConsole').style.display = 'none';
+        }
+        
+        // Connect on page load
+        window.addEventListener('load', connectToLogStream);
         
         async function showInsuranceModal(officeValue, officeName, stateCode) {
           console.log('showInsuranceModal called with:', { officeValue, officeName, stateCode });
@@ -787,6 +915,11 @@ app.get("/billing", (req: Request, res: Response) => {
         async function runAutomation(officeValue, officeName, stateCode, selectedInsurances = null) {
           const buttons = document.querySelectorAll('button');
           buttons.forEach(btn => btn.disabled = true);
+          
+          // Show live console
+          showConsole();
+          clearConsole();
+          appendToConsole(new Date().toISOString(), '🚀 Starting automation for ' + officeName + '...');
           
           const results = document.getElementById('results');
           results.style.display = 'block';

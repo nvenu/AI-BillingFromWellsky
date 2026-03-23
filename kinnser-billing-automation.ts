@@ -8,6 +8,27 @@ import { format } from "date-fns";
 import * as fs from "fs";
 import * as path from "path";
 
+// Log broadcaster for live console
+let logBroadcaster: ((message: string) => void) | null = null;
+
+export function setLogBroadcaster(broadcaster: (message: string) => void) {
+  logBroadcaster = broadcaster;
+}
+
+// Override console.log to broadcast to web interface
+const originalConsoleLog = console.log;
+console.log = function(...args: any[]) {
+  const message = args.map(arg => 
+    typeof arg === 'object' ? JSON.stringify(arg) : String(arg)
+  ).join(' ');
+  
+  originalConsoleLog.apply(console, args);
+  
+  if (logBroadcaster) {
+    logBroadcaster(message);
+  }
+};
+
 interface SelectedRecord {
   id: string;
   insurance: string;
@@ -684,41 +705,77 @@ async function processAllPagesAndSelectValid(page: Page, insuranceHelper: Insura
     console.log(`✓ Page ${currentPage}: ${selectedCount} records selected`);
     
     // Check if there's a next page
-    const hasNextPage = await page.evaluate(() => {
+    console.log("Checking for next page button...");
+    const nextButtonInfo = await page.evaluate(() => {
       const nextButton = document.querySelector('#nextGridPage') as HTMLButtonElement;
-      return nextButton && !nextButton.disabled;
+      if (!nextButton) {
+        return { exists: false, disabled: null, visible: null };
+      }
+      const style = window.getComputedStyle(nextButton);
+      return {
+        exists: true,
+        disabled: nextButton.disabled,
+        visible: style.display !== 'none' && style.visibility !== 'hidden',
+        text: nextButton.textContent?.trim()
+      };
     });
     
-    if (!hasNextPage) {
-      console.log(`\n✓ Reached last page (page ${currentPage})`);
+    console.log(`Next button info:`, nextButtonInfo);
+    
+    if (!nextButtonInfo.exists) {
+      console.log(`✓ No next page button found - single page only`);
+      break;
+    }
+    
+    if (nextButtonInfo.disabled) {
+      console.log(`✓ Next page button is disabled - reached last page (page ${currentPage})`);
+      break;
+    }
+    
+    if (!nextButtonInfo.visible) {
+      console.log(`✓ Next page button is hidden - reached last page (page ${currentPage})`);
       break;
     }
     
     // Click next page
-    console.log(`Navigating to page ${currentPage + 1}...`);
-    await page.click('#nextGridPage');
+    console.log(`➡️  Navigating to page ${currentPage + 1}...`);
+    try {
+      await page.click('#nextGridPage');
+      console.log(`✓ Clicked next page button`);
+    } catch (error) {
+      console.log(`⚠️  Failed to click next page button:`, error);
+      break;
+    }
     
     // Wait for page to load
+    console.log("Waiting for next page to load...");
     await page.waitForTimeout(3000);
     
     // Wait for table to update
-    await page.waitForFunction(() => {
-      const tables = Array.from(document.querySelectorAll('table'));
-      for (let i = 0; i < tables.length; i++) {
-        const tbody = tables[i].querySelector('tbody');
-        if (tbody) {
-          const rows = tbody.querySelectorAll('tr');
-          if (rows.length > 0) {
-            const firstRow = rows[0];
-            const checkbox = firstRow.querySelector('input[type="checkbox"]');
-            if (checkbox) {
-              return true;
+    console.log("Waiting for table to update...");
+    try {
+      await page.waitForFunction(() => {
+        const tables = Array.from(document.querySelectorAll('table'));
+        for (let i = 0; i < tables.length; i++) {
+          const tbody = tables[i].querySelector('tbody');
+          if (tbody) {
+            const rows = tbody.querySelectorAll('tr');
+            if (rows.length > 0) {
+              const firstRow = rows[0];
+              const checkbox = firstRow.querySelector('input[type="checkbox"]');
+              if (checkbox) {
+                return true;
+              }
             }
           }
         }
-      }
-      return false;
-    }, { timeout: 30000 });
+        return false;
+      }, { timeout: 30000 });
+      console.log("✓ Table updated with new records");
+    } catch (error) {
+      console.log("⚠️  Timeout waiting for table to update");
+      break;
+    }
     
     currentPage++;
     
