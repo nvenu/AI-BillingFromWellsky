@@ -29,13 +29,11 @@
       padding: 40px;
       margin-bottom: 30px;
       box-shadow: 0 10px 40px rgba(0,0,0,0.1);
-      text-align: center;
     }
     
     .header h1 {
       font-size: 2.5rem;
       color: #1a202c;
-      margin-bottom: 10px;
     }
     
     .header p {
@@ -96,14 +94,21 @@
 <body>
   <div class="container">
     <div class="header">
-      <h1>🏥 SOLT Healthcare</h1>
-      <p>Helper Functions & Automation Tools</p>
+      <div style="display: flex; align-items: center; justify-content: center; gap: 20px; margin-bottom: 20px;">
+        <img src="/SOLT-LOGO-WITHOUT-TEXT.svg" alt="SOLT Healthcare" style="height: 60px; width: auto;">
+        <div>
+          <h1 style="margin: 0;">SOLT Healthcare</h1>
+          <p style="margin: 8px 0 0 0;">Helper Functions & Automation Tools</p>
+        </div>
+      </div>
     </div>
     
     <div class="tools-grid">
       <!-- Kinnser Billing Automation Tool -->
       <div class="tool-card" onclick="window.location.href='/billing'">
-        <div class="tool-icon">🏥</div>
+        <div class="tool-icon">
+          <img src="/WS_HomeHealthHospice_Stacked.svg" alt="WellSky Kinnser" style="height: 48px; width: auto;">
+        </div>
         <div class="tool-content">
           <h3>Kinnser Billing Automation</h3>
           <p>Automated claims processing for all offices</p>
