@@ -203,7 +203,7 @@ export async function loginAndProcessOffices(officeValue: string = 'all', select
       fs.mkdirSync(downloadsPath, { recursive: true });
     }
     
-    browser = await chromium.launch({ headless: false });
+    browser = await chromium.launch({ headless: true });
     const context = await browser.newContext({
       acceptDownloads: true
     });
@@ -2211,7 +2211,7 @@ export async function testPDFDownload(officeValue: string = '1407132,Clinic'): P
       console.log(`✓ Created downloads folder: ${downloadsPath}`);
     }
     
-    browser = await chromium.launch({ headless: false });
+    browser = await chromium.launch({ headless: true });
     const context = await browser.newContext({
       acceptDownloads: true
     });
