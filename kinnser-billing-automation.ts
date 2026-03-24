@@ -66,7 +66,7 @@ async function selectOffice(page: Page, office: Office): Promise<void> {
   console.log(`✓ Office switched to ${office.name}`);
 }
 
-async function processOffice(page: Page, office: Office, insuranceHelper: InsuranceHelper, selectedInsurances: string[] | null = null): Promise<{records: SelectedRecord[], filename: string | null, readyToSendFiles: string[]}> {
+async function processOffice(page: Page, office: Office, insuranceHelper: InsuranceHelper, selectedInsurances: string[] | null = null): Promise<{records: SelectedRecord[], filename: string | null, readyToSendFiles: string[], readyToSendCount: number}> {
   console.log(`\n${'='.repeat(80)}`);
   console.log(`PROCESSING OFFICE: ${office.name} (${office.stateCode})`);
   console.log(`${'='.repeat(80)}`);
@@ -82,7 +82,23 @@ async function processOffice(page: Page, office: Office, insuranceHelper: Insura
     await selectAllInsurances(page, selectedInsurances);
 
     // 4. Wait for results table to load
-    await waitForResultsTable(page);
+    const hasRecords = await waitForResultsTable(page);
+    
+    if (!hasRecords) {
+      console.log(`No records in Ready tab for ${office.name}`);
+      console.log(`Skipping to Pending Approval and Ready To Send tabs...`);
+      
+      // Skip directly to Pending Approval
+      let readyToSendFiles: string[] = [];
+      try {
+        readyToSendFiles = await processPendingApproval(page, insuranceHelper);
+        console.log(`✓ Pending Approval and Ready To Send workflow completed for ${office.name}`);
+      } catch (error) {
+        console.error(`⚠️  Error in Pending Approval/Ready To Send for ${office.name}:`, error);
+      }
+      
+      return { records: [], filename: null, readyToSendFiles, readyToSendCount: readyToSendFiles.length > 0 ? readyToSendFiles.filter(f => f.includes('electronic') || f.includes('paper-claim')).length : 0 };
+    }
 
     // 5. Process records and select valid ones across all pages
     const { selectedCount, selectedRecords } = await processAllPagesAndSelectValid(page, insuranceHelper);
@@ -115,7 +131,8 @@ async function processOffice(page: Page, office: Office, insuranceHelper: Insura
     }
 
     console.log(`✓ Successfully processed ${office.name}`);
-    return { records: selectedRecords, filename, readyToSendFiles };
+    const readyToSendCount = readyToSendFiles.length > 0 ? readyToSendFiles.filter(f => f.includes('electronic') || f.includes('paper-claim')).length : 0;
+    return { records: selectedRecords, filename, readyToSendFiles, readyToSendCount };
     
   } catch (error) {
     console.error(`✗ Error processing office ${office.name}:`, error);
@@ -221,7 +238,7 @@ export async function loginAndProcessOffices(officeValue: string = 'all', select
     console.log(`${'='.repeat(80)}`);
 
     const allSelectedRecords: SelectedRecord[] = [];
-    const summary: Array<{office: string, count: number}> = [];
+    const summary: Array<{office: string, count: number, readyToSendCount: number}> = [];
     const excelFiles: string[] = [];
     const allReadyToSendFiles: string[] = [];
 
@@ -235,15 +252,16 @@ export async function loginAndProcessOffices(officeValue: string = 'all', select
       await selectOffice(page, office);
       
       // Process this office
-      const { records: officeRecords, filename, readyToSendFiles } = await processOffice(page, office, insuranceHelper, selectedInsurances);
+      const { records: officeRecords, filename, readyToSendFiles, readyToSendCount } = await processOffice(page, office, insuranceHelper, selectedInsurances);
       allSelectedRecords.push(...officeRecords);
-      summary.push({ office: office.name, count: officeRecords.length });
+      const totalCount = officeRecords.length + (readyToSendCount || 0);
+      summary.push({ office: office.name, count: officeRecords.length, readyToSendCount: readyToSendCount || 0 });
       if (filename) {
         excelFiles.push(filename);
       }
       allReadyToSendFiles.push(...readyToSendFiles);
       
-      console.log(`✓ Completed ${office.name}: ${officeRecords.length} records selected`);
+      console.log(`✓ Completed ${office.name}: ${officeRecords.length} records from Ready tab, ${readyToSendCount || 0} records from Ready To Send tab`);
       
       // Small delay between offices
       await page.waitForTimeout(2000);
@@ -294,9 +312,10 @@ Total records selected from Ready tab: ${allSelectedRecords.length}
 Total offices processed: ${officesToProcess.length}
 
 ${allSelectedRecords.length > 0 ? `
-READY TO SEND PROCESSING:
-- Electronic claims: Sent electronically
-- Paper claims: PDFs downloaded and attached
+WORKFLOW STATUS:
+✓ Ready tab: ${allSelectedRecords.length} records selected and Create button clicked
+✓ Pending Approval tab: Processed (duplicates fixed if found)
+${allReadyToSendFiles.length > 0 ? '✓ Ready To Send tab: Records processed and submitted' : '⚠️  Ready To Send tab: No records found (may still be in Pending Approval)'}
 
 ATTACHED FILES (${allAttachments.length} total):
 
@@ -304,22 +323,25 @@ ATTACHED FILES (${allAttachments.length} total):
 ${excelFiles.length > 0 ? excelFiles.map(f => `   - ${f}`).join('\n') : '   - None'}
 
 2. Ready To Send Files (${allReadyToSendFiles.length}):
-   - Summary Excel: ${readyToSendExcelCount} file(s)
+${allReadyToSendFiles.length > 0 ? `   - Summary Excel: ${readyToSendExcelCount} file(s)
    - Electronic Claims Excel: Included if applicable
    - Paper Claims PDFs: ${pdfCount} file(s)
-${allReadyToSendFiles.length > 0 ? allReadyToSendFiles.map(f => `   - ${f}`).join('\n') : '   - None'}
+${allReadyToSendFiles.map(f => `   - ${f}`).join('\n')}` : `   ⚠️  No files from Ready To Send
+   
+   POSSIBLE REASONS:
+   - Records are still in Pending Approval (need manual approval)
+   - Records don't match insurance criteria for Ready To Send
+   - Timing issue - records may appear in next run`}
 
-WORKFLOW COMPLETED:
-✓ Ready tab processing
-✓ Claims created
-✓ Pending Approval processed
-✓ Duplicate MRNs fixed (Type of Bill 327)
-✓ Claims approved
-✓ Ready To Send processed
-✓ Electronic claims sent
+${allReadyToSendFiles.length > 0 ? `
+ACTIONS TAKEN:
+✓ Electronic claims sent automatically
 ✓ Paper claims downloaded as PDFs
-
-All files are attached to this email for your review.
+✓ All files attached to this email` : `
+NEXT STEPS:
+1. Check Pending Approval tab in Kinnser for records awaiting approval
+2. Verify records were created successfully in Ready tab
+3. Run automation again if records are now in Ready To Send`}
 ` : `
 NO RECORDS PROCESSED:
 - All records in Ready tab were skipped (insurances not in approved list or invalid authorization)
@@ -624,37 +646,76 @@ async function selectAllInsurances(page: Page, selectedInsurances: string[] | nu
   console.log("Waiting for Angular to render table data...");
   await page.waitForTimeout(5000); // Give Angular more time to render
 
-  // Wait for table rows with actual data
-  await page.waitForFunction(() => {
-    const tables = Array.from(document.querySelectorAll('table'));
-    for (let i = 0; i < tables.length; i++) {
-      const tbody = tables[i].querySelector('tbody');
-      if (tbody) {
-        const rows = tbody.querySelectorAll('tr');
-        if (rows.length > 0) {
-          // Check if first row has a checkbox
-          const firstRow = rows[0];
-          const checkbox = firstRow.querySelector('input[type="checkbox"]');
-          if (checkbox) {
-            console.log('Found table with checkbox in first row');
-            return true;
+  // Wait for table rows with actual data OR "no records" message
+  console.log("Waiting for Angular to render table data...");
+  try {
+    await page.waitForFunction(() => {
+      // Check for "no records" message
+      const bodyText = document.body.textContent || '';
+      if (bodyText.includes('There are currently no records to display') || 
+          bodyText.includes('No records found')) {
+        console.log('No records message found');
+        return true;
+      }
+      
+      // Check for table with data
+      const tables = Array.from(document.querySelectorAll('table'));
+      for (let i = 0; i < tables.length; i++) {
+        const tbody = tables[i].querySelector('tbody');
+        if (tbody) {
+          const rows = tbody.querySelectorAll('tr');
+          if (rows.length > 0) {
+            // Check if first row has a checkbox
+            const firstRow = rows[0];
+            const checkbox = firstRow.querySelector('input[type="checkbox"]');
+            if (checkbox) {
+              console.log('Found table with checkbox in first row');
+              return true;
+            }
           }
         }
       }
+      return false;
+    }, { timeout: 30000 });
+  } catch (error) {
+    console.log("⚠️  Timeout waiting for table - checking if there are no records...");
+    const noRecords = await page.evaluate(() => {
+      const bodyText = document.body.textContent || '';
+      return bodyText.includes('There are currently no records to display') || 
+             bodyText.includes('No records found');
+    });
+    
+    if (noRecords) {
+      console.log("✓ Confirmed: No records to display");
+    } else {
+      console.log("⚠️  Table structure might be different than expected");
+      throw error;
     }
-    return false;
-  }, { timeout: 30000 });
+  }
 
   console.log("Insurance selection completed successfully");
 }
 
 
-async function waitForResultsTable(page: Page): Promise<void> {
+async function waitForResultsTable(page: Page): Promise<boolean> {
   console.log("Waiting for results table with data...");
-  
+
   // Wait for table to exist
   await page.waitForSelector('table', { timeout: 30000 });
-  
+
+  // Check if there's a "no records" message
+  const noRecordsMessage = await page.evaluate(() => {
+    const bodyText = document.body.textContent || '';
+    return bodyText.includes('There are currently no records to display') ||
+           bodyText.includes('No records found') ||
+           bodyText.includes('no records to display');
+  });
+
+  if (noRecordsMessage) {
+    console.log("⚠️  No records found in Ready tab - will skip to next tab");
+    return false; // Return false to indicate no records
+  }
+
   // Wait for table to have data rows (not just header)
   await page.waitForFunction(() => {
     const tables = Array.from(document.querySelectorAll("table"));
@@ -679,11 +740,13 @@ async function waitForResultsTable(page: Page): Promise<void> {
     }
     return false;
   }, { timeout: 30000 });
-  
+
   console.log("✓ Results table with data is ready");
-  
+
   // Give extra time for any dynamic content to fully render
   await page.waitForTimeout(2000);
+
+  return true; // Return true to indicate records exist
 }
 
 async function processAllPagesAndSelectValid(page: Page, insuranceHelper: InsuranceHelper): Promise<{selectedCount: number, selectedRecords: SelectedRecord[]}> {
@@ -1563,18 +1626,70 @@ async function processReadyToSend(page: Page, insuranceHelper: InsuranceHelper):
     // Get all records with insurance information
     console.log("\nExtracting records from Ready To Send...");
     const records = await page.evaluate(() => {
-      // Find header columns
-      const headerCells = Array.from(document.querySelectorAll('table thead th, table thead td'));
-      const headers = headerCells.map(cell => cell.textContent?.trim().toLowerCase() || '');
+      // Find header columns - handle Angular nested structure
+      const headerCells = Array.from(document.querySelectorAll('table thead th'));
+      const headers = headerCells.map(cell => {
+        // Try to get text from nested Angular elements
+        const link = cell.querySelector('a');
+        const span = cell.querySelector('span');
+        const text = link?.textContent?.trim() || span?.textContent?.trim() || cell.textContent?.trim() || '';
+        return text.toLowerCase();
+      });
       
+      console.log('DEBUG: Table headers:', headers);
+      
+      // Find insurance column index
       const insuranceIndex = headers.findIndex(h => h.includes('insurance'));
+      console.log('DEBUG: Insurance column index:', insuranceIndex);
       
       const rows = Array.from(document.querySelectorAll('table tbody tr'));
       return rows.map((row, index) => {
         const cells = row.querySelectorAll('td');
-        const insurance = insuranceIndex >= 0 && insuranceIndex < cells.length
-          ? cells[insuranceIndex].textContent?.trim() || ''
-          : '';
+        
+        // Skip rows that don't have enough cells (likely comment/follow-up rows)
+        if (cells.length < 5) {
+          console.log(`DEBUG: Row ${index + 1} - Skipping (only ${cells.length} cells)`);
+          return null;
+        }
+        
+        // Get insurance name from the correct column
+        let insurance = '';
+        
+        if (insuranceIndex >= 0 && insuranceIndex < cells.length) {
+          const cell = cells[insuranceIndex];
+          
+          // Look for div with ng-binding class (Angular rendered content)
+          const ngBindingDiv = cell.querySelector('div.ng-binding');
+          if (ngBindingDiv && ngBindingDiv.textContent?.trim()) {
+            insurance = ngBindingDiv.textContent.trim();
+          }
+          
+          // Fallback methods if ng-binding not found
+          if (!insurance) {
+            const link = cell.querySelector('a');
+            if (link && link.textContent?.trim()) {
+              insurance = link.textContent.trim();
+            }
+          }
+          
+          if (!insurance) {
+            const span = cell.querySelector('span');
+            if (span && span.textContent?.trim()) {
+              insurance = span.textContent.trim();
+            }
+          }
+          
+          if (!insurance) {
+            const div = cell.querySelector('div');
+            if (div && div.textContent?.trim()) {
+              insurance = div.textContent.trim();
+            }
+          }
+          
+          if (!insurance && (cell as HTMLElement).innerText) {
+            insurance = (cell as HTMLElement).innerText.trim();
+          }
+        }
         
         // Find checkbox and print icon
         const checkbox = row.querySelector('input[type="checkbox"]');
@@ -1582,14 +1697,38 @@ async function processReadyToSend(page: Page, insuranceHelper: InsuranceHelper):
         const printIcon = row.querySelector('label[id*="openClaimPrintView"]');
         const printIconId = printIcon?.id || '';
         
+        // Extract all cell data - look for ng-binding divs first
+        const allCells = Array.from(cells).map(cell => {
+          const ngBindingDiv = cell.querySelector('div.ng-binding');
+          if (ngBindingDiv && ngBindingDiv.textContent?.trim()) {
+            return ngBindingDiv.textContent.trim();
+          }
+          
+          const link = cell.querySelector('a');
+          const span = cell.querySelector('span');
+          const div = cell.querySelector('div');
+          return link?.textContent?.trim() || 
+                 span?.textContent?.trim() || 
+                 div?.textContent?.trim() || 
+                 (cell as HTMLElement).innerText?.trim() ||
+                 cell.textContent?.trim() || 
+                 '';
+        });
+        
+        console.log(`DEBUG: Row ${index + 1}:`);
+        console.log(`  Insurance (extracted): "${insurance}"`);
+        console.log(`  Checkbox ID: ${checkboxId}`);
+        console.log(`  Print Icon ID: ${printIconId}`);
+        console.log(`  All cells:`, allCells);
+        
         return {
           index,
           insurance,
           checkboxId,
           printIconId,
-          allCells: Array.from(cells).map(cell => cell.textContent?.trim() || '')
+          allCells
         };
-      });
+      }).filter(record => record !== null); // Filter out null records (skipped rows)
     });
     
     console.log(`Found ${records.length} records in Ready To Send`);
@@ -1599,22 +1738,61 @@ async function processReadyToSend(page: Page, insuranceHelper: InsuranceHelper):
       return [];
     }
     
+    // Filter out records with empty insurance names
+    const validRecords = records.filter(r => r.insurance && r.insurance.trim().length > 0);
+    const invalidRecords = records.filter(r => !r.insurance || r.insurance.trim().length === 0);
+    
+    if (invalidRecords.length > 0) {
+      console.log(`\n⚠️ WARNING: Found ${invalidRecords.length} records with empty insurance names`);
+      console.log("These records will be skipped. This may indicate:");
+      console.log("  - Table structure has changed");
+      console.log("  - Records are still loading");
+      console.log("  - Data extraction logic needs updating");
+      console.log("\nDEBUG: Showing cell data for records with empty insurance:");
+      invalidRecords.forEach((rec, idx) => {
+        console.log(`  Record ${rec.index + 1}: All cells =`, rec.allCells);
+      });
+    }
+    
+    if (validRecords.length === 0) {
+      console.log("✓ No valid records to process in Ready To Send");
+      return [];
+    }
+    
+    console.log(`Processing ${validRecords.length} valid records (${invalidRecords.length} skipped)`);
+    
     // Separate records by insurance type
     const noChangesRecords: any[] = [];
     const paperRecords: any[] = [];
     
-    records.forEach(record => {
-      const instruction = insuranceHelper.getInstructionsByLocation('ALL').find(
-        inst => inst.Name.toLowerCase().trim() === record.insurance.toLowerCase().trim()
+    console.log("\n=== CATEGORIZING RECORDS ===");
+    validRecords.forEach((record, idx) => {
+      console.log(`\nRecord ${idx + 1}: ${record.insurance}`);
+      
+      // Find the instruction for this insurance (search all locations)
+      const instruction = insuranceHelper['instructions'].find(
+        (inst: any) => inst.Name.toLowerCase().trim() === record.insurance.toLowerCase().trim()
       );
       
-      if (instruction?.Remarks) {
-        const remark = instruction.Remarks.toLowerCase().trim();
-        if (remark.includes('no changes are required except for identical claims')) {
-          noChangesRecords.push(record);
-        } else if (remark === 'paper') {
-          paperRecords.push(record);
+      if (instruction) {
+        console.log(`  Found instruction: Location=${instruction.Location}, Remarks=${instruction.Remarks?.substring(0, 50)}...`);
+        
+        if (instruction.Remarks) {
+          const remark = instruction.Remarks.toLowerCase().trim();
+          if (remark.includes('no changes are required except for identical claims')) {
+            console.log(`  ✓ Categorized as: Electronic (No changes)`);
+            noChangesRecords.push(record);
+          } else if (remark === 'paper') {
+            console.log(`  ✓ Categorized as: Paper`);
+            paperRecords.push(record);
+          } else {
+            console.log(`  ⚠️  Skipped: Remarks don't match criteria`);
+          }
+        } else {
+          console.log(`  ⚠️  Skipped: No remarks`);
         }
+      } else {
+        console.log(`  ⚠️  Skipped: Insurance not found in instructions`);
       }
     });
     
@@ -1659,18 +1837,117 @@ async function processReadyToSend(page: Page, insuranceHelper: InsuranceHelper):
     // Process "No changes" insurances - Send Electronically
     let electronicExcelFile: string | null = null;
     if (noChangesRecords.length > 0) {
-      console.log('\n=== PROCESSING "NO CHANGES" INSURANCES ===');
+      console.log('\n=== PROCESSING "NO CHANGES" INSURANCES (ELECTRONIC) ===');
+      console.log(`Found ${noChangesRecords.length} records to send electronically`);
       
       // Select all "no changes" records
-      for (const record of noChangesRecords) {
+      console.log(`\nAttempting to select ${noChangesRecords.length} checkboxes...`);
+      
+      for (let i = 0; i < noChangesRecords.length; i++) {
+        const record = noChangesRecords[i];
+        console.log(`\nSelecting record ${i + 1}/${noChangesRecords.length}:`);
+        console.log(`  Insurance: ${record.insurance}`);
+        console.log(`  Checkbox ID: ${record.checkboxId}`);
+        
         if (record.checkboxId) {
-          await page.click(`#${record.checkboxId}`);
+          console.log(`  DEBUG: Entering checkbox processing block`);
+          try {
+            console.log(`  DEBUG: Inside try block, about to evaluate checkbox`);
+            
+            // Check if checkbox exists and get its state
+            let checkboxInfo: any;
+            try {
+              checkboxInfo = await page.evaluate((id) => {
+                // IDs starting with numbers need to be escaped in querySelector
+                const checkbox = document.getElementById(id) as HTMLInputElement;
+                if (!checkbox) {
+                  return { exists: false, error: 'Element not found' };
+                }
+                
+                // Get computed style to check visibility
+                const style = window.getComputedStyle(checkbox);
+                
+                return {
+                  exists: true,
+                  disabled: checkbox.disabled,
+                  checked: checkbox.checked,
+                  visible: checkbox.offsetParent !== null,
+                  display: style.display,
+                  visibility: style.visibility,
+                  opacity: style.opacity,
+                  type: checkbox.type,
+                  className: checkbox.className,
+                  ngClick: checkbox.getAttribute('ng-click'),
+                  ngDisabled: checkbox.getAttribute('ng-disabled')
+                };
+              }, record.checkboxId);
+              console.log(`  DEBUG: Evaluate completed successfully`);
+            } catch (evalError: any) {
+              console.log(`  ✗ Error during evaluate:`, evalError?.message || evalError);
+              checkboxInfo = { exists: false, error: evalError?.message || 'Unknown error' };
+            }
+            
+            console.log(`  Checkbox info:`, JSON.stringify(checkboxInfo, null, 2));
+            
+            if (!checkboxInfo.exists) {
+              console.log(`  ✗ Checkbox not found in DOM`);
+              continue;
+            }
+            
+            if (checkboxInfo.disabled) {
+              console.log(`  ✗ Checkbox is disabled`);
+              continue;
+            }
+            
+            console.log(`  ✓ Attempting to click checkbox...`);
+            
+            // Try Playwright's click with force
+            try {
+              // Use getElementById since IDs starting with numbers can't use # selector
+              await page.evaluate((id) => {
+                const checkbox = document.getElementById(id) as HTMLInputElement;
+                if (checkbox) {
+                  checkbox.click();
+                }
+              }, record.checkboxId);
+              console.log(`  ✓ Checkbox click executed`);
+            } catch (clickError: any) {
+              console.log(`  ✗ Click failed:`, clickError?.message || clickError);
+            }
+            
+            await page.waitForTimeout(1000); // Wait for Angular to process
+            
+            // Verify the click worked
+            const newState = await page.evaluate((id) => {
+              const checkbox = document.getElementById(id) as HTMLInputElement;
+              return {
+                checked: checkbox?.checked || false,
+                hasCheckedAttr: checkbox?.hasAttribute('checked') || false
+              };
+            }, record.checkboxId);
+            
+            console.log(`  Checkbox state after click: checked=${newState.checked}, hasAttr=${newState.hasCheckedAttr}`);
+            
+          } catch (error: any) {
+            console.error(`  ✗ Error processing checkbox:`, error?.message || error);
+          }
+        } else {
+          console.log(`  ✗ No checkbox ID found for this record`);
         }
       }
-      console.log(`✓ Selected ${noChangesRecords.length} records`);
+      
+      console.log(`\n✓ Finished selecting ${noChangesRecords.length} records`);
+      await page.waitForTimeout(1000); // Give Angular time to update
+      
+      // Verify selections
+      const selectedCount = await page.evaluate(() => {
+        const checkboxes = Array.from(document.querySelectorAll('table tbody tr input[type="checkbox"]'));
+        return checkboxes.filter((cb: any) => cb.checked).length;
+      });
+      console.log(`✓ Verified: ${selectedCount} checkboxes are checked`);
       
       // Save to Excel before sending
-      console.log("Saving 'No changes' records to Excel...");
+      console.log("\nSaving 'No changes' records to Excel...");
       const timestamp = format(new Date(), 'yyyy-MM-dd_HH-mm-ss');
       const filename = `ready-to-send-electronic-${timestamp}.xlsx`;
       
@@ -1693,21 +1970,58 @@ async function processReadyToSend(page: Page, insuranceHelper: InsuranceHelper):
       console.log(`✓ Saved to: ${filename}`);
       
       // Click Claim Actions dropdown
+      console.log("\nClicking Claim Actions dropdown...");
       await page.click('a.btn.dropdown-toggle[data-toggle="dropdown"]');
       await page.waitForTimeout(1000);
+      console.log("✓ Dropdown opened");
       
       // Click Send Electronically
+      console.log("Clicking 'Send Electronically'...");
       await page.waitForSelector('#sendAuto', { timeout: 10000 });
       await page.click('#sendAuto');
       console.log("✓ Clicked 'Send Electronically'");
       
-      await page.waitForTimeout(3000);
+      // Wait for loading to complete
+      console.log("Waiting for electronic submission to complete...");
+      await page.waitForTimeout(2000);
+      await page.waitForSelector('.loading-message', { state: 'hidden', timeout: 60000 });
+      await page.waitForTimeout(2000);
+      console.log("✓ Electronic submission completed");
+      
+      // Deselect all checkboxes
+      console.log("\nDeselecting all checkboxes...");
+      for (let i = 0; i < noChangesRecords.length; i++) {
+        const record = noChangesRecords[i];
+        if (record.checkboxId) {
+          try {
+            const isChecked = await page.evaluate((id) => {
+              const checkbox = document.getElementById(id) as HTMLInputElement;
+              return checkbox?.checked || false;
+            }, record.checkboxId);
+            
+            if (isChecked) {
+              await page.evaluate((id) => {
+                const checkbox = document.getElementById(id) as HTMLInputElement;
+                if (checkbox) {
+                  checkbox.click();
+                }
+              }, record.checkboxId);
+              await page.waitForTimeout(300);
+              console.log(`  ✓ Deselected checkbox for: ${record.insurance}`);
+            }
+          } catch (error: any) {
+            console.error(`  ✗ Error deselecting checkbox:`, error?.message || error);
+          }
+        }
+      }
+      console.log("✓ All checkboxes deselected");
     }
     
     // Process "Paper" insurances - Print individually
     const downloadedFiles: string[] = [];
     if (paperRecords.length > 0) {
       console.log('\n=== PROCESSING "PAPER" INSURANCES ===');
+      console.log(`Found ${paperRecords.length} paper claims to download`);
       
       const downloadsPath = path.join(process.cwd(), 'downloads');
       
@@ -1721,25 +2035,28 @@ async function processReadyToSend(page: Page, insuranceHelper: InsuranceHelper):
         const record = paperRecords[i];
         console.log(`\nProcessing paper record ${i + 1}/${paperRecords.length}`);
         console.log(`  Insurance: ${record.insurance}`);
+        console.log(`  Print Icon ID: ${record.printIconId}`);
         
         if (record.printIconId) {
           try {
-            // Set up listener for new page (tab)
+            // Set up listener for new page (tab) before clicking
             const newPagePromise = page.context().waitForEvent('page', { timeout: 30000 });
             
             // Click print icon
-            console.log(`  Clicking print icon: ${record.printIconId}`);
+            console.log(`  Clicking print icon...`);
             await page.click(`#${record.printIconId}`);
+            console.log(`  ✓ Print icon clicked`);
             
             // Wait for new tab to open
+            console.log(`  Waiting for PDF tab to open...`);
             const newPage = await newPagePromise;
-            console.log(`  ✓ New tab opened`);
+            console.log(`  ✓ PDF tab opened`);
             
             // Wait for PDF to fully load in new tab
             console.log(`  Waiting for PDF content to fully load...`);
             await newPage.waitForLoadState('load', { timeout: 30000 });
-            await newPage.waitForLoadState('networkidle', { timeout: 30000 }); // Wait for network to be idle
-            await newPage.waitForTimeout(5000); // Give extra time for PDF rendering
+            await newPage.waitForLoadState('networkidle', { timeout: 30000 });
+            await newPage.waitForTimeout(3000); // Extra time for PDF rendering
             console.log(`  ✓ PDF content fully loaded`);
             
             // Get the PDF URL
@@ -1749,10 +2066,11 @@ async function processReadyToSend(page: Page, insuranceHelper: InsuranceHelper):
             // Generate filename
             const timestamp = format(new Date(), 'yyyy-MM-dd_HH-mm-ss');
             const sanitizedInsurance = record.insurance.replace(/[^a-zA-Z0-9]/g, '_');
-            const filename = `paper-claim-${sanitizedInsurance}-${i + 1}-${timestamp}.pdf`;
+            const filename = `paper-claim-${sanitizedInsurance}-${timestamp}.pdf`;
             const filepath = path.join(downloadsPath, filename);
             
             // Download the PDF using CDP (Chrome DevTools Protocol)
+            console.log(`  Downloading PDF...`);
             const pdfBuffer = await newPage.pdf({
               format: 'Letter',
               printBackground: true
@@ -1761,21 +2079,20 @@ async function processReadyToSend(page: Page, insuranceHelper: InsuranceHelper):
             // Save the PDF
             fs.writeFileSync(filepath, pdfBuffer);
             downloadedFiles.push(filepath);
-            
             console.log(`  ✓ Downloaded: ${filename}`);
             
-            // Close the new tab
+            // Close the PDF tab and navigate back to main tab
             await newPage.close();
-            console.log(`  ✓ Closed PDF tab`);
+            console.log(`  ✓ Closed PDF tab, back to main tab`);
+            
+            // Wait a bit before processing next record
+            await page.waitForTimeout(1000);
             
           } catch (error) {
             console.error(`  ✗ Failed to download PDF for record ${i + 1}:`, error);
           }
-          
-          // Wait between downloads
-          await page.waitForTimeout(2000);
         } else {
-          console.log(`  ⚠️  No print icon found for record ${i + 1}`);
+          console.log(`  ✗ No print icon ID found for this record`);
         }
       }
       
