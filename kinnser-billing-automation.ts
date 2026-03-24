@@ -203,7 +203,7 @@ export async function loginAndProcessOffices(officeValue: string = 'all', select
       fs.mkdirSync(downloadsPath, { recursive: true });
     }
     
-    browser = await chromium.launch({ headless: true });
+    browser = await chromium.launch({ headless: false });
     const context = await browser.newContext({
       acceptDownloads: true
     });
@@ -381,6 +381,14 @@ No action was taken as no records met the processing criteria.
       }
     }
 
+    // Close browser after email is sent
+    console.log("\n✓ Automation completed. Closing browser...");
+    if (browser) {
+      await browser.close();
+      browser = null;
+      console.log("✓ Browser closed");
+    }
+
     return {
       totalRecords: allSelectedRecords.length,
       filesCreated: excelFiles.length,
@@ -392,10 +400,11 @@ No action was taken as no records met the processing criteria.
     console.error("Error in billing automation:", error);
     throw error;
   } finally {
+    // Ensure browser is closed even if there's an error
     if (browser) {
-      // Keep browser open for a moment to see final state
-      await new Promise(resolve => setTimeout(resolve, 3000));
+      console.log("Cleaning up browser...");
       await browser.close();
+      browser = null;
     }
   }
 }
@@ -403,8 +412,8 @@ No action was taken as no records met the processing criteria.
 async function waitForLoadingToComplete(page: Page): Promise<void> {
   console.log("Waiting for loading to complete...");
   
-  // Wait a moment for loading to potentially start
-  await page.waitForTimeout(1000);
+  // Wait a brief moment for loading to potentially start
+  await page.waitForTimeout(500);
   
   // Check if loading spinner exists
   const loaderExists = await page.locator('#globalAjaxLoader').count() > 0;
@@ -412,18 +421,27 @@ async function waitForLoadingToComplete(page: Page): Promise<void> {
   if (loaderExists) {
     console.log("Loading spinner element found, monitoring it...");
     
-    // Wait for the loading spinner to become visible first (if it's going to)
-    try {
-      console.log("Waiting for loading to start (spinner visible)...");
-      await page.waitForFunction(() => {
-        const loader = document.querySelector('#globalAjaxLoader') as HTMLElement;
-        if (!loader) return false;
-        const isVisible = loader.offsetParent !== null || window.getComputedStyle(loader).display !== 'none';
-        return isVisible;
-      }, { timeout: 5000 });
-      console.log("✓ Loading spinner is now visible");
-    } catch {
-      console.log("Loading spinner didn't become visible (might already be done)");
+    // Check if spinner is already visible or wait briefly for it
+    const isVisibleNow = await page.evaluate(() => {
+      const loader = document.querySelector('#globalAjaxLoader') as HTMLElement;
+      if (!loader) return false;
+      return loader.offsetParent !== null && window.getComputedStyle(loader).display !== 'none';
+    });
+    
+    if (isVisibleNow) {
+      console.log("✓ Loading spinner is visible");
+    } else {
+      // Wait briefly for it to become visible (max 2 seconds)
+      try {
+        await page.waitForFunction(() => {
+          const loader = document.querySelector('#globalAjaxLoader') as HTMLElement;
+          if (!loader) return false;
+          return loader.offsetParent !== null && window.getComputedStyle(loader).display !== 'none';
+        }, { timeout: 2000 });
+        console.log("✓ Loading spinner is now visible");
+      } catch {
+        console.log("Loading spinner didn't become visible (might already be done)");
+      }
     }
     
     // Now wait for it to be hidden
@@ -431,16 +449,15 @@ async function waitForLoadingToComplete(page: Page): Promise<void> {
     await page.waitForFunction(() => {
       const loader = document.querySelector('#globalAjaxLoader') as HTMLElement;
       if (!loader) return true;
-      const isHidden = loader.offsetParent === null || window.getComputedStyle(loader).display === 'none';
-      return isHidden;
+      return loader.offsetParent === null || window.getComputedStyle(loader).display === 'none';
     }, { timeout: 60000 });
     console.log("✓ Loading spinner is now hidden");
   } else {
     console.log("No loading spinner element found on page");
   }
   
-  // Give it a moment to render the content after loading completes
-  await page.waitForTimeout(2000);
+  // Brief wait for content to render
+  await page.waitForTimeout(1000);
   console.log("✓ Loading complete");
 }
 
@@ -2194,7 +2211,7 @@ export async function testPDFDownload(officeValue: string = '1407132,Clinic'): P
       console.log(`✓ Created downloads folder: ${downloadsPath}`);
     }
     
-    browser = await chromium.launch({ headless: true });
+    browser = await chromium.launch({ headless: false });
     const context = await browser.newContext({
       acceptDownloads: true
     });
@@ -2369,15 +2386,22 @@ export async function testPDFDownload(officeValue: string = '1407132,Clinic'): P
     console.log("\n=== TEST COMPLETED SUCCESSFULLY ===");
     console.log(`PDF downloaded to: ${filepath}`);
     
+    // Close browser after test
+    if (browser) {
+      await browser.close();
+      browser = null;
+      console.log("✓ Browser closed");
+    }
+    
   } catch (error) {
     console.error("✗ Test failed:", error);
     throw error;
   } finally {
+    // Ensure browser is closed even if there's an error
     if (browser) {
-      // Keep browser open for a moment to see final state
-      console.log("\nKeeping browser open for 5 seconds...");
-      await new Promise(resolve => setTimeout(resolve, 5000));
+      console.log("Cleaning up browser...");
       await browser.close();
+      browser = null;
     }
   }
 }
