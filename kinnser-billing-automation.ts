@@ -86,9 +86,9 @@ async function processOffice(page: Page, office: Office, insuranceHelper: Insura
     
     if (!hasRecords) {
       console.log(`No records in Ready tab for ${office.name}`);
-      console.log(`Skipping to Pending Approval and Ready To Send tabs...`);
+      console.log(`Will still process Pending Approval and Ready To Send tabs...`);
       
-      // Skip directly to Pending Approval
+      // Skip directly to Pending Approval and Ready To Send
       let readyToSendFiles: string[] = [];
       try {
         readyToSendFiles = await processPendingApproval(page, insuranceHelper);
@@ -729,34 +729,62 @@ async function waitForResultsTable(page: Page): Promise<boolean> {
   });
 
   if (noRecordsMessage) {
-    console.log("⚠️  No records found in Ready tab - will skip to next tab");
+    console.log("⚠️ No records found in Ready tab - will skip to next tab");
     return false; // Return false to indicate no records
   }
 
-  // Wait for table to have data rows (not just header)
-  await page.waitForFunction(() => {
-    const tables = Array.from(document.querySelectorAll("table"));
-    for (let i = 0; i < tables.length; i++) {
-      const t = tables[i];
-      const rows = t.querySelectorAll("tr");
-      // Need at least 2 rows (header + 1 data row)
-      if (rows.length > 1) {
-        // Check if data rows have actual content
-        const dataRow = rows[1];
-        const cells = Array.from(dataRow.querySelectorAll('td'));
-        if (cells.length > 0) {
-          // Check if at least one cell has text content
-          for (let j = 0; j < cells.length; j++) {
-            const cell = cells[j];
-            if (cell.textContent && cell.textContent.trim().length > 0) {
-              return true;
+  // Wait for table to have data rows (not just header) with better error handling
+  try {
+    await page.waitForFunction(() => {
+      const tables = Array.from(document.querySelectorAll("table"));
+      for (let i = 0; i < tables.length; i++) {
+        const t = tables[i];
+        const rows = t.querySelectorAll("tr");
+        // Need at least 2 rows (header + 1 data row)
+        if (rows.length > 1) {
+          // Check if data rows have actual content
+          const dataRow = rows[1];
+          const cells = Array.from(dataRow.querySelectorAll('td'));
+          if (cells.length > 0) {
+            // Check if at least one cell has text content
+            for (let j = 0; j < cells.length; j++) {
+              const cell = cells[j];
+              if (cell.textContent && cell.textContent.trim().length > 0) {
+                return true;
+              }
             }
           }
         }
       }
+      return false;
+    }, { timeout: 30000 });
+    
+    return true; // Records found
+  } catch (error) {
+    // Timeout occurred - check if there's actually no data
+    console.log("⚠️ Timeout waiting for table data - checking if page has no records...");
+    
+    const hasNoData = await page.evaluate(() => {
+      const tables = Array.from(document.querySelectorAll("table"));
+      if (tables.length === 0) return true;
+      
+      for (let i = 0; i < tables.length; i++) {
+        const rows = tables[i].querySelectorAll("tbody tr");
+        if (rows.length > 0) {
+          return false; // Has rows
+        }
+      }
+      return true; // No rows in any table
+    });
+    
+    if (hasNoData) {
+      console.log("⚠️ No records found in Ready tab - will skip to next tab");
+      return false;
     }
-    return false;
-  }, { timeout: 30000 });
+    
+    // If we got here, something else went wrong
+    throw error;
+  }
 
   console.log("✓ Results table with data is ready");
 
@@ -2194,214 +2222,3 @@ function findDuplicatesWithOverlap(records: any[]): any[] {
   return duplicates;
 }
 
-
-/**
- * TEST FUNCTION: Login and test PDF download from Ready To Send tab
- */
-export async function testPDFDownload(officeValue: string = '1407132,Clinic'): Promise<void> {
-  let browser: Browser | null = null;
-  
-  try {
-    console.log("\n=== TESTING PDF DOWNLOAD FROM READY TO SEND ===\n");
-    
-    // Create downloads directory
-    const downloadsPath = path.join(process.cwd(), 'downloads');
-    if (!fs.existsSync(downloadsPath)) {
-      fs.mkdirSync(downloadsPath, { recursive: true });
-      console.log(`✓ Created downloads folder: ${downloadsPath}`);
-    }
-    
-    browser = await chromium.launch({ headless: true });
-    const context = await browser.newContext({
-      acceptDownloads: true
-    });
-    const page = await context.newPage();
-
-    // Set up global alert handler
-    page.on('dialog', async dialog => {
-      console.log(`Dialog detected: ${dialog.type()} - "${dialog.message()}"`);
-      await dialog.accept();
-      console.log('Dialog accepted');
-    });
-
-    // Load insurance instructions
-    const insuranceHelper = new InsuranceHelper("Insurance Instructions.xlsx");
-
-    // 1. Login
-    console.log("\n=== STEP 1: LOGIN ===");
-    await performLogin(page);
-    console.log("✓ Login successful");
-
-    // 2. Select office
-    console.log("\n=== STEP 2: SELECT OFFICE ===");
-    const office = OFFICES.find(o => o.value === officeValue);
-    if (!office) {
-      throw new Error(`Office not found: ${officeValue}`);
-    }
-    await selectOffice(page, office);
-    console.log(`✓ Office selected: ${office.name}`);
-
-    // 3. Navigate to Billing Manager
-    console.log("\n=== STEP 3: NAVIGATE TO BILLING MANAGER ===");
-    await navigateToBillingManager(page);
-    console.log("✓ Billing Manager loaded");
-
-    // 4. Apply filters (select Primary Payer = Ready)
-    console.log("\n=== STEP 4: APPLY FILTERS ===");
-    await applyFilters(page);
-    console.log("✓ Filters applied (Primary Payer = Ready)");
-
-    // 5. Navigate directly to Ready To Send tab
-    console.log("\n=== STEP 5: NAVIGATE TO READY TO SEND ===");
-    await page.waitForSelector('#readyToSendClaims', { timeout: 10000 });
-    await page.click('#readyToSendClaims');
-    console.log("✓ Clicked Ready To Send tab");
-    
-    // Wait for page to load
-    await page.waitForLoadState('domcontentloaded', { timeout: 30000 });
-    await page.waitForTimeout(3000);
-    
-    // Wait for loading to complete
-    await page.waitForSelector('.loading-message', { state: 'hidden', timeout: 60000 });
-    await page.waitForTimeout(2000);
-    console.log("✓ Ready To Send page loaded");
-
-    // 5a. Select "All Insurances" from dropdown
-    console.log("\n=== STEP 5a: SELECT ALL INSURANCES ===");
-    await page.waitForSelector('select[ng-model="insuranceKey"]', { timeout: 10000 });
-    await page.selectOption('select[ng-model="insuranceKey"]', '1'); // value="1" is "All Insurances"
-    console.log("✓ Selected 'All Insurances' from dropdown");
-    
-    // Wait for records to load
-    await page.waitForTimeout(2000);
-    await page.waitForSelector('.loading-message', { state: 'hidden', timeout: 60000 });
-    await page.waitForTimeout(2000);
-    console.log("✓ Records loaded for All Insurances");
-
-    // 6. Get the first record with print icon
-    console.log("\n=== STEP 6: FIND RECORD WITH PRINT ICON ===");
-    
-    // First, check how many records are in the table
-    const tableInfo = await page.evaluate(() => {
-      const rows = Array.from(document.querySelectorAll('table tbody tr'));
-      return {
-        totalRows: rows.length,
-        records: rows.map((row, idx) => {
-          const cells = row.querySelectorAll('td');
-          const printIcon = row.querySelector('label[id*="openClaimPrintView"]');
-          return {
-            rowIndex: idx,
-            hasPrintIcon: !!printIcon,
-            printIconId: printIcon?.id || '',
-            cellCount: cells.length,
-            firstFewCells: Array.from(cells).slice(0, 5).map(cell => cell.textContent?.trim() || '')
-          };
-        })
-      };
-    });
-    
-    console.log(`Found ${tableInfo.totalRows} rows in Ready To Send tab`);
-    
-    if (tableInfo.totalRows === 0) {
-      console.log("✗ No records found in Ready To Send tab");
-      console.log("   The test record might be in a different tab (Ready, Pending Approval, etc.)");
-      return;
-    }
-    
-    // Show all records
-    console.log("\nAll records in Ready To Send:");
-    tableInfo.records.forEach((record, idx) => {
-      console.log(`  Row ${idx + 1}: Print Icon: ${record.hasPrintIcon ? '✓' : '✗'} | Cells: ${record.firstFewCells.join(' | ')}`);
-    });
-    
-    // Find first record with print icon
-    const recordWithPrint = tableInfo.records.find(r => r.hasPrintIcon);
-    
-    if (!recordWithPrint) {
-      console.log("\n✗ No record with print icon found in any row");
-      console.log("   This might mean:");
-      console.log("   1. The test record is in a different tab");
-      console.log("   2. The print icon selector needs to be updated");
-      console.log("   3. There are no claims ready to send");
-      return;
-    }
-    
-    console.log(`\n✓ Found record with print icon at row ${recordWithPrint.rowIndex + 1}`);
-    console.log(`  Print Icon ID: ${recordWithPrint.printIconId}`);
-    console.log(`  Record details: ${recordWithPrint.firstFewCells.join(' | ')}`);
-
-    // 7. Test PDF download
-    console.log("\n=== STEP 7: TEST PDF DOWNLOAD ===");
-    
-    // Set up listener for new page (tab)
-    const newPagePromise = page.context().waitForEvent('page', { timeout: 30000 });
-    
-    // Click print icon
-    console.log(`Clicking print icon: ${recordWithPrint.printIconId}`);
-    await page.click(`#${recordWithPrint.printIconId}`);
-    
-    // Wait for new tab to open
-    const newPage = await newPagePromise;
-    console.log("✓ New tab opened");
-    
-    // Wait for PDF to fully load in new tab
-    console.log("Waiting for PDF content to fully load...");
-    await newPage.waitForLoadState('load', { timeout: 30000 });
-    await newPage.waitForLoadState('networkidle', { timeout: 30000 }); // Wait for network to be idle
-    await newPage.waitForTimeout(5000); // Give extra time for PDF rendering
-    console.log("✓ PDF content fully loaded");
-    
-    // Get the PDF URL
-    const pdfUrl = newPage.url();
-    console.log(`✓ PDF URL: ${pdfUrl}`);
-    
-    // Generate filename
-    const timestamp = format(new Date(), 'yyyy-MM-dd_HH-mm-ss');
-    const filename = `test-pdf-download-${timestamp}.pdf`;
-    const filepath = path.join(downloadsPath, filename);
-    
-    // Download the PDF using page.pdf()
-    console.log("Generating PDF...");
-    const pdfBuffer = await newPage.pdf({
-      format: 'Letter',
-      printBackground: true
-    });
-    
-    // Save the PDF
-    fs.writeFileSync(filepath, pdfBuffer);
-    console.log(`✓ PDF saved: ${filepath}`);
-    
-    // Verify file
-    if (fs.existsSync(filepath)) {
-      const stats = fs.statSync(filepath);
-      console.log(`✓ File verified: ${filename} (${stats.size} bytes)`);
-    } else {
-      console.error(`✗ File was not created: ${filepath}`);
-    }
-    
-    // Close the new tab
-    await newPage.close();
-    console.log("✓ Closed PDF tab");
-    
-    console.log("\n=== TEST COMPLETED SUCCESSFULLY ===");
-    console.log(`PDF downloaded to: ${filepath}`);
-    
-    // Close browser after test
-    if (browser) {
-      await browser.close();
-      browser = null;
-      console.log("✓ Browser closed");
-    }
-    
-  } catch (error) {
-    console.error("✗ Test failed:", error);
-    throw error;
-  } finally {
-    // Ensure browser is closed even if there's an error
-    if (browser) {
-      console.log("Cleaning up browser...");
-      await browser.close();
-      browser = null;
-    }
-  }
-}

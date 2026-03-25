@@ -1,6 +1,6 @@
 import "dotenv/config";
 import express, { Request, Response } from "express";
-import { loginAndProcessOffices, testPDFDownload, setLogBroadcaster } from "./kinnser-billing-automation";
+import { loginAndProcessOffices, setLogBroadcaster } from "./kinnser-billing-automation";
 import { OFFICES } from "./office-config";
 import { InsuranceHelper } from "./insurance-helper";
 
@@ -1046,27 +1046,6 @@ app.post("/run-automation", async (req: Request, res: Response) => {
     });
   } catch (error) {
     console.error("Automation failed:", error);
-    res.status(500).json({
-      success: false,
-      error: error instanceof Error ? error.message : "Unknown error"
-    });
-  }
-});
-
-// TEST endpoint to test PDF download from Ready To Send
-app.post("/test-pdf-download", async (req: Request, res: Response) => {
-  try {
-    const { officeValue } = req.body;
-    console.log(`Starting PDF download test for: ${officeValue || 'MA-Nightingale___Taunton'}`);
-    
-    await testPDFDownload(officeValue);
-    
-    res.json({
-      success: true,
-      message: "PDF download test completed successfully"
-    });
-  } catch (error) {
-    console.error("PDF download test failed:", error);
     res.status(500).json({
       success: false,
       error: error instanceof Error ? error.message : "Unknown error"
