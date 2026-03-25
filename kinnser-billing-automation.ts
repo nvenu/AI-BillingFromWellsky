@@ -412,52 +412,44 @@ No action was taken as no records met the processing criteria.
 async function waitForLoadingToComplete(page: Page): Promise<void> {
   console.log("Waiting for loading to complete...");
   
-  // Wait a brief moment for loading to potentially start
-  await page.waitForTimeout(500);
+  // Brief moment to let any loading start
+  await page.waitForTimeout(300);
   
-  // Check if loading spinner exists
+  // Check if loading spinner exists and is visible
   const loaderExists = await page.locator('#globalAjaxLoader').count() > 0;
   
-  if (loaderExists) {
-    console.log("Loading spinner element found, monitoring it...");
-    
-    // Check if spinner is already visible or wait briefly for it
-    const isVisibleNow = await page.evaluate(() => {
-      const loader = document.querySelector('#globalAjaxLoader') as HTMLElement;
-      if (!loader) return false;
-      return loader.offsetParent !== null && window.getComputedStyle(loader).display !== 'none';
-    });
-    
-    if (isVisibleNow) {
-      console.log("✓ Loading spinner is visible");
-    } else {
-      // Wait briefly for it to become visible (max 2 seconds)
-      try {
-        await page.waitForFunction(() => {
-          const loader = document.querySelector('#globalAjaxLoader') as HTMLElement;
-          if (!loader) return false;
-          return loader.offsetParent !== null && window.getComputedStyle(loader).display !== 'none';
-        }, { timeout: 2000 });
-        console.log("✓ Loading spinner is now visible");
-      } catch {
-        console.log("Loading spinner didn't become visible (might already be done)");
-      }
-    }
-    
-    // Now wait for it to be hidden
-    console.log("Waiting for loading spinner to hide...");
-    await page.waitForFunction(() => {
-      const loader = document.querySelector('#globalAjaxLoader') as HTMLElement;
-      if (!loader) return true;
-      return loader.offsetParent === null || window.getComputedStyle(loader).display === 'none';
-    }, { timeout: 60000 });
-    console.log("✓ Loading spinner is now hidden");
-  } else {
+  if (!loaderExists) {
     console.log("No loading spinner element found on page");
+    await page.waitForTimeout(300);
+    console.log("✓ Loading complete");
+    return;
   }
   
+  // Check if spinner is currently visible
+  const isVisible = await page.evaluate(() => {
+    const loader = document.querySelector('#globalAjaxLoader') as HTMLElement;
+    if (!loader) return false;
+    return loader.offsetParent !== null && window.getComputedStyle(loader).display !== 'none';
+  });
+  
+  if (!isVisible) {
+    console.log("Loading spinner is already hidden - page is ready");
+    await page.waitForTimeout(300);
+    console.log("✓ Loading complete");
+    return;
+  }
+  
+  // Spinner is visible, wait for it to hide
+  console.log("Loading spinner is visible, waiting for it to hide...");
+  await page.waitForFunction(() => {
+    const loader = document.querySelector('#globalAjaxLoader') as HTMLElement;
+    if (!loader) return true;
+    return loader.offsetParent === null || window.getComputedStyle(loader).display === 'none';
+  }, { timeout: 30000 });
+  console.log("✓ Loading spinner is now hidden");
+  
   // Brief wait for content to render
-  await page.waitForTimeout(1000);
+  await page.waitForTimeout(500);
   console.log("✓ Loading complete");
 }
 
@@ -720,6 +712,9 @@ async function waitForResultsTable(page: Page): Promise<boolean> {
   // Wait for table to exist
   await page.waitForSelector('table', { timeout: 30000 });
 
+  // Give Angular a moment to render
+  await page.waitForTimeout(2000);
+
   // Check if there's a "no records" message
   const noRecordsMessage = await page.evaluate(() => {
     const bodyText = document.body.textContent || '';
@@ -729,11 +724,11 @@ async function waitForResultsTable(page: Page): Promise<boolean> {
   });
 
   if (noRecordsMessage) {
-    console.log("⚠️ No records found in Ready tab - will skip to next tab");
+    console.log("⚠️ No records found in tab - will skip to next tab");
     return false; // Return false to indicate no records
   }
 
-  // Wait for table to have data rows (not just header) with better error handling
+  // Check if table has data rows with shorter timeout and polling
   try {
     await page.waitForFunction(() => {
       const tables = Array.from(document.querySelectorAll("table"));
@@ -757,8 +752,9 @@ async function waitForResultsTable(page: Page): Promise<boolean> {
         }
       }
       return false;
-    }, { timeout: 30000 });
+    }, { timeout: 10000, polling: 500 }); // Reduced timeout to 10s with 500ms polling
     
+    console.log("✓ Results table with data is ready");
     return true; // Records found
   } catch (error) {
     // Timeout occurred - check if there's actually no data
@@ -778,20 +774,14 @@ async function waitForResultsTable(page: Page): Promise<boolean> {
     });
     
     if (hasNoData) {
-      console.log("⚠️ No records found in Ready tab - will skip to next tab");
+      console.log("⚠️ No records found in tab - will skip to next tab");
       return false;
     }
     
-    // If we got here, something else went wrong
-    throw error;
+    // If we got here, something else went wrong - but let's continue anyway
+    console.log("⚠️ Could not verify table data, continuing anyway...");
+    return true;
   }
-
-  console.log("✓ Results table with data is ready");
-
-  // Give extra time for any dynamic content to fully render
-  await page.waitForTimeout(2000);
-
-  return true; // Return true to indicate records exist
 }
 
 async function processAllPagesAndSelectValid(page: Page, insuranceHelper: InsuranceHelper): Promise<{selectedCount: number, selectedRecords: SelectedRecord[]}> {
