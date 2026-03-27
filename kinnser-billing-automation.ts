@@ -517,14 +517,19 @@ async function navigateToBillingManager(page: Page): Promise<void> {
   
   // Click Billing Manager using JavaScript to avoid interception
   console.log("Clicking Billing Manager...");
+  
+  // Set up navigation promise before clicking
+  const navigationPromise = page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 60000 });
+  
   await page.evaluate(() => {
     const items = Array.from(document.querySelectorAll('a.menuitem'));
     const billingManager = items.find(item => item.textContent?.includes('Billing Manager')) as HTMLElement;
     if (billingManager) billingManager.click();
   });
   
-  // Wait for navigation
-  await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
+  // Wait for navigation to complete
+  await navigationPromise;
+  console.log("✓ Navigation completed, URL:", page.url());
   console.log("✓ Navigation completed, URL:", page.url());
   
   // Wait for the loading to complete
