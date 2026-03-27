@@ -505,17 +505,26 @@ async function navigateToBillingManager(page: Page): Promise<void> {
   console.log("=== Navigating to Billing Manager ===");
   
   await page.waitForSelector('a.menuButton[onclick*="gotoMenu"]', { timeout: 20000 });
-  await page.click('a.menuButton[onclick*="gotoMenu"]');
+  
+  // Use JavaScript click to avoid element interception issues
+  console.log("Clicking Go To menu...");
+  await page.evaluate(() => {
+    const button = document.querySelector('a.menuButton[onclick*="gotoMenu"]') as HTMLElement;
+    if (button) button.click();
+  });
 
   await page.waitForSelector('a.menuitem:has-text("Billing Manager")', { timeout: 20000 });
   
-  // Click Billing Manager and wait for navigation
+  // Click Billing Manager using JavaScript to avoid interception
   console.log("Clicking Billing Manager...");
-  await Promise.all([
-    page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 60000 }),
-    page.click('a.menuitem:has-text("Billing Manager")')
-  ]);
+  await page.evaluate(() => {
+    const items = Array.from(document.querySelectorAll('a.menuitem'));
+    const billingManager = items.find(item => item.textContent?.includes('Billing Manager')) as HTMLElement;
+    if (billingManager) billingManager.click();
+  });
   
+  // Wait for navigation
+  await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
   console.log("✓ Navigation completed, URL:", page.url());
   
   // Wait for the loading to complete
