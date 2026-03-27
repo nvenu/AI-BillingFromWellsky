@@ -203,7 +203,7 @@ export async function loginAndProcessOffices(officeValue: string = 'all', select
       fs.mkdirSync(downloadsPath, { recursive: true });
     }
     
-    browser = await chromium.launch({ headless: true });
+    browser = await chromium.launch({ headless: false });
     const context = await browser.newContext({
       acceptDownloads: true
     });
@@ -613,12 +613,11 @@ async function selectAllInsurances(page: Page, selectedInsurances: string[] | nu
       // Select specific insurances
       console.log(`Selecting specific insurance(s): ${selectedInsurances.slice(0, 3).join(', ')}${selectedInsurances.length > 3 ? '...' : ''}`);
 
-      // Find matching options for selected insurances
+      // Find matching options for selected insurances (exact match)
       const matchedValues: string[] = [];
       for (const insurance of selectedInsurances) {
         const match = availableInsurances.find(opt =>
-          opt.text.toLowerCase().includes(insurance.toLowerCase()) ||
-          insurance.toLowerCase().includes(opt.text.toLowerCase())
+          opt.text.toLowerCase().trim() === insurance.toLowerCase().trim()
         );
         if (match && match.value) {
           matchedValues.push(match.value);
@@ -712,8 +711,12 @@ async function waitForResultsTable(page: Page): Promise<boolean> {
   // Wait for table to exist
   await page.waitForSelector('table', { timeout: 30000 });
 
-  // Give Angular a moment to render
-  await page.waitForTimeout(2000);
+  // Give Angular more time to render after insurance selection
+  await page.waitForTimeout(5000);
+  
+  // Take screenshot for debugging
+  await page.screenshot({ path: 'debug-table-check.png' });
+  console.log("📸 Screenshot saved: debug-table-check.png");
 
   // Check if there's a "no records" message
   const noRecordsMessage = await page.evaluate(() => {
@@ -728,59 +731,44 @@ async function waitForResultsTable(page: Page): Promise<boolean> {
     return false; // Return false to indicate no records
   }
 
-  // Check if table has data rows with shorter timeout and polling
-  try {
-    await page.waitForFunction(() => {
-      const tables = Array.from(document.querySelectorAll("table"));
-      for (let i = 0; i < tables.length; i++) {
-        const t = tables[i];
-        const rows = t.querySelectorAll("tr");
-        // Need at least 2 rows (header + 1 data row)
-        if (rows.length > 1) {
-          // Check if data rows have actual content
-          const dataRow = rows[1];
-          const cells = Array.from(dataRow.querySelectorAll('td'));
-          if (cells.length > 0) {
-            // Check if at least one cell has text content
-            for (let j = 0; j < cells.length; j++) {
-              const cell = cells[j];
-              if (cell.textContent && cell.textContent.trim().length > 0) {
-                return true;
-              }
+  // Check if table has data rows - look for tbody tr specifically
+  const hasData = await page.evaluate(() => {
+    const tables = Array.from(document.querySelectorAll("table"));
+    console.log(`Found ${tables.length} tables`);
+    
+    for (let i = 0; i < tables.length; i++) {
+      const t = tables[i];
+      const tbodyRows = t.querySelectorAll("tbody tr");
+      console.log(`Table ${i}: ${tbodyRows.length} tbody rows`);
+      
+      if (tbodyRows.length > 0) {
+        // Check if first row has cells with content
+        const firstRow = tbodyRows[0];
+        const cells = firstRow.querySelectorAll('td');
+        console.log(`First row has ${cells.length} cells`);
+        
+        if (cells.length > 0) {
+          // Check if at least one cell has text content
+          for (let j = 0; j < cells.length; j++) {
+            const cell = cells[j];
+            const text = cell.textContent?.trim() || '';
+            if (text.length > 0) {
+              console.log(`Found data in cell ${j}: "${text.substring(0, 50)}"`);
+              return true;
             }
           }
         }
       }
-      return false;
-    }, { timeout: 10000, polling: 500 }); // Reduced timeout to 10s with 500ms polling
-    
-    console.log("✓ Results table with data is ready");
-    return true; // Records found
-  } catch (error) {
-    // Timeout occurred - check if there's actually no data
-    console.log("⚠️ Timeout waiting for table data - checking if page has no records...");
-    
-    const hasNoData = await page.evaluate(() => {
-      const tables = Array.from(document.querySelectorAll("table"));
-      if (tables.length === 0) return true;
-      
-      for (let i = 0; i < tables.length; i++) {
-        const rows = tables[i].querySelectorAll("tbody tr");
-        if (rows.length > 0) {
-          return false; // Has rows
-        }
-      }
-      return true; // No rows in any table
-    });
-    
-    if (hasNoData) {
-      console.log("⚠️ No records found in tab - will skip to next tab");
-      return false;
     }
-    
-    // If we got here, something else went wrong - but let's continue anyway
-    console.log("⚠️ Could not verify table data, continuing anyway...");
+    return false;
+  });
+  
+  if (hasData) {
+    console.log("✓ Results table with data is ready");
     return true;
+  } else {
+    console.log("⚠️ No records found in tab - will skip to next tab");
+    return false;
   }
 }
 
@@ -2089,10 +2077,22 @@ async function processReadyToSend(page: Page, insuranceHelper: InsuranceHelper):
             
             // Wait for PDF to fully load in new tab
             console.log(`  Waiting for PDF content to fully load...`);
-            await newPage.waitForLoadState('load', { timeout: 30000 });
-            await newPage.waitForLoadState('networkidle', { timeout: 30000 });
-            await newPage.waitForTimeout(3000); // Extra time for PDF rendering
-            console.log(`  ✓ PDF content fully loaded`);
+            try {
+              await newPage.waitForLoadState('load', { timeout: 30000 });
+              console.log(`  ✓ Load state reached`);
+            } catch (loadError) {
+              console.log(`  ⚠️  Load timeout, continuing anyway...`);
+            }
+            
+            try {
+              await newPage.waitForLoadState('networkidle', { timeout: 10000 });
+              console.log(`  ✓ Network idle reached`);
+            } catch (idleError) {
+              console.log(`  ⚠️  Network idle timeout, continuing anyway...`);
+            }
+            
+            await newPage.waitForTimeout(2000); // Extra time for PDF rendering
+            console.log(`  ✓ PDF content ready for download`);
             
             // Get the PDF URL
             const pdfUrl = newPage.url();
@@ -2106,16 +2106,19 @@ async function processReadyToSend(page: Page, insuranceHelper: InsuranceHelper):
             
             // Download the PDF using CDP (Chrome DevTools Protocol)
             console.log(`  Downloading PDF...`);
-            const pdfBuffer = await newPage.pdf({
-              format: 'Letter',
-              printBackground: true
-            });
-            
-            // Save the PDF
-            fs.writeFileSync(filepath, pdfBuffer);
-            downloadedFiles.push(filepath);
-            console.log(`  ✓ Downloaded: ${filename}`);
-            
+            try {
+              const pdfBuffer = await newPage.pdf({
+                format: 'Letter',
+                printBackground: true
+              });
+              
+              // Save the PDF
+              fs.writeFileSync(filepath, pdfBuffer);
+              downloadedFiles.push(filepath);
+              console.log(`  ✓ Downloaded: ${filename}`);
+            } catch (pdfError: any) {
+              console.error(`  ✗ PDF generation failed:`, pdfError?.message || pdfError);
+            }            
             // Close the PDF tab and navigate back to main tab
             await newPage.close();
             console.log(`  ✓ Closed PDF tab, back to main tab`);
