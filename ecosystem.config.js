@@ -2,6 +2,7 @@ module.exports = {
   apps: [{
     name: 'kinnser-billing-automation',
     script: './dist/server.js',
+    interpreter: '/root/.nvm/versions/node/v18.20.8/bin/node',
     exec_mode: 'fork',
     instances: 1,
     autorestart: true,
