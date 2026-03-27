@@ -2104,20 +2104,50 @@ async function processReadyToSend(page: Page, insuranceHelper: InsuranceHelper):
             const filename = `paper-claim-${sanitizedInsurance}-${timestamp}.pdf`;
             const filepath = path.join(downloadsPath, filename);
             
-            // Download the PDF using CDP (Chrome DevTools Protocol)
+            // Download the actual PDF file
             console.log(`  Downloading PDF...`);
             try {
-              const pdfBuffer = await newPage.pdf({
-                format: 'Letter',
-                printBackground: true
-              });
+              // Check if the page has an embed or iframe with PDF
+              const embedPdf = await newPage.$('embed[type="application/pdf"]');
+              const iframePdf = await newPage.$('iframe');
               
-              // Save the PDF
-              fs.writeFileSync(filepath, pdfBuffer);
-              downloadedFiles.push(filepath);
-              console.log(`  ✓ Downloaded: ${filename}`);
+              if (embedPdf || iframePdf || pdfUrl.includes('.pdf') || pdfUrl.includes('ClaimPrintView')) {
+                // It's a PDF viewer page, download the actual PDF file
+                console.log(`  Detected PDF viewer, downloading actual PDF file...`);
+                
+                // Get the PDF source URL from embed or iframe
+                let pdfSrcUrl = pdfUrl;
+                if (embedPdf) {
+                  const src = await embedPdf.getAttribute('src');
+                  if (src) pdfSrcUrl = src.startsWith('http') ? src : new URL(src, pdfUrl).href;
+                } else if (iframePdf) {
+                  const src = await iframePdf.getAttribute('src');
+                  if (src) pdfSrcUrl = src.startsWith('http') ? src : new URL(src, pdfUrl).href;
+                }
+                
+                console.log(`  PDF source URL: ${pdfSrcUrl}`);
+                
+                // Fetch the actual PDF file
+                const response = await newPage.context().request.fetch(pdfSrcUrl);
+                const pdfBuffer = await response.body();
+                
+                fs.writeFileSync(filepath, pdfBuffer);
+                downloadedFiles.push(filepath);
+                console.log(`  ✓ Downloaded: ${filename} (${pdfBuffer.length} bytes)`);
+              } else {
+                // Fallback: generate PDF from page content
+                console.log(`  Generating PDF from page content...`);
+                const pdfBuffer = await newPage.pdf({
+                  format: 'Letter',
+                  printBackground: true
+                });
+                
+                fs.writeFileSync(filepath, pdfBuffer);
+                downloadedFiles.push(filepath);
+                console.log(`  ✓ Downloaded: ${filename} (${pdfBuffer.length} bytes)`);
+              }
             } catch (pdfError: any) {
-              console.error(`  ✗ PDF generation failed:`, pdfError?.message || pdfError);
+              console.error(`  ✗ PDF download failed:`, pdfError?.message || pdfError);
             }            
             // Close the PDF tab and navigate back to main tab
             await newPage.close();
