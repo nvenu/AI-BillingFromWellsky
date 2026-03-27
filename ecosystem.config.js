@@ -3,13 +3,15 @@ module.exports = {
     name: 'kinnser-billing-automation',
     script: './dist/server.js',
     interpreter: '/home/ubuntu/.nvm/versions/node/v18.20.8/bin/node',
+    interpreter_args: '',
     exec_mode: 'fork',
     instances: 1,
     autorestart: true,
     watch: false,
     max_memory_restart: '1G',
     env: {
-      NODE_ENV: 'production'
+      NODE_ENV: 'production',
+      DISPLAY: ':99'
     },
     error_file: './logs/err.log',
     out_file: './logs/out.log',
