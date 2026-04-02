@@ -1445,9 +1445,40 @@ async function processPendingApprovalRecords(page: Page, insuranceHelper: Insura
             await page.waitForTimeout(2000);
 
             // Select Type of Bill 327 - Adjustment Claim
+            console.log("  Waiting for Type of Bill dropdown...");
             await page.waitForSelector('#typeOfBill', { timeout: 10000 });
-            await page.selectOption('#typeOfBill', '6'); // value="6" is 327 - Adjustment Claim
-            console.log("  ✓ Selected Type of Bill 327 - Adjustment Claim");
+            
+            // Debug: Check available options
+            const options = await page.evaluate(() => {
+              const select = document.querySelector('#typeOfBill') as HTMLSelectElement;
+              if (!select) return [];
+              return Array.from(select.options).map(opt => ({
+                value: opt.value,
+                text: opt.text.trim()
+              }));
+            });
+            console.log("  Available Type of Bill options:", JSON.stringify(options, null, 2));
+            
+            // Find the option with 327 in the text
+            const option327 = options.find(opt => opt.text.includes('327'));
+            if (option327) {
+              console.log(`  Found 327 option: value="${option327.value}", text="${option327.text}"`);
+              await page.selectOption('#typeOfBill', option327.value);
+              console.log("  ✓ Selected Type of Bill 327 - Adjustment Claim");
+            } else {
+              console.log("  ⚠️  Could not find option with 327, using value '6' as fallback");
+              await page.selectOption('#typeOfBill', '6');
+              console.log("  ✓ Selected Type of Bill (value 6)");
+            }
+            
+            // Verify selection
+            const selectedValue = await page.$eval('#typeOfBill', (el: any) => el.value);
+            const selectedText = await page.$eval('#typeOfBill', (el: any) => {
+              const select = el as HTMLSelectElement;
+              return select.options[select.selectedIndex]?.text || '';
+            });
+            console.log(`  Verification - Selected: value="${selectedValue}", text="${selectedText}"`);
+            
             await page.waitForTimeout(1000);
 
             // Click Save and Close
