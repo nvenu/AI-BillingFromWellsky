@@ -209,7 +209,7 @@ export async function loginAndProcessOffices(officeValue: string = 'all', select
       fs.mkdirSync(downloadsPath, { recursive: true });
     }
     
-    browser = await chromium.launch({ headless: false });
+    browser = await chromium.launch({ headless: true });
     const context = await browser.newContext({
       acceptDownloads: true
     });
