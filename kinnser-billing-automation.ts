@@ -66,7 +66,7 @@ async function selectOffice(page: Page, office: Office): Promise<void> {
   console.log(`✓ Office switched to ${office.name}`);
 }
 
-async function processOffice(page: Page, office: Office, insuranceHelper: InsuranceHelper, selectedInsurances: string[] | null = null): Promise<{records: SelectedRecord[], filename: string | null, readyToSendFiles: string[], readyToSendCount: number}> {
+async function processOffice(page: Page, office: Office, insuranceHelper: InsuranceHelper, selectedInsurances: string[] | null = null): Promise<{records: SelectedRecord[], filename: string | null, readyToSendFiles: string[], readyToSendCount: number, changedTo327: Array<{mrn: string, billingPeriod: string}>}> {
   console.log(`\n${'='.repeat(80)}`);
   console.log(`PROCESSING OFFICE: ${office.name} (${office.stateCode})`);
   console.log(`${'='.repeat(80)}`);
@@ -90,14 +90,17 @@ async function processOffice(page: Page, office: Office, insuranceHelper: Insura
       
       // Skip directly to Pending Approval and Ready To Send
       let readyToSendFiles: string[] = [];
+      let changedTo327: Array<{mrn: string, billingPeriod: string}> = [];
       try {
-        readyToSendFiles = await processPendingApproval(page, insuranceHelper);
+        const result = await processPendingApproval(page, insuranceHelper);
+        readyToSendFiles = result.files;
+        changedTo327 = result.changedTo327;
         console.log(`✓ Pending Approval and Ready To Send workflow completed for ${office.name}`);
       } catch (error) {
         console.error(`⚠️  Error in Pending Approval/Ready To Send for ${office.name}:`, error);
       }
       
-      return { records: [], filename: null, readyToSendFiles, readyToSendCount: readyToSendFiles.length > 0 ? readyToSendFiles.filter(f => f.includes('electronic') || f.includes('paper-claim')).length : 0 };
+      return { records: [], filename: null, readyToSendFiles, readyToSendCount: readyToSendFiles.length > 0 ? readyToSendFiles.filter(f => f.includes('electronic') || f.includes('paper-claim')).length : 0, changedTo327 };
     }
 
     // 5. Process records and select valid ones across all pages
@@ -122,8 +125,11 @@ async function processOffice(page: Page, office: Office, insuranceHelper: Insura
     
     // 8. ALWAYS process Pending Approval and Ready To Send (even if no records were selected in Ready)
     let readyToSendFiles: string[] = [];
+    let changedTo327: Array<{mrn: string, billingPeriod: string}> = [];
     try {
-      readyToSendFiles = await processPendingApproval(page, insuranceHelper);
+      const result = await processPendingApproval(page, insuranceHelper);
+      readyToSendFiles = result.files;
+      changedTo327 = result.changedTo327;
       console.log(`✓ Pending Approval and Ready To Send workflow completed for ${office.name}`);
     } catch (error) {
       console.error(`⚠️  Error in Pending Approval/Ready To Send for ${office.name}:`, error);
@@ -132,7 +138,7 @@ async function processOffice(page: Page, office: Office, insuranceHelper: Insura
 
     console.log(`✓ Successfully processed ${office.name}`);
     const readyToSendCount = readyToSendFiles.length > 0 ? readyToSendFiles.filter(f => f.includes('electronic') || f.includes('paper-claim')).length : 0;
-    return { records: selectedRecords, filename, readyToSendFiles, readyToSendCount };
+    return { records: selectedRecords, filename, readyToSendFiles, readyToSendCount, changedTo327 };
     
   } catch (error) {
     console.error(`✗ Error processing office ${office.name}:`, error);
@@ -238,7 +244,7 @@ export async function loginAndProcessOffices(officeValue: string = 'all', select
     console.log(`${'='.repeat(80)}`);
 
     const allSelectedRecords: SelectedRecord[] = [];
-    const summary: Array<{office: string, count: number, readyToSendCount: number}> = [];
+    const summary: Array<{office: string, count: number, readyToSendCount: number, changedTo327Count: number}> = [];
     const excelFiles: string[] = [];
     const allReadyToSendFiles: string[] = [];
 
@@ -252,14 +258,22 @@ export async function loginAndProcessOffices(officeValue: string = 'all', select
       await selectOffice(page, office);
       
       // Process this office
-      const { records: officeRecords, filename, readyToSendFiles, readyToSendCount } = await processOffice(page, office, insuranceHelper, selectedInsurances);
+      const { records: officeRecords, filename, readyToSendFiles, readyToSendCount, changedTo327 } = await processOffice(page, office, insuranceHelper, selectedInsurances);
       allSelectedRecords.push(...officeRecords);
       const totalCount = officeRecords.length + (readyToSendCount || 0);
-      summary.push({ office: office.name, count: officeRecords.length, readyToSendCount: readyToSendCount || 0 });
+      summary.push({ office: office.name, count: officeRecords.length, readyToSendCount: readyToSendCount || 0, changedTo327Count: changedTo327.length });
       if (filename) {
         excelFiles.push(filename);
       }
       allReadyToSendFiles.push(...readyToSendFiles);
+      
+      // Track 327 changes for this office
+      if (changedTo327.length > 0) {
+        console.log(`\n=== TYPE OF BILL 327 CHANGES FOR ${office.name} ===`);
+        changedTo327.forEach(change => {
+          console.log(`  MRN: ${change.mrn}, Billing Period: ${change.billingPeriod}`);
+        });
+      }
       
       console.log(`✓ Completed ${office.name}: ${officeRecords.length} records from Ready tab, ${readyToSendCount || 0} records from Ready To Send tab`);
       
@@ -299,6 +313,9 @@ export async function loginAndProcessOffices(officeValue: string = 'all', select
       const readyToSendExcelCount = allReadyToSendFiles.filter(f => f.endsWith('.xlsx')).length;
       const pdfCount = allReadyToSendFiles.filter(f => f.endsWith('.pdf')).length;
       
+      // Collect all 327 changes across offices
+      const total327Changes = summary.reduce((sum, s) => sum + (s.changedTo327Count || 0), 0);
+      
       const emailBody = `
 Kinnser Billing Automation Report
 Generated: ${format(new Date(), 'yyyy-MM-dd HH:mm:ss')}
@@ -310,6 +327,13 @@ ${summary.map(s => `${s.office}: ${s.count} records selected`).join('\n')}
 
 Total records selected from Ready tab: ${allSelectedRecords.length}
 Total offices processed: ${officesToProcess.length}
+
+TYPE OF BILL CHANGES (327 - Adjustment Claim):
+${total327Changes > 0 ? `Total records changed to 327: ${total327Changes}
+
+${summary.filter(s => s.changedTo327Count && s.changedTo327Count > 0).map(s => `${s.office}: ${s.changedTo327Count} record(s) changed to 327`).join('\n')}
+
+Note: These are duplicate MRN records with overlapping billing periods that were automatically changed to Type of Bill 327 (Adjustment Claim) in the Pending Approval tab.` : 'No duplicate records found - no Type of Bill changes needed'}
 
 ${allSelectedRecords.length > 0 ? `
 WORKFLOW STATUS:
@@ -1236,7 +1260,7 @@ async function clickCreateButton(page: Page): Promise<void> {
   }
 }
 
-async function processPendingApproval(page: Page, insuranceHelper: InsuranceHelper): Promise<string[]> {
+async function processPendingApproval(page: Page, insuranceHelper: InsuranceHelper): Promise<{files: string[], changedTo327: Array<{mrn: string, billingPeriod: string}>}> {
   console.log("\n=== PROCESSING PENDING APPROVAL ===");
   
   try {
@@ -1304,6 +1328,9 @@ async function processPendingApproval(page: Page, insuranceHelper: InsuranceHelp
     await page.waitForTimeout(3000); // Extra time for records to render
     console.log("✓ Records loaded");
     
+    // Track 327 changes
+    let changedTo327: Array<{mrn: string, billingPeriod: string}> = [];
+    
     // Check if there are no records to display
     const noRecordsMessage = await page.textContent('body');
     if (noRecordsMessage && noRecordsMessage.includes('There are currently no records to display.')) {
@@ -1312,8 +1339,9 @@ async function processPendingApproval(page: Page, insuranceHelper: InsuranceHelp
       console.log("   Continuing to Ready To Send tab...");
       // Don't return - continue to Ready To Send
     } else {
-      // Process Pending Approval records
-      await processPendingApprovalRecords(page, insuranceHelper);
+      // Process Pending Approval records and capture 327 changes
+      changedTo327 = await processPendingApprovalRecords(page, insuranceHelper);
+      console.log(`✓ Type of Bill changes: ${changedTo327.length} records changed to 327`);
     }
     
     // ALWAYS navigate to Ready To Send tab
@@ -1331,8 +1359,8 @@ async function processPendingApproval(page: Page, insuranceHelper: InsuranceHelp
     const readyToSendFiles = await processReadyToSend(page, insuranceHelper);
     console.log(`✓ Ready To Send completed with ${readyToSendFiles.length} files`);
     
-    // Return files for email attachment
-    return readyToSendFiles;
+    // Return files and 327 changes for email
+    return { files: readyToSendFiles, changedTo327 };
     
   } catch (error) {
     console.error("✗ Error in Pending Approval workflow:", error);
@@ -1340,9 +1368,10 @@ async function processPendingApproval(page: Page, insuranceHelper: InsuranceHelp
   }
 }
 
-async function processPendingApprovalRecords(page: Page, insuranceHelper: InsuranceHelper): Promise<void> {
+async function processPendingApprovalRecords(page: Page, insuranceHelper: InsuranceHelper): Promise<Array<{mrn: string, billingPeriod: string}>> {
     // Get all records with MRN and billing period
     console.log("\nExtracting record details from table...");
+    const changedRecords: Array<{mrn: string, billingPeriod: string}> = [];
     const records = await page.evaluate(() => {
       // First, find the column indices by reading the header
       const headerCells = Array.from(document.querySelectorAll('table thead th, table thead td'));
@@ -1413,7 +1442,7 @@ async function processPendingApprovalRecords(page: Page, insuranceHelper: Insura
     // Additional check: if no records found, exit gracefully
     if (records.length === 0) {
       console.log("\n✓ No records to process in Pending Approval");
-      return; // Exit function early
+      return []; // Exit function early with empty array
     }
 
     // Check for duplicates with overlapping dates
@@ -1478,6 +1507,12 @@ async function processPendingApprovalRecords(page: Page, insuranceHelper: Insura
               return select.options[select.selectedIndex]?.text || '';
             });
             console.log(`  Verification - Selected: value="${selectedValue}", text="${selectedText}"`);
+            
+            // Track this change
+            changedRecords.push({
+              mrn: record.mrn,
+              billingPeriod: record.billingPeriodText
+            });
             
             await page.waitForTimeout(1000);
 
@@ -1649,6 +1684,9 @@ async function processPendingApprovalRecords(page: Page, insuranceHelper: Insura
     } else {
       console.log("✗ Failed to click Approve button - skipping approval");
     }
+    
+    // Return the list of changed records
+    return changedRecords;
 }
 
 async function processReadyToSend(page: Page, insuranceHelper: InsuranceHelper): Promise<string[]> {
