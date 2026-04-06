@@ -8,6 +8,10 @@ import { format } from "date-fns";
 import * as fs from "fs";
 import * as path from "path";
 
+// Version tracking
+const APP_VERSION = "2.1.0"; // Headless mode + 327 tracking + Email reporting
+const BUILD_DATE = "2026-04-06";
+
 // Log broadcaster for live console
 let logBroadcaster: ((message: string) => void) | null = null;
 
@@ -203,6 +207,13 @@ export async function loginAndProcessOffices(officeValue: string = 'all', select
   let browser: Browser | null = null;
   
   try {
+    // Log version information
+    console.log('='.repeat(60));
+    console.log(`🚀 Kinnser Billing Automation v${APP_VERSION}`);
+    console.log(`📅 Build Date: ${BUILD_DATE}`);
+    console.log(`⏰ Started: ${format(new Date(), 'yyyy-MM-dd HH:mm:ss')}`);
+    console.log('='.repeat(60));
+    
     // Create downloads directory
     const downloadsPath = path.join(process.cwd(), 'downloads');
     if (!fs.existsSync(downloadsPath)) {
@@ -318,6 +329,7 @@ export async function loginAndProcessOffices(officeValue: string = 'all', select
       
       const emailBody = `
 Kinnser Billing Automation Report
+Version: ${APP_VERSION} (Build: ${BUILD_DATE})
 Generated: ${format(new Date(), 'yyyy-MM-dd HH:mm:ss')}
 
 OFFICES PROCESSED: ${officeNames}
