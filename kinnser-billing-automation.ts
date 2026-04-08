@@ -9,8 +9,8 @@ import * as fs from "fs";
 import * as path from "path";
 
 // Version tracking
-const APP_VERSION = "2.1.0"; // Headless mode + 327 tracking + Email reporting
-const BUILD_DATE = "2026-04-06";
+const APP_VERSION = "2.2.0"; // Headless mode + 327 tracking + Email reporting + Partnership Health Plan auto-327
+const BUILD_DATE = "2026-04-08";
 
 // Log broadcaster for live console
 let logBroadcaster: ((message: string) => void) | null = null;
@@ -1392,10 +1392,12 @@ async function processPendingApprovalRecords(page: Page, insuranceHelper: Insura
       // Find column indices
       const mrnIndex = headers.findIndex(h => h.includes('mrn'));
       const billingPeriodIndex = headers.findIndex(h => h.includes('billing period'));
+      const insuranceIndex = headers.findIndex(h => h.includes('insurance') || h.includes('payer'));
 
       console.log('Header columns:', headers);
       console.log('MRN column index:', mrnIndex);
       console.log('Billing Period column index:', billingPeriodIndex);
+      console.log('Insurance column index:', insuranceIndex);
 
       const rows = Array.from(document.querySelectorAll('table tbody tr'));
       return rows.map((row, index) => {
@@ -1410,6 +1412,11 @@ async function processPendingApprovalRecords(page: Page, insuranceHelper: Insura
         // Extract Billing Period (format: "MM/DD/YYYY - MM/DD/YYYY")
         const billingPeriodText = billingPeriodIndex >= 0 && billingPeriodIndex < cells.length
           ? cells[billingPeriodIndex].textContent?.trim() || ''
+          : '';
+
+        // Extract Insurance name
+        const insurance = insuranceIndex >= 0 && insuranceIndex < cells.length
+          ? cells[insuranceIndex].textContent?.trim() || ''
           : '';
 
         // Parse the date range
@@ -1428,6 +1435,7 @@ async function processPendingApprovalRecords(page: Page, insuranceHelper: Insura
         return {
           index,
           mrn,
+          insurance,
           billingPeriodText,
           billingPeriodStart,
           billingPeriodEnd,
@@ -1444,6 +1452,7 @@ async function processPendingApprovalRecords(page: Page, insuranceHelper: Insura
     records.slice(0, 3).forEach((record, idx) => {
       console.log(`\nRecord ${idx + 1}:`);
       console.log(`  MRN: "${record.mrn}"`);
+      console.log(`  Insurance: "${record.insurance}"`);
       console.log(`  Billing Period: "${record.billingPeriodText}"`);
       console.log(`  Billing Period Start: "${record.billingPeriodStart}"`);
       console.log(`  Billing Period End: "${record.billingPeriodEnd}"`);
@@ -1455,6 +1464,94 @@ async function processPendingApprovalRecords(page: Page, insuranceHelper: Insura
     if (records.length === 0) {
       console.log("\n✓ No records to process in Pending Approval");
       return []; // Exit function early with empty array
+    }
+
+    // Check for PARTNERSHIP HEALTH PLAN OF CA records (always change to 327)
+    console.log("\n=== CHECKING FOR PARTNERSHIP HEALTH PLAN OF CA RECORDS ===");
+    const partnershipRecords = records.filter(r => 
+      r.insurance.toUpperCase().includes('PARTNERSHIP HEALTH PLAN')
+    );
+
+    if (partnershipRecords.length > 0) {
+      console.log(`\n⚠️  Found ${partnershipRecords.length} PARTNERSHIP HEALTH PLAN OF CA record(s) - will change to Type of Bill 327`);
+
+      for (const record of partnershipRecords) {
+        console.log(`\nProcessing PARTNERSHIP HEALTH PLAN record:`);
+        console.log(`  MRN: ${record.mrn}`);
+        console.log(`  Insurance: ${record.insurance}`);
+        console.log(`  Billing Period: ${record.billingPeriodText}`);
+
+        if (record.editButtonId) {
+          console.log(`  Clicking Edit button: ${record.editButtonId}`);
+          await page.click(`#${record.editButtonId}`);
+          await page.waitForTimeout(2000);
+
+          // Click OK button in popup
+          await page.waitForSelector('#modal_go', { timeout: 10000 });
+          await page.click('#modal_go');
+          console.log("  ✓ Clicked OK button");
+          await page.waitForTimeout(2000);
+
+          // Select Type of Bill 327 - Adjustment Claim
+          console.log("  Waiting for Type of Bill dropdown...");
+          await page.waitForSelector('#typeOfBill', { timeout: 10000 });
+          
+          // Debug: Check available options
+          const options = await page.evaluate(() => {
+            const select = document.querySelector('#typeOfBill') as HTMLSelectElement;
+            if (!select) return [];
+            return Array.from(select.options).map(opt => ({
+              value: opt.value,
+              text: opt.text.trim()
+            }));
+          });
+          console.log("  Available Type of Bill options:", JSON.stringify(options, null, 2));
+          
+          // Find the option with 327 in the text
+          const option327 = options.find(opt => opt.text.includes('327'));
+          if (option327) {
+            console.log(`  Found 327 option: value="${option327.value}", text="${option327.text}"`);
+            await page.selectOption('#typeOfBill', option327.value);
+            console.log("  ✓ Selected Type of Bill 327 - Adjustment Claim");
+          } else {
+            console.log("  ⚠️  Could not find option with 327, using value '6' as fallback");
+            await page.selectOption('#typeOfBill', '6');
+            console.log("  ✓ Selected Type of Bill (value 6)");
+          }
+          
+          // Verify selection
+          const selectedValue = await page.$eval('#typeOfBill', (el: any) => el.value);
+          const selectedText = await page.$eval('#typeOfBill', (el: any) => {
+            const select = el as HTMLSelectElement;
+            return select.options[select.selectedIndex]?.text || '';
+          });
+          console.log(`  Verification - Selected: value="${selectedValue}", text="${selectedText}"`);
+          
+          // Track this change
+          changedRecords.push({
+            mrn: record.mrn,
+            billingPeriod: record.billingPeriodText
+          });
+          
+          await page.waitForTimeout(1000);
+
+          // Click Save and Close
+          await page.waitForSelector('#submitBtn', { timeout: 10000 });
+          await page.click('#submitBtn');
+          console.log("  ✓ Clicked Save and Close");
+
+          // Wait for page to reload
+          await page.waitForSelector('.loading-message', { state: 'hidden', timeout: 60000 });
+          await page.waitForTimeout(3000);
+          console.log(`  ✓ PARTNERSHIP HEALTH PLAN record processed successfully`);
+        } else {
+          console.log(`  ⚠️  No edit button found for this record`);
+        }
+      }
+
+      console.log(`\n✓ Completed processing all ${partnershipRecords.length} PARTNERSHIP HEALTH PLAN OF CA records`);
+    } else {
+      console.log("✓ No PARTNERSHIP HEALTH PLAN OF CA records found");
     }
 
     // Check for duplicates with overlapping dates
