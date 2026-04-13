@@ -9,8 +9,8 @@ import * as fs from "fs";
 import * as path from "path";
 
 // Version tracking
-const APP_VERSION = "2.2.0"; // Headless mode + 327 tracking + Email reporting + Partnership Health Plan auto-327
-const BUILD_DATE = "2026-04-08";
+const APP_VERSION = "2.3.0"; // Headless + 327 tracking + Partnership Health Plan + Detailed 327 reporting
+const BUILD_DATE = "2026-04-10";
 
 // Log broadcaster for live console
 let logBroadcaster: ((message: string) => void) | null = null;
@@ -70,7 +70,7 @@ async function selectOffice(page: Page, office: Office): Promise<void> {
   console.log(`✓ Office switched to ${office.name}`);
 }
 
-async function processOffice(page: Page, office: Office, insuranceHelper: InsuranceHelper, selectedInsurances: string[] | null = null): Promise<{records: SelectedRecord[], filename: string | null, readyToSendFiles: string[], readyToSendCount: number, changedTo327: Array<{mrn: string, billingPeriod: string}>}> {
+async function processOffice(page: Page, office: Office, insuranceHelper: InsuranceHelper, selectedInsurances: string[] | null = null): Promise<{records: SelectedRecord[], filename: string | null, readyToSendFiles: string[], readyToSendCount: number, changedTo327: Array<{mrn: string, billingPeriod: string, reason: string}>}> {
   console.log(`\n${'='.repeat(80)}`);
   console.log(`PROCESSING OFFICE: ${office.name} (${office.stateCode})`);
   console.log(`${'='.repeat(80)}`);
@@ -94,7 +94,7 @@ async function processOffice(page: Page, office: Office, insuranceHelper: Insura
       
       // Skip directly to Pending Approval and Ready To Send
       let readyToSendFiles: string[] = [];
-      let changedTo327: Array<{mrn: string, billingPeriod: string}> = [];
+      let changedTo327: Array<{mrn: string, billingPeriod: string, reason: string}> = [];
       try {
         const result = await processPendingApproval(page, insuranceHelper);
         readyToSendFiles = result.files;
@@ -129,7 +129,7 @@ async function processOffice(page: Page, office: Office, insuranceHelper: Insura
     
     // 8. ALWAYS process Pending Approval and Ready To Send (even if no records were selected in Ready)
     let readyToSendFiles: string[] = [];
-    let changedTo327: Array<{mrn: string, billingPeriod: string}> = [];
+    let changedTo327: Array<{mrn: string, billingPeriod: string, reason: string}> = [];
     try {
       const result = await processPendingApproval(page, insuranceHelper);
       readyToSendFiles = result.files;
@@ -258,6 +258,7 @@ export async function loginAndProcessOffices(officeValue: string = 'all', select
     const summary: Array<{office: string, count: number, readyToSendCount: number, changedTo327Count: number}> = [];
     const excelFiles: string[] = [];
     const allReadyToSendFiles: string[] = [];
+    const all327Changes: Array<{office: string, mrn: string, billingPeriod: string, reason: string}> = [];
 
     // 2. Process each office
     for (let i = 0; i < officesToProcess.length; i++) {
@@ -273,6 +274,17 @@ export async function loginAndProcessOffices(officeValue: string = 'all', select
       allSelectedRecords.push(...officeRecords);
       const totalCount = officeRecords.length + (readyToSendCount || 0);
       summary.push({ office: office.name, count: officeRecords.length, readyToSendCount: readyToSendCount || 0, changedTo327Count: changedTo327.length });
+      
+      // Collect all 327 changes with office name
+      changedTo327.forEach(change => {
+        all327Changes.push({
+          office: office.name,
+          mrn: change.mrn,
+          billingPeriod: change.billingPeriod,
+          reason: change.reason
+        });
+      });
+      
       if (filename) {
         excelFiles.push(filename);
       }
@@ -345,7 +357,14 @@ ${total327Changes > 0 ? `Total records changed to 327: ${total327Changes}
 
 ${summary.filter(s => s.changedTo327Count && s.changedTo327Count > 0).map(s => `${s.office}: ${s.changedTo327Count} record(s) changed to 327`).join('\n')}
 
-Note: These are duplicate MRN records with overlapping billing periods that were automatically changed to Type of Bill 327 (Adjustment Claim) in the Pending Approval tab.` : 'No duplicate records found - no Type of Bill changes needed'}
+DETAILED LIST:
+${all327Changes.map(change => `  Office: ${change.office}
+    - MRN: ${change.mrn}, Billing Period: ${change.billingPeriod}
+      Reason: ${change.reason}`).join('\n')}
+
+Note: Records are automatically changed to Type of Bill 327 (Adjustment Claim) in the Pending Approval tab for:
+  1. Duplicate MRN records with overlapping billing periods
+  2. Partnership Health Plan of California insurance` : 'No duplicate records found - no Type of Bill changes needed'}
 
 ${allSelectedRecords.length > 0 ? `
 WORKFLOW STATUS:
@@ -1272,7 +1291,7 @@ async function clickCreateButton(page: Page): Promise<void> {
   }
 }
 
-async function processPendingApproval(page: Page, insuranceHelper: InsuranceHelper): Promise<{files: string[], changedTo327: Array<{mrn: string, billingPeriod: string}>}> {
+async function processPendingApproval(page: Page, insuranceHelper: InsuranceHelper): Promise<{files: string[], changedTo327: Array<{mrn: string, billingPeriod: string, reason: string}>}> {
   console.log("\n=== PROCESSING PENDING APPROVAL ===");
   
   try {
@@ -1341,7 +1360,7 @@ async function processPendingApproval(page: Page, insuranceHelper: InsuranceHelp
     console.log("✓ Records loaded");
     
     // Track 327 changes
-    let changedTo327: Array<{mrn: string, billingPeriod: string}> = [];
+    let changedTo327: Array<{mrn: string, billingPeriod: string, reason: string}> = [];
     
     // Check if there are no records to display
     const noRecordsMessage = await page.textContent('body');
@@ -1380,10 +1399,10 @@ async function processPendingApproval(page: Page, insuranceHelper: InsuranceHelp
   }
 }
 
-async function processPendingApprovalRecords(page: Page, insuranceHelper: InsuranceHelper): Promise<Array<{mrn: string, billingPeriod: string}>> {
+async function processPendingApprovalRecords(page: Page, insuranceHelper: InsuranceHelper): Promise<Array<{mrn: string, billingPeriod: string, reason: string}>> {
     // Get all records with MRN and billing period
     console.log("\nExtracting record details from table...");
-    const changedRecords: Array<{mrn: string, billingPeriod: string}> = [];
+    const changedRecords: Array<{mrn: string, billingPeriod: string, reason: string}> = [];
     const records = await page.evaluate(() => {
       // First, find the column indices by reading the header
       const headerCells = Array.from(document.querySelectorAll('table thead th, table thead td'));
@@ -1530,7 +1549,8 @@ async function processPendingApprovalRecords(page: Page, insuranceHelper: Insura
           // Track this change
           changedRecords.push({
             mrn: record.mrn,
-            billingPeriod: record.billingPeriodText
+            billingPeriod: record.billingPeriodText,
+            reason: 'Partnership Health Plan CA'
           });
           
           await page.waitForTimeout(1000);
@@ -1620,7 +1640,8 @@ async function processPendingApprovalRecords(page: Page, insuranceHelper: Insura
             // Track this change
             changedRecords.push({
               mrn: record.mrn,
-              billingPeriod: record.billingPeriodText
+              billingPeriod: record.billingPeriodText,
+              reason: 'Duplicate MRN with overlapping dates'
             });
             
             await page.waitForTimeout(1000);

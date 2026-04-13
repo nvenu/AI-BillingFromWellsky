@@ -718,7 +718,7 @@ app.get("/billing", (req: Request, res: Response) => {
         </div>
         
         <div class="footer">
-          <p>© 2026 SOLT Healthcare | Automated Billing System v2.2.0</p>
+          <p>© 2026 SOLT Healthcare | Automated Billing System v2.3.0</p>
         </div>
       </div>
 
