@@ -97,7 +97,7 @@ async function processOffice(page: Page, office: Office, insuranceHelper: Insura
       let readyToSendFiles: string[] = [];
       let changedTo327: Array<{mrn: string, billingPeriod: string, reason: string}> = [];
       try {
-        const result = await processPendingApproval(page, insuranceHelper);
+        const result = await processPendingApproval(page, insuranceHelper, selectedInsurances);
         readyToSendFiles = result.files;
         changedTo327 = result.changedTo327;
         console.log(`✓ Pending Approval and Ready To Send workflow completed for ${office.name}`);
@@ -138,7 +138,7 @@ async function processOffice(page: Page, office: Office, insuranceHelper: Insura
     let readyToSendFiles: string[] = [];
     let changedTo327: Array<{mrn: string, billingPeriod: string, reason: string}> = [];
     try {
-      const result = await processPendingApproval(page, insuranceHelper);
+      const result = await processPendingApproval(page, insuranceHelper, selectedInsurances);
       readyToSendFiles = result.files;
       changedTo327 = result.changedTo327;
       console.log(`✓ Pending Approval and Ready To Send workflow completed for ${office.name}`);
@@ -1702,7 +1702,7 @@ async function clickCreateButton(page: Page): Promise<void> {
   }
 }
 
-async function processPendingApproval(page: Page, insuranceHelper: InsuranceHelper): Promise<{files: string[], changedTo327: Array<{mrn: string, billingPeriod: string, reason: string}>}> {
+async function processPendingApproval(page: Page, insuranceHelper: InsuranceHelper, selectedInsurances: string[] | null = null): Promise<{files: string[], changedTo327: Array<{mrn: string, billingPeriod: string, reason: string}>}> {
   console.log("\n=== PROCESSING PENDING APPROVAL ===");
   
   try {
@@ -1798,7 +1798,7 @@ async function processPendingApproval(page: Page, insuranceHelper: InsuranceHelp
     console.log("✓ Ready To Send page loaded");
     
     // Process Ready To Send workflow
-    const readyToSendFiles = await processReadyToSend(page, insuranceHelper);
+    const readyToSendFiles = await processReadyToSend(page, insuranceHelper, selectedInsurances);
     console.log(`✓ Ready To Send completed with ${readyToSendFiles.length} files`);
     
     // Return files and 327 changes for email
@@ -2250,7 +2250,7 @@ async function processPendingApprovalRecords(page: Page, insuranceHelper: Insura
     return changedRecords;
 }
 
-async function processReadyToSend(page: Page, insuranceHelper: InsuranceHelper): Promise<string[]> {
+async function processReadyToSend(page: Page, insuranceHelper: InsuranceHelper, selectedInsurances: string[] | null = null): Promise<string[]> {
   console.log("\n=== PROCESSING READY TO SEND ===");
   
   try {
@@ -2258,33 +2258,37 @@ async function processReadyToSend(page: Page, insuranceHelper: InsuranceHelper):
     await page.waitForSelector('.loading-message', { state: 'hidden', timeout: 60000 });
     await page.waitForTimeout(2000);
     
-    // Select "All Insurances" from dropdown
-    console.log("\nSelecting 'All Insurances' from dropdown...");
-    await page.waitForSelector('select[ng-model="insuranceKey"]', { timeout: 10000 });
-    
-    // First, check what's currently selected
-    const currentValueRTS = await page.$eval('select[ng-model="insuranceKey"]', (select: any) => select.value);
-    console.log(`Current dropdown value: ${currentValueRTS}`);
-    
-    // If already on "All Insurances", select something else first to trigger change event
-    if (currentValueRTS === '1') {
-      console.log("Already on 'All Insurances', selecting different option first to trigger change...");
-      const optionsRTS = await page.$$eval('select[ng-model="insuranceKey"] option', (opts) => 
-        opts.map(opt => (opt as HTMLOptionElement).value).filter(v => v && v !== '1')
-      );
-      if (optionsRTS.length > 0) {
-        await page.selectOption('select[ng-model="insuranceKey"]', optionsRTS[0]);
-        await page.waitForTimeout(1000);
-        console.log(`  Selected temporary option: ${optionsRTS[0]}`);
+    // Select insurances from dropdown (use selectedInsurances if provided, otherwise "All Insurances")
+    if (selectedInsurances && selectedInsurances.length > 0) {
+      console.log(`\nSelecting user-specified insurance(s) from dropdown...`);
+      console.log(`Insurances to select: ${selectedInsurances.join(', ')}`);
+      await selectAllInsurances(page, selectedInsurances);
+    } else {
+      console.log("\nSelecting 'All Insurances' from dropdown...");
+      await page.waitForSelector('select[ng-model="insuranceKey"]', { timeout: 10000 });
+      
+      // First, check what's currently selected
+      const currentValueRTS = await page.$eval('select[ng-model="insuranceKey"]', (select: any) => select.value);
+      console.log(`Current dropdown value: ${currentValueRTS}`);
+      
+      // If already on "All Insurances", select something else first to trigger change event
+      if (currentValueRTS === '1') {
+        console.log("Already on 'All Insurances', selecting different option first to trigger change...");
+        const optionsRTS = await page.$eval('select[ng-model="insuranceKey"] option', (opts: any) => 
+          opts.map((opt: any) => (opt as HTMLOptionElement).value).filter((v: any) => v && v !== '1')
+        );
+        if (optionsRTS.length > 0) {
+          await page.selectOption('select[ng-model="insuranceKey"]', optionsRTS[0]);
+          await page.waitForTimeout(1000);
+          console.log(`  Selected temporary option: ${optionsRTS[0]}`);
+        }
       }
+      
+      // Now select "All Insurances"
+      await page.selectOption('select[ng-model="insuranceKey"]', '1'); // value="1" is "All Insurances"
+      console.log("✓ Selected 'All Insurances'");
     }
-    
-    // Now select "All Insurances"
-    await page.selectOption('select[ng-model="insuranceKey"]', '1'); // value="1" is "All Insurances"
-    console.log("✓ Selected 'All Insurances'");
-    
-    // Wait for loading message to appear and then disappear
-    console.log("Waiting for records to load...");
+
     await page.waitForTimeout(2000); // Give time for loading to start
     await page.waitForSelector('.loading-message', { state: 'hidden', timeout: 60000 });
     await page.waitForTimeout(3000); // Extra time for records to render
