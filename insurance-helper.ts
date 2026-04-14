@@ -23,17 +23,24 @@ export class InsuranceHelper {
     // Build a set of insurance names that have either:
     // 1. "No changes are required except for identical claims"
     // 2. Exactly "Paper" as the remark
+    // 3. Special handling insurances (like Community health Group with Severity points)
     this.instructions.forEach(instruction => {
       if (instruction.Remarks) {
         const remarkLower = instruction.Remarks.toLowerCase().trim();
+        const nameLower = instruction.Name.toLowerCase().trim();
         
         // Check for "no changes" remark
         if (remarkLower.includes("no changes are required except for identical claims")) {
-          this.noChangesInsurances.add(instruction.Name.toLowerCase().trim());
+          this.noChangesInsurances.add(nameLower);
         }
         // Check for exactly "paper" remark (case-insensitive)
         else if (remarkLower === "paper") {
-          this.noChangesInsurances.add(instruction.Name.toLowerCase().trim());
+          this.noChangesInsurances.add(nameLower);
+        }
+        // Special handling: Community health Group (Severity points)
+        else if (nameLower === "community health group" && remarkLower.includes("severity point")) {
+          this.noChangesInsurances.add(nameLower);
+          console.log(`  ℹ️  Added special handling insurance: ${instruction.Name}`);
         }
       }
     });
@@ -139,10 +146,34 @@ export class InsuranceHelper {
       .filter(instruction => {
         if (!instruction.Remarks) return false;
         const remarkLower = instruction.Remarks.toLowerCase().trim();
+        const nameLower = instruction.Name.toLowerCase().trim();
+        
         return remarkLower.includes("no changes are required except for identical claims") || 
-               remarkLower === "paper";
+               remarkLower === "paper" ||
+               (nameLower === "community health group" && remarkLower.includes("severity point"));
       })
       .map(instruction => instruction.Name)
       .sort();
+  }
+
+  /**
+   * Check if an insurance requires special handling (custom logic)
+   */
+  requiresSpecialHandling(insuranceName: string): boolean {
+    const nameLower = insuranceName.toLowerCase().trim();
+    return nameLower === "community health group";
+  }
+
+  /**
+   * Get the special handling type for an insurance
+   */
+  getSpecialHandlingType(insuranceName: string): string | null {
+    const nameLower = insuranceName.toLowerCase().trim();
+    
+    if (nameLower === "community health group") {
+      return "severity-points";
+    }
+    
+    return null;
   }
 }
