@@ -39,6 +39,7 @@ interface SelectedRecord {
   authorization: string;
   timestamp: string;
   allColumns: string[];
+  failureReason?: string; // Optional field for failed records
 }
 
 async function selectOffice(page: Page, office: Office): Promise<void> {
@@ -107,8 +108,8 @@ async function processOffice(page: Page, office: Office, insuranceHelper: Insura
       return { records: [], filename: null, readyToSendFiles, readyToSendCount: readyToSendFiles.length > 0 ? readyToSendFiles.filter(f => f.includes('electronic') || f.includes('paper-claim')).length : 0, changedTo327 };
     }
 
-    // 5. Process records and select valid ones across all pages
-    const { selectedCount, selectedRecords } = await processAllPagesAndSelectValid(page, insuranceHelper);
+    // 5. Process records ONE BY ONE: select valid record → click create → repeat
+    const { selectedCount, selectedRecords, failedRecords } = await processRecordsOneByOne(page, insuranceHelper);
 
     // 6. Save selected records to Excel for audit trail
     let filename: string | null = null;
@@ -118,10 +119,16 @@ async function processOffice(page: Page, office: Office, insuranceHelper: Insura
       saveSelectedRecordsToExcel(selectedRecords, filename);
     }
 
-    // 7. Click Create button to submit claims (only if records were selected)
+    // 6b. Save failed records to separate Excel file
+    if (failedRecords.length > 0) {
+      const timestamp = format(new Date(), 'yyyy-MM-dd_HH-mm-ss');
+      const failedFilename = `FAILED-records-${office.stateCode}-${office.name.replace(/[^a-zA-Z0-9]/g, '_')}-${timestamp}.xlsx`;
+      saveFailedRecordsToExcel(failedRecords, failedFilename);
+    }
+
+    // 7. All records have been processed one by one (no need to click Create again)
     if (selectedCount > 0) {
-      await clickCreateButton(page);
-      console.log(`✓ Claims creation initiated for ${office.name}`);
+      console.log(`✓ All ${selectedCount} claims created for ${office.name}`);
     } else {
       console.log(`No records selected in Ready tab for ${office.name}`);
       console.log(`Will still process Pending Approval and Ready To Send tabs...`);
@@ -190,6 +197,51 @@ function saveSelectedRecordsToExcel(records: SelectedRecord[], filename: string)
     }
   } catch (error) {
     console.error(`✗ Failed to save Excel file:`, error);
+    throw error;
+  }
+}
+
+function saveFailedRecordsToExcel(records: SelectedRecord[], filename: string): void {
+  if (records.length === 0) {
+    console.log("⚠️  No failed records to save");
+    return;
+  }
+
+  console.log(`\n=== Saving FAILED Records Excel File ===`);
+  console.log(`Failed records to save: ${records.length}`);
+  console.log(`Filename: ${filename}`);
+
+  // Create worksheet data with failure reason
+  const wsData = [
+    ['Timestamp', 'Record ID', 'Insurance', 'Authorization', 'Failure Reason', 'All Columns'],
+    ...records.map(r => [
+      r.timestamp,
+      r.id,
+      r.insurance,
+      r.authorization,
+      r.failureReason || 'Unknown error',
+      r.allColumns.join(' | ')
+    ])
+  ];
+
+  const ws = XLSX.utils.aoa_to_sheet(wsData);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Failed Records');
+
+  // Save to file
+  try {
+    XLSX.writeFile(wb, filename);
+    console.log(`✓ Successfully saved ${records.length} FAILED records to ${filename}`);
+    
+    // Verify file was created
+    if (fs.existsSync(filename)) {
+      const stats = fs.statSync(filename);
+      console.log(`✓ File verified: ${filename} (${stats.size} bytes)`);
+    } else {
+      console.error(`✗ File was not created: ${filename}`);
+    }
+  } catch (error) {
+    console.error(`✗ Failed to save FAILED records Excel file:`, error);
     throw error;
   }
 }
@@ -559,16 +611,56 @@ async function performLogin(page: Page): Promise<void> {
 async function navigateToBillingManager(page: Page): Promise<void> {
   console.log("=== Navigating to Billing Manager ===");
   
-  await page.waitForSelector('a.menuButton[onclick*="gotoMenu"]', { timeout: 20000 });
+  try {
+    await page.waitForSelector('a.menuButton[onclick*="gotoMenu"]', { timeout: 30000 });
+  } catch (error) {
+    console.log("⚠️  Go To menu not found, trying alternative selector...");
+    await page.waitForSelector('a.menuButton', { timeout: 10000 });
+  }
   
   // Use JavaScript click to avoid element interception issues
   console.log("Clicking Go To menu...");
   await page.evaluate(() => {
     const button = document.querySelector('a.menuButton[onclick*="gotoMenu"]') as HTMLElement;
-    if (button) button.click();
+    if (button) {
+      button.click();
+      return true;
+    }
+    // Try alternative selector
+    const buttons = Array.from(document.querySelectorAll('a.menuButton'));
+    const gotoButton = buttons.find(b => b.textContent?.includes('Go To')) as HTMLElement;
+    if (gotoButton) {
+      gotoButton.click();
+      return true;
+    }
+    return false;
   });
+  
+  // Wait for menu to expand and show items
+  await page.waitForTimeout(3000);
 
-  await page.waitForSelector('a.menuitem:has-text("Billing Manager")', { timeout: 20000 });
+  // Wait for Billing Manager to be visible (not just present)
+  console.log("Waiting for Billing Manager menu item to be visible...");
+  try {
+    await page.waitForSelector('a.menuitem:has-text("Billing Manager")', { state: 'visible', timeout: 45000 });
+  } catch (error) {
+    console.log("⚠️  Billing Manager not visible with :has-text, trying alternative...");
+    // Take screenshot for debugging
+    await page.screenshot({ path: 'debug-menu-timeout.png' });
+    console.log("📸 Screenshot saved: debug-menu-timeout.png");
+    
+    // Try to find it with JavaScript
+    const found = await page.evaluate(() => {
+      const items = Array.from(document.querySelectorAll('a.menuitem'));
+      const billingManager = items.find(item => item.textContent?.includes('Billing Manager'));
+      return billingManager ? true : false;
+    });
+    
+    if (!found) {
+      throw new Error("Billing Manager menu item not found after 45 seconds");
+    }
+    console.log("✓ Found Billing Manager with JavaScript");
+  }
   
   // Click Billing Manager using JavaScript to avoid interception
   console.log("Clicking Billing Manager...");
@@ -585,20 +677,36 @@ async function navigateToBillingManager(page: Page): Promise<void> {
   // Wait for navigation to complete
   await navigationPromise;
   console.log("✓ Navigation completed, URL:", page.url());
-  console.log("✓ Navigation completed, URL:", page.url());
   
   // Wait for the loading to complete
   console.log("Waiting for Billing Manager page to fully load...");
   await waitForLoadingToComplete(page);
   
+  // Give Angular time to render
+  await page.waitForTimeout(3000);
+  
   // Verify the Primary Payer button is now visible
   console.log("Checking for Primary Payer button...");
-  const buttonVisible = await page.locator('#ManagedCareClaims').isVisible();
-  console.log("Primary Payer button visible:", buttonVisible);
   
-  if (!buttonVisible) {
-    console.error("✗ Primary Payer button not visible after loading");
+  // Wait for the button to be visible with a longer timeout
+  try {
+    await page.waitForSelector('#ManagedCareClaims', { state: 'visible', timeout: 30000 });
+    console.log("✓ Primary Payer button is visible");
+  } catch (error) {
+    console.error("✗ Primary Payer button not visible after 30 seconds");
     await page.screenshot({ path: 'debug-no-button.png' });
+    
+    // Try to check what's on the page
+    const pageTitle = await page.title();
+    console.log("Page title:", pageTitle);
+    
+    // Check if we're actually on the billing page
+    const url = page.url();
+    if (!url.includes('/billing')) {
+      console.error("✗ Not on billing page. Current URL:", url);
+      throw new Error("Failed to navigate to Billing Manager");
+    }
+    
     throw new Error("Primary Payer button not found after page load");
   }
   
@@ -780,7 +888,16 @@ async function waitForResultsTable(page: Page): Promise<boolean> {
   // Wait for table to exist
   await page.waitForSelector('table', { timeout: 30000 });
 
-  // Give Angular more time to render after insurance selection
+  // Wait for loading spinner to disappear
+  console.log("Waiting for loading spinner to disappear...");
+  await waitForLoadingToComplete(page);
+  
+  // Give Angular MORE time to render after loading completes
+  console.log("Waiting for Angular to render table data...");
+  await page.waitForTimeout(8000);
+  
+  // Additional wait for data to populate
+  console.log("Waiting for data to populate...");
   await page.waitForTimeout(5000);
   
   // Take screenshot for debugging
@@ -946,6 +1063,300 @@ async function processAllPagesAndSelectValid(page: Page, insuranceHelper: Insura
   console.log(`Total records selected: ${totalSelectedCount}`);
   
   return { selectedCount: totalSelectedCount, selectedRecords: allSelectedRecords };
+}
+
+// NEW FUNCTION: Process records one by one - select valid record, click create, repeat
+async function processRecordsOneByOne(page: Page, insuranceHelper: InsuranceHelper): Promise<{selectedCount: number, selectedRecords: SelectedRecord[], failedRecords: SelectedRecord[]}> {
+  console.log("\n=== PROCESSING RECORDS ONE BY ONE ===");
+  console.log("Flow: Find valid record → Select → Scroll → Click Create → Check for errors → Repeat (stays on Ready tab)");
+  
+  let allSelectedRecords: SelectedRecord[] = [];
+  let failedRecords: SelectedRecord[] = [];
+  let failedRecordIds = new Set<string>(); // Track failed record IDs to skip them
+  let totalProcessed = 0;
+  let totalFailed = 0;
+  let maxIterations = 500; // Safety limit
+  let iteration = 0;
+  
+  while (iteration < maxIterations) {
+    iteration++;
+    console.log(`\n--- Iteration ${iteration} ---`);
+    
+    // Wait for page to be ready
+    await page.waitForTimeout(2000);
+    
+    // Wait for loading to complete
+    await waitForLoadingToComplete(page);
+    
+    // Get all records on current page and identify the FIRST valid one (excluding failed ones)
+    const validRecords = await identifyValidRecordsOnPage(page, insuranceHelper);
+    
+    // Filter out records that have already failed
+    const availableRecords = validRecords.filter(r => !failedRecordIds.has(r.id));
+    
+    if (availableRecords.length === 0) {
+      console.log(`✓ No more valid records found - completed`);
+      break;
+    }
+    
+    // Process ONLY the first available valid record
+    const record = availableRecords[0];
+    console.log(`\n[Record ${totalProcessed + totalFailed + 1}] Processing: ${record.insurance}`);
+    
+    try {
+      // Select this record
+      await page.evaluate((checkboxId) => {
+        const checkbox = document.getElementById(checkboxId) as HTMLInputElement;
+        if (checkbox && !checkbox.checked) {
+          checkbox.click();
+        }
+      }, record.id);
+      console.log(`  ✓ Selected checkbox`);
+      
+      await page.waitForTimeout(500);
+      
+      // Scroll to Create button
+      console.log(`  ⟳ Scrolling to Create button...`);
+      await page.evaluate(() => {
+        const createButton = document.querySelector('button[ng-click*="createClaims"]') as HTMLElement;
+        if (createButton) {
+          createButton.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      });
+      await page.waitForTimeout(1000);
+      
+      // Click Create button for this record (WITHOUT navigating away)
+      console.log(`  ⟳ Clicking Create button...`);
+      await page.evaluate(() => {
+        const button = document.querySelector('button#claimsCreation') as HTMLButtonElement;
+        if (button) {
+          button.click();
+        }
+      });
+      console.log(`  ✓ Create button clicked`);
+      
+      // Wait for claim creation animation to complete
+      console.log(`  ⏳ Waiting for claim creation...`);
+      await page.waitForTimeout(3000);
+      
+      // Wait for loading spinner
+      await waitForLoadingToComplete(page);
+      
+      // Additional wait for success/error message to appear
+      await page.waitForTimeout(2000);
+      
+      // Check for success or error message in the alert div
+      const resultMessage = await page.evaluate(() => {
+        // Look for the alert div with id="alert"
+        const alertDiv = document.querySelector('div#alert');
+        
+        if (alertDiv) {
+          // Check if it's a success or error alert
+          const isSuccess = alertDiv.classList.contains('alert-success');
+          const isError = alertDiv.classList.contains('alert-danger') || alertDiv.classList.contains('alert-error');
+          
+          // Get the message from the span with ng-bind-html-unsafe
+          const messageSpan = alertDiv.querySelector('span[ng-bind-html-unsafe="alert.message"]');
+          const message = messageSpan?.textContent?.trim() || '';
+          
+          if (message) {
+            if (isSuccess || message.includes('Claim(s) have been created successfully')) {
+              return { success: true, message };
+            } else if (isError || message.includes('Some of the claims were not created successfully')) {
+              return { success: false, message };
+            }
+          }
+        }
+        
+        // Fallback: check for messages in other elements
+        const elements = Array.from(document.querySelectorAll('span.ng-binding, div.alert'));
+        for (const element of elements) {
+          const text = element.textContent?.trim() || '';
+          
+          if (text.includes('Claim(s) have been created successfully')) {
+            return { success: true, message: text };
+          }
+          if (text.includes('Some of the claims were not created successfully')) {
+            return { success: false, message: text };
+          }
+        }
+        
+        return null;
+      });
+      
+      if (resultMessage) {
+        if (resultMessage.success) {
+          // Record SUCCEEDED
+          console.log(`  ✅ SUCCESS: ${resultMessage.message}`);
+          allSelectedRecords.push(record);
+          totalProcessed++;
+          console.log(`  ✓ Processed successfully (Total: ${totalProcessed})`);
+        } else {
+          // Record FAILED - mark it and skip
+          console.log(`  ❌ FAILED: ${resultMessage.message}`);
+          console.log(`  ⊘ Marking record as failed and skipping to next record`);
+          
+          failedRecordIds.add(record.id);
+          failedRecords.push({
+            ...record,
+            failureReason: resultMessage.message
+          });
+          totalFailed++;
+          
+          // Uncheck the failed record so it doesn't stay selected
+          await page.evaluate((checkboxId) => {
+            const checkbox = document.getElementById(checkboxId) as HTMLInputElement;
+            if (checkbox && checkbox.checked) {
+              checkbox.click();
+            }
+          }, record.id);
+          
+          console.log(`  ✓ Unchecked failed record`);
+        }
+      } else {
+        // No message found - assume success (record should have disappeared)
+        console.log(`  ⚠️  No success/error message found - assuming success`);
+        allSelectedRecords.push(record);
+        totalProcessed++;
+        console.log(`  ✓ Processed (Total: ${totalProcessed})`);
+      }
+      
+    } catch (error) {
+      console.error(`  ✗ Error processing record:`, error);
+      // Mark as failed to avoid retrying
+      failedRecordIds.add(record.id);
+      failedRecords.push({
+        ...record,
+        failureReason: `Exception: ${error}`
+      });
+      totalFailed++;
+    }
+  }
+  
+  if (iteration >= maxIterations) {
+    console.log(`⚠️  Reached safety limit of ${maxIterations} iterations`);
+  }
+  
+  console.log(`\n=== COMPLETED ===`);
+  console.log(`Total records processed successfully: ${totalProcessed}`);
+  console.log(`Total records failed: ${totalFailed}`);
+  
+  if (failedRecords.length > 0) {
+    console.log(`\n=== FAILED RECORDS ===`);
+    failedRecords.forEach((record, index) => {
+      console.log(`${index + 1}. ${record.insurance} - ${record.failureReason}`);
+    });
+  }
+  
+  return { selectedCount: totalProcessed, selectedRecords: allSelectedRecords, failedRecords };
+}
+
+// Helper function to identify valid records without selecting them
+async function identifyValidRecordsOnPage(page: Page, insuranceHelper: InsuranceHelper): Promise<SelectedRecord[]> {
+  const records = await page.evaluate(() => {
+    const tables = Array.from(document.querySelectorAll('table'));
+    
+    for (const table of tables) {
+      const tbody = table.querySelector('tbody');
+      if (!tbody) continue;
+      
+      const rows = tbody.querySelectorAll('tr');
+      if (rows.length === 0) continue;
+      
+      const headerCells = Array.from(table.querySelectorAll('thead th'));
+      const headers = headerCells.map(cell => {
+        const link = cell.querySelector('a');
+        const span = cell.querySelector('span');
+        return (link?.textContent?.trim() || span?.textContent?.trim() || cell.textContent?.trim() || '').toLowerCase();
+      });
+      
+      const insuranceIndex = headers.findIndex(h => h.includes('insurance'));
+      const authIndex = headers.findIndex(h => h.includes('authorization'));
+      
+      if (insuranceIndex === -1) continue;
+      
+      const extractedRecords: any[] = [];
+      
+      rows.forEach((row) => {
+        const cells = row.querySelectorAll('td');
+        if (cells.length < 5) return;
+        
+        const checkbox = row.querySelector('input[type="checkbox"]');
+        if (!checkbox || !checkbox.id) return;
+        
+        let insurance = '';
+        if (insuranceIndex < cells.length) {
+          const cell = cells[insuranceIndex];
+          const ngBindingDiv = cell.querySelector('div.ng-binding');
+          insurance = ngBindingDiv?.textContent?.trim() || 
+                     cell.querySelector('a')?.textContent?.trim() ||
+                     (cell as HTMLElement).innerText?.trim() || '';
+        }
+        
+        let authorization = '';
+        if (authIndex >= 0 && authIndex < cells.length) {
+          const cell = cells[authIndex];
+          const ngBindingDiv = cell.querySelector('div.ng-binding');
+          authorization = ngBindingDiv?.textContent?.trim() ||
+                         (cell as HTMLElement).innerText?.trim() || '';
+        }
+        
+        const allColumns = Array.from(cells).map(cell => {
+          const ngBindingDiv = cell.querySelector('div.ng-binding');
+          return ngBindingDiv?.textContent?.trim() || (cell as HTMLElement).innerText?.trim() || '';
+        });
+        
+        extractedRecords.push({
+          id: checkbox.id,
+          insurance,
+          authorization,
+          allColumns
+        });
+      });
+      
+      if (extractedRecords.length > 0) return extractedRecords;
+    }
+    
+    return [];
+  });
+  
+  // Filter for valid records
+  const validRecords: SelectedRecord[] = [];
+  const timestamp = format(new Date(), 'yyyy-MM-dd HH:mm:ss');
+  
+  console.log(`\n  Filtering ${records.length} records based on insurance criteria...`);
+  
+  for (const record of records) {
+    if (!record.insurance) {
+      console.log(`  ⊘ Skipped: No insurance name`);
+      continue;
+    }
+    
+    // Check if insurance should be processed (has "no changes" or "paper" remark)
+    const shouldProcess = insuranceHelper.shouldProcessInsurance(record.insurance);
+    if (!shouldProcess) {
+      console.log(`  ⊘ Skipped: ${record.insurance} (not in approved list)`);
+      continue;
+    }
+    
+    // Check authorization validity
+    if (record.authorization && !insuranceHelper.isValidAuthorization(record.authorization)) {
+      console.log(`  ❌ Skipped: ${record.insurance} - Invalid auth: ${record.authorization}`);
+      continue;
+    }
+    
+    console.log(`  ✓ Valid: ${record.insurance}`);
+    validRecords.push({
+      id: record.id,
+      insurance: record.insurance,
+      authorization: record.authorization,
+      timestamp: timestamp,
+      allColumns: record.allColumns
+    });
+  }
+  
+  console.log(`  Result: ${validRecords.length} valid records out of ${records.length} total`);
+  return validRecords;
 }
 
 async function processRecordsAndSelectValid(page: Page, insuranceHelper: InsuranceHelper): Promise<{selectedCount: number, selectedRecords: SelectedRecord[]}> {
@@ -2320,6 +2731,9 @@ async function processReadyToSend(page: Page, insuranceHelper: InsuranceHelper):
             // Download the actual PDF file
             console.log(`  Downloading PDF...`);
             try {
+              // Wait additional time for PDF to fully render
+              await newPage.waitForTimeout(3000);
+              
               // Check if the page has an embed or iframe with PDF
               const embedPdf = await newPage.$('embed[type="application/pdf"]');
               const iframePdf = await newPage.$('iframe');
@@ -2340,19 +2754,38 @@ async function processReadyToSend(page: Page, insuranceHelper: InsuranceHelper):
                 
                 console.log(`  PDF source URL: ${pdfSrcUrl}`);
                 
-                // Fetch the actual PDF file
+                // Wait a bit more for PDF to be ready
+                await newPage.waitForTimeout(2000);
+                
+                // Fetch the actual PDF file using the page's context (includes cookies/auth)
                 const response = await newPage.context().request.fetch(pdfSrcUrl);
                 const pdfBuffer = await response.body();
+                
+                // Verify PDF has content
+                if (pdfBuffer.length < 1000) {
+                  console.log(`  ⚠️  PDF seems too small (${pdfBuffer.length} bytes), trying page.pdf() instead...`);
+                  throw new Error('PDF too small, using fallback');
+                }
                 
                 fs.writeFileSync(filepath, pdfBuffer);
                 downloadedFiles.push(filepath);
                 console.log(`  ✓ Downloaded: ${filename} (${pdfBuffer.length} bytes)`);
               } else {
-                // Fallback: generate PDF from page content
-                console.log(`  Generating PDF from page content...`);
+                // Fallback: generate PDF from page content using page.pdf()
+                console.log(`  Generating PDF from page content using page.pdf()...`);
+                
+                // Wait for content to be ready
+                await newPage.waitForTimeout(2000);
+                
                 const pdfBuffer = await newPage.pdf({
                   format: 'Letter',
-                  printBackground: true
+                  printBackground: true,
+                  margin: {
+                    top: '0.5in',
+                    right: '0.5in',
+                    bottom: '0.5in',
+                    left: '0.5in'
+                  }
                 });
                 
                 fs.writeFileSync(filepath, pdfBuffer);
@@ -2361,6 +2794,27 @@ async function processReadyToSend(page: Page, insuranceHelper: InsuranceHelper):
               }
             } catch (pdfError: any) {
               console.error(`  ✗ PDF download failed:`, pdfError?.message || pdfError);
+              
+              // Last resort: try page.pdf() as fallback
+              try {
+                console.log(`  Attempting fallback: page.pdf()...`);
+                await newPage.waitForTimeout(2000);
+                const pdfBuffer = await newPage.pdf({
+                  format: 'Letter',
+                  printBackground: true,
+                  margin: {
+                    top: '0.5in',
+                    right: '0.5in',
+                    bottom: '0.5in',
+                    left: '0.5in'
+                  }
+                });
+                fs.writeFileSync(filepath, pdfBuffer);
+                downloadedFiles.push(filepath);
+                console.log(`  ✓ Fallback successful: ${filename} (${pdfBuffer.length} bytes)`);
+              } catch (fallbackError) {
+                console.error(`  ✗ Fallback also failed:`, fallbackError);
+              }
             }            
             // Close the PDF tab and navigate back to main tab
             await newPage.close();

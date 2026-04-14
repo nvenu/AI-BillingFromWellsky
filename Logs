@@ -1,0 +1,358 @@
+[16:12:27] 🚀 Starting automation for Nightingale - Taunton...
+[16:12:27] Starting Kinnser automation for: 1407132,Clinic
+[16:12:27] Selected insurances: AIM Mutual Insurance, Acadia Insurance Company, BOSTON MEDICAL CENTER HEALTH PLAN PPS, Blue Cross Blue Shield Commercial, Bristol Hospice, CCA (MassHealth), CDPHP, CIGNA, Eternal Health, FALLON COMMUNITY HEALTH PLAN, Federated Mutual Insurance Company, HBMI, HOMELINK, HUMANA, Healthscope, Magnolia CompCare, LLC, OneCall Care Management, Optum Insurance New, Optum insurance, Private Pay, Senior whole Health, Tufts Health Plan, UHC (MassHealth), UHC Commercial, Zeils
+[16:12:27] ============================================================
+[16:12:27] 🚀 Kinnser Billing Automation v2.3.0
+[16:12:27] 📅 Build Date: 2026-04-10
+[16:12:27] ⏰ Started: 2026-04-13 16:12:27
+[16:12:27] ============================================================
+[16:12:30] Loaded 224 insurance instructions
+[16:12:30] Found 163 insurances with 'no changes' or 'paper' remark
+[16:12:30] Insurances to process: ["acadia insurance company","aetna better health","aetna better health for oh","aetna commercial","aim mutual insurance","alignment health plan","allegiant medical network","allied benefit systems inc","allied managed care inc.","ambetter","american zurich insurance company","anthem bc federal employee program","anthem bcbs commercial","anthem empireblue commerial","anthem loa","apogee surgery center","arizona priority care","asa geha","bcbs commercial il","bcbs federal plans of nv","bcbs mcr of nv","bcbs medicaid il","bcbs mn medicaid","blue cross blue shield commercial","blue cross blue shield medicare","blue cross blue shield of nevada","blue cross commercial","blue shield commercial","blue shield mcr","blue shield medicare","boston medical center health plan pps","brand new day","bristol hospice","bsc promise health medi-cal","california fair services authority","california health & wellness","caloptima","carecentrix","carelon medical benefits management","carelon medical benefits management aetna","caresource mcd","careworks","cca (masshealth)","cdphp","charity","cigna","clear price networks","compdme","corvel administrator","culinary health fund","dcm","dignity health","enloe medical center","essence healthcare","eternal health","fallon community health plan","federated mutual insurance company","first call","freedom health","gallagher","geha","geha nonpps","gsrma","hbmi","healthcomp inc","healthpartners com","healthpartners com na","healthpartners mcd","healthpartners mcr","healthscope","hennepin health plan","home care connect","homelink","humana","humana jencare","humana pps","imagine 360","imperial health plan","kaiser permanente","keenan & associates","liberty healthshare pps","magnolia compcare, llc","medcare partners","medcomp","medi-cal","medica health plan","medicaid il","medicaid mn","medical mutual commercial","medicare","medicare scripps aco","medigold","mercy home health","meridian health plan","meritain health","molina commercial","molina healthcare of ohio mcd","molina healthcare of ohio mcr","molina medi-cal ca","molina medi-cal yc","molina pps","network health","ohio medicaid","one call","one call care management - new","onecall care management","optum","optum care network nv-ppo","optum insurance","optum insurance new","optum-life1","orchid medical","oscar health","oscar insurance corporation","palomar health","paradigm","phmg","phmg – arc","phmg – graybill","phmg – inland","pma","pomona valley hospital medical center","preferred employers insurance","primary care associated medical group","priority health","private pay","professional health network","santa rosa memorial hospital","scan health plan","scripps","scripps loa","sedgwick","sedgwick wc","senior whole health","sfm risk solutions","sms national","southwest service administrators","state farm insurance","tribal first","tricare west region","tufts health plan","ucare minnesota","ucare minnesota mcd","ucsd medical center","uhc (masshealth)","uhc - empire plan","uhc commercial","uhhs commercial","umr","umr mn","united health care commercial","united healthcare 1500","united healthcare commercial","united healthcare il","united healthcare mcr","va - az","va northern california health care system","vantage medical group","wellcare medicare","western health adv","workers compensation trust","zeils","zing health"]
+[16:12:30] Navigating to Kinnser login page...
+[16:12:35] ✓ Login page loaded
+[16:12:35] Filling in credentials...
+[16:12:37] ✓ Credentials filled
+[16:12:37] Clicking login button...
+[16:12:37] Dialog detected: confirm - "This system is intended for business use only. All data herein is considered confidential and proprietary. Unauthorized access, use, modification, destruction, or disclosure of information supported by this system will result in prosecution. Click OK to continue."
+[16:12:37] Dialog accepted
+[16:12:39] Waiting for login to complete...
+[16:12:54] ✓ Logged in successfully, current URL: https://kinnser.net/AM/Message/inbox.cfm?sessionCacheKey=405798E8-0FF1-BEE5-AA30611B37564795:C8CA0D68
+[16:12:54] ================================================================================
+[16:12:54] STARTING PROCESSING
+[16:12:54] Offices to process: 1
+[16:12:54] - Nightingale - Taunton (MA)
+[16:12:54] ================================================================================
+[16:12:54] [1/1] Processing Nightingale - Taunton...
+[16:12:54] === Selecting Office: Nightingale - Taunton ===
+[16:12:54] ✓ Selected office: Nightingale - Taunton
+[16:12:57] Waiting for loading to complete...
+[16:12:57] Loading spinner is already hidden - page is ready
+[16:12:58] ✓ Loading complete
+[16:12:58] ✓ Office switched to Nightingale - Taunton
+[16:12:58] ================================================================================
+[16:12:58] PROCESSING OFFICE: Nightingale - Taunton (MA)
+[16:12:58] ================================================================================
+[16:12:58] === Navigating to Billing Manager ===
+[16:12:58] Clicking Go To menu...
+[16:12:58] Clicking Billing Manager...
+[16:13:15] ✓ Navigation completed, URL: https://kinnser.net/EHR/#/AM/billing?sessionCacheKey=405798E8-0FF1-BEE5-AA30611B37564795:C8CA0D68
+[16:13:15] ✓ Navigation completed, URL: https://kinnser.net/EHR/#/AM/billing?sessionCacheKey=405798E8-0FF1-BEE5-AA30611B37564795:C8CA0D68
+[16:13:15] Waiting for Billing Manager page to fully load...
+[16:13:15] Waiting for loading to complete...
+[16:13:15] Loading spinner is already hidden - page is ready
+[16:13:16] ✓ Loading complete
+[16:13:16] Checking for Primary Payer button...
+[16:13:17] Primary Payer button visible: true
+[16:13:17] ✓ Billing Manager page fully loaded and ready
+[16:13:17] === Starting applyFilters ===
+[16:13:17] Current URL: https://kinnser.net/EHR/#/AM/billing?sessionCacheKey=405798E8-0FF1-BEE5-AA30611B37564795:C8CA0D68
+[16:13:17] Waiting for Primary Payer dropdown (#ManagedCareClaims)...
+[16:13:17] ✓ Found Primary Payer dropdown
+[16:13:17] Clicking Primary Payer dropdown...
+[16:13:18] Waiting for Ready link in dropdown (#managedCare-ready)...
+[16:13:25] ✓ Found Ready link
+[16:13:25] Clicking Ready link...
+[16:13:27] Waiting for Claims Manager page to load...
+[16:13:27] Waiting for loading to complete...
+[16:13:27] Loading spinner is already hidden - page is ready
+[16:13:27] ✓ Loading complete
+[16:13:27] ✓ Page loaded: You are about to be logged outclose
+[16:13:27] === applyFilters completed ===
+[16:13:27] Waiting for insurance dropdown...
+[16:13:29] Found 34 available insurances in dropdown
+[16:13:29] User selected 25 insurance(s)
+[16:13:29] Selecting specific insurance(s): AIM Mutual Insurance, Acadia Insurance Company, BOSTON MEDICAL CENTER HEALTH PLAN PPS...
+[16:13:29] ⚠️ Could not find dropdown option for insurance: BOSTON MEDICAL CENTER HEALTH PLAN PPS
+[16:13:29] ⚠️ Could not find dropdown option for insurance: Eternal Health
+[16:13:29] ⚠️ Could not find dropdown option for insurance: Private Pay
+[16:13:29] Multiple insurances selected (22) - using 'All Insurances' and will filter during processing
+[16:13:30] Waiting for records to load...
+[16:13:30] Waiting for loading to complete...
+[16:13:30] Loading spinner is already hidden - page is ready
+[16:13:30] ✓ Loading complete
+[16:13:30] Waiting for Angular to render table data...
+[16:13:35] Waiting for Angular to render table data...
+[16:13:35] Insurance selection completed successfully
+[16:13:35] Waiting for results table with data...
+[16:13:40] 📸 Screenshot saved: debug-table-check.png
+[16:13:40] ⚠️ No records found in tab - will skip to next tab
+[16:13:40] No records in Ready tab for Nightingale - Taunton
+[16:13:40] Will still process Pending Approval and Ready To Send tabs...
+[16:13:40] === PROCESSING PENDING APPROVAL ===
+[16:13:40] Navigating to Pending Approval tab...
+[16:13:40] Not on Pending Approval page, clicking the tab...
+[16:13:40] ✓ Clicked Pending Approval tab
+[16:13:43] ✓ Pending Approval page loaded
+[16:13:43] Current URL: https://kinnser.net/EHR/#/AM/billing/claims-manager/managed-care/ready?sessionCacheKey=405798E8-0FF1-BEE5-AA30611B37564795:C8CA0D68
+[16:13:43] Waiting for initial page load...
+[16:13:47] ✓ Initial loading complete
+[16:13:47] Selecting 'All Insurances' from dropdown...
+[16:13:47] Current dropdown value: 1
+[16:13:47] Already on 'All Insurances', selecting different option first to trigger change...
+[16:13:48] Selected temporary option: 0
+[16:13:48] ✓ Selected 'All Insurances'
+[16:13:48] Waiting for records to load...
+[16:14:04] ✓ Records loaded
+[16:14:04] Extracting record details from table...
+[16:14:04] Found 100 records in Pending Approval
+[16:14:04] === SAMPLE RECORDS (first 3) ===
+[16:14:04] Record 1:
+[16:14:04] MRN: "MA251103105304"
+[16:14:04] Insurance: "HUMANA"
+[16:14:04] Billing Period: "02/22/2026 - 02/28/2026"
+[16:14:04] Billing Period Start: "02/22/2026"
+[16:14:04] Billing Period End: "02/28/2026"
+[16:14:04] Edit Button ID: ""
+[16:14:04] All Cells: [1. | | Ferreira, Joseph | MA251103105304 | Nightingale Home Healthcare of Massachusetts | HUMANA | 02/09/2026 | 02/22/2026 - 02/28/2026 | | NA | | | 2 | 0 | | ]
+[16:14:04] Record 2:
+[16:14:04] MRN: "100998173"
+[16:14:04] Insurance: "COMMONWEALTH CARE ALLIANCE"
+[16:14:04] Billing Period: "03/01/2026 - 03/01/2026"
+[16:14:04] Billing Period Start: "03/01/2026"
+[16:14:04] Billing Period End: "03/01/2026"
+[16:14:04] Edit Button ID: ""
+[16:14:04] All Cells: [2. | | Dasilva, Hilda | 100998173 | Nightingale Home Healthcare of Massachusetts | COMMONWEALTH CARE ALLIANCE | 01/01/2026 | 03/01/2026 - 03/01/2026 | | NA | 0106TBL37 | | 1 | 0 | | ]
+[16:14:04] Record 3:
+[16:14:04] MRN: "MA200221063904"
+[16:14:04] Insurance: "Senior whole Health"
+[16:14:04] Billing Period: "03/01/2026 - 03/07/2026"
+[16:14:04] Billing Period Start: "03/01/2026"
+[16:14:04] Billing Period End: "03/07/2026"
+[16:14:04] Edit Button ID: ""
+[16:14:04] All Cells: [3. | | Almeida, Lubelia | MA200221063904 | Nightingale Home Healthcare of Massachusetts | Senior whole Health | 02/03/2026 | 03/01/2026 - 03/07/2026 | | NA | PUM260553243 | | 2 | 0 | | ]
+[16:14:04] === CHECKING FOR PARTNERSHIP HEALTH PLAN OF CA RECORDS ===
+[16:14:04] ✓ No PARTNERSHIP HEALTH PLAN OF CA records found
+[16:14:04] === CHECKING FOR DUPLICATE MRNs WITH OVERLAPPING DATES ===
+[16:14:04] ⚠️ Found 4 duplicate MRN(s) with overlapping billing periods
+[16:14:04] Processing duplicate MRN: MA221018064302
+[16:14:04] Records: 14, 15
+[16:14:04] ⚠️ No edit button found for record 14
+[16:14:04] ⚠️ No edit button found for record 15
+[16:14:04] ✓ Completed processing all 2 duplicate records for MRN MA221018064302
+[16:14:04] Processing duplicate MRN: MA250310114901
+[16:14:04] Records: 66, 67
+[16:14:04] ⚠️ No edit button found for record 66
+[16:14:04] ⚠️ No edit button found for record 67
+[16:14:04] ✓ Completed processing all 2 duplicate records for MRN MA250310114901
+[16:14:04] Processing duplicate MRN: MA230619115702
+[16:14:04] Records: 83, 84
+[16:14:04] ⚠️ No edit button found for record 83
+[16:14:04] ⚠️ No edit button found for record 84
+[16:14:04] ✓ Completed processing all 2 duplicate records for MRN MA230619115702
+[16:14:04] Processing duplicate MRN: MA240122095303
+[16:14:04] Records: 92, 93
+[16:14:04] ⚠️ No edit button found for record 92
+[16:14:04] ⚠️ No edit button found for record 93
+[16:14:04] ✓ Completed processing all 2 duplicate records for MRN MA240122095303
+[16:14:04] === SELECTING ALL RECORDS FOR APPROVAL ===
+[16:14:04] Looking for 'Select All' checkbox...
+[16:14:04] ⚠️ 'Select All' checkbox not found
+[16:14:04] ✓ Verified: 0 checkboxes are checked
+[16:14:04] ⚠️ No checkboxes checked! Trying to click individual row checkboxes...
+[16:14:04] Found 100 row checkboxes
+[16:14:04] ✓ Clicked checkbox 1/100
+[16:14:04] ✓ Clicked checkbox 2/100
+[16:14:05] ✓ Clicked checkbox 3/100
+[16:14:05] ✓ Clicked checkbox 4/100
+[16:14:05] ✓ Clicked checkbox 5/100
+[16:14:06] ✓ Clicked checkbox 6/100
+[16:14:06] ✓ Clicked checkbox 7/100
+[16:14:06] ✓ Clicked checkbox 8/100
+[16:14:06] ✓ Clicked checkbox 9/100
+[16:14:07] ✓ Clicked checkbox 10/100
+[16:14:07] ✓ Clicked checkbox 11/100
+[16:14:07] ✓ Clicked checkbox 12/100
+[16:14:08] ✓ Clicked checkbox 13/100
+[16:14:08] ✓ Clicked checkbox 14/100
+[16:14:08] ✓ Clicked checkbox 15/100
+[16:14:08] ✓ Clicked checkbox 16/100
+[16:14:09] ✓ Clicked checkbox 17/100
+[16:14:09] ✓ Clicked checkbox 18/100
+[16:14:09] ✓ Clicked checkbox 19/100
+[16:14:10] ✓ Clicked checkbox 20/100
+[16:14:10] ✓ Clicked checkbox 21/100
+[16:14:10] ✓ Clicked checkbox 22/100
+[16:14:10] ✓ Clicked checkbox 23/100
+[16:14:11] ✓ Clicked checkbox 24/100
+[16:14:11] ✓ Clicked checkbox 25/100
+[16:14:11] ✓ Clicked checkbox 26/100
+[16:14:12] ✓ Clicked checkbox 27/100
+[16:14:12] ✓ Clicked checkbox 28/100
+[16:14:12] ✓ Clicked checkbox 29/100
+[16:14:12] ✓ Clicked checkbox 30/100
+[16:14:13] ✓ Clicked checkbox 31/100
+[16:14:13] ✓ Clicked checkbox 32/100
+[16:14:13] ✓ Clicked checkbox 33/100
+[16:14:14] ✓ Clicked checkbox 34/100
+[16:14:14] ✓ Clicked checkbox 35/100
+[16:14:14] ✓ Clicked checkbox 36/100
+[16:14:14] ✓ Clicked checkbox 37/100
+[16:14:15] ✓ Clicked checkbox 38/100
+[16:14:15] ✓ Clicked checkbox 39/100
+[16:14:15] ✓ Clicked checkbox 40/100
+[16:14:16] ✓ Clicked checkbox 41/100
+[16:14:16] ✓ Clicked checkbox 42/100
+[16:14:16] ✓ Clicked checkbox 43/100
+[16:14:16] ✓ Clicked checkbox 44/100
+[16:14:17] ✓ Clicked checkbox 45/100
+[16:14:17] ✓ Clicked checkbox 46/100
+[16:14:17] ✓ Clicked checkbox 47/100
+[16:14:18] ✓ Clicked checkbox 48/100
+[16:14:18] ✓ Clicked checkbox 49/100
+[16:14:18] ✓ Clicked checkbox 50/100
+[16:14:18] ✓ Clicked checkbox 51/100
+[16:14:19] ✓ Clicked checkbox 52/100
+[16:14:19] ✓ Clicked checkbox 53/100
+[16:14:19] ✓ Clicked checkbox 54/100
+[16:14:19] ✓ Clicked checkbox 55/100
+[16:14:20] ✓ Clicked checkbox 56/100
+[16:14:20] ✓ Clicked checkbox 57/100
+[16:14:20] ✓ Clicked checkbox 58/100
+[16:14:21] ✓ Clicked checkbox 59/100
+[16:14:21] ✓ Clicked checkbox 60/100
+[16:14:21] ✓ Clicked checkbox 61/100
+[16:14:21] ✓ Clicked checkbox 62/100
+[16:14:22] ✓ Clicked checkbox 63/100
+[16:14:22] ✓ Clicked checkbox 64/100
+[16:14:22] ✓ Clicked checkbox 65/100
+[16:14:23] ✓ Clicked checkbox 66/100
+[16:14:23] ✓ Clicked checkbox 67/100
+[16:14:23] ✓ Clicked checkbox 68/100
+[16:14:23] ✓ Clicked checkbox 69/100
+[16:14:24] ✓ Clicked checkbox 70/100
+[16:14:24] ✓ Clicked checkbox 71/100
+[16:14:24] ✓ Clicked checkbox 72/100
+[16:14:25] ✓ Clicked checkbox 73/100
+[16:14:25] ✓ Clicked checkbox 74/100
+[16:14:25] ✓ Clicked checkbox 75/100
+[16:14:25] ✓ Clicked checkbox 76/100
+[16:14:26] ✓ Clicked checkbox 77/100
+[16:14:26] ✓ Clicked checkbox 78/100
+[16:14:26] ✓ Clicked checkbox 79/100
+[16:14:27] ✓ Clicked checkbox 80/100
+[16:14:27] ✓ Clicked checkbox 81/100
+[16:14:27] ✓ Clicked checkbox 82/100
+[16:14:27] ✓ Clicked checkbox 83/100
+[16:14:28] ✓ Clicked checkbox 84/100
+[16:14:28] ✓ Clicked checkbox 85/100
+[16:14:28] ✓ Clicked checkbox 86/100
+[16:14:28] ✓ Clicked checkbox 87/100
+[16:14:29] ✓ Clicked checkbox 88/100
+[16:14:29] ✓ Clicked checkbox 89/100
+[16:14:29] ✓ Clicked checkbox 90/100
+[16:14:30] ✓ Clicked checkbox 91/100
+[16:14:30] ✓ Clicked checkbox 92/100
+[16:14:30] ✓ Clicked checkbox 93/100
+[16:14:30] ✓ Clicked checkbox 94/100
+[16:14:31] ✓ Clicked checkbox 95/100
+[16:14:31] ✓ Clicked checkbox 96/100
+[16:14:31] ✓ Clicked checkbox 97/100
+[16:14:32] ✓ Clicked checkbox 98/100
+[16:14:32] ✓ Clicked checkbox 99/100
+[16:14:32] ✓ Clicked checkbox 100/100
+[16:14:32] ✓ After individual clicks: 101 checkboxes are checked
+[16:14:32] Waiting for any 'checking' state to complete...
+[16:14:35] Scrolling to Approve button...
+[16:14:36] ✓ Scrolled to Approve button
+[16:14:36] Approve button disabled: true
+[16:14:36] ⚠️ Approve button is disabled! Attempting to force enable...
+[16:14:37] Clicking Approve button...
+[16:14:42] ⚠️ Method 1 failed, trying Method 2...
+[16:14:47] ⚠️ Method 2 failed, trying Method 3...
+[16:14:47] ✓ Method 3: JavaScript click succeeded
+[16:14:47] ✓ Approve button clicked successfully
+[16:14:47] Waiting for approval to process...
+[16:14:52] ✓ Approval processing complete
+[16:14:52] ✓ Type of Bill changes: 0 records changed to 327
+[16:14:52] === Navigating to Ready To Send ===
+[16:14:53] ✓ Clicked Ready To Send tab
+[16:14:56] ✓ Ready To Send page loaded
+[16:14:56] === PROCESSING READY TO SEND ===
+[16:14:58] Selecting 'All Insurances' from dropdown...
+[16:14:58] Current dropdown value: 1
+[16:14:58] Already on 'All Insurances', selecting different option first to trigger change...
+[16:14:59] Selected temporary option: 0
+[16:14:59] ✓ Selected 'All Insurances'
+[16:14:59] Waiting for records to load...
+[16:15:04] ✓ Records loaded
+[16:15:04] Extracting records from Ready To Send...
+[16:15:04] Found 16 records in Ready To Send
+[16:15:04] Processing 16 valid records (0 skipped)
+[16:15:04] === CATEGORIZING RECORDS ===
+[16:15:04] Record 1: Senior whole Health (BID)
+[16:15:04] Found instruction: Location=MA, Remarks=Both SN visit for each DOS must be completed, if n...
+[16:15:04] ⚠️ Skipped: Remarks don't match criteria
+[16:15:04] Record 2: Senior whole Health (BID)
+[16:15:04] Found instruction: Location=MA, Remarks=Both SN visit for each DOS must be completed, if n...
+[16:15:04] ⚠️ Skipped: Remarks don't match criteria
+[16:15:04] Record 3: Senior whole Health (BID)
+[16:15:04] Found instruction: Location=MA, Remarks=Both SN visit for each DOS must be completed, if n...
+[16:15:04] ⚠️ Skipped: Remarks don't match criteria
+[16:15:04] Record 4: Senior whole Health (BID)
+[16:15:04] Found instruction: Location=MA, Remarks=Both SN visit for each DOS must be completed, if n...
+[16:15:04] ⚠️ Skipped: Remarks don't match criteria
+[16:15:04] Record 5: Senior whole Health (BID)
+[16:15:04] Found instruction: Location=MA, Remarks=Both SN visit for each DOS must be completed, if n...
+[16:15:04] ⚠️ Skipped: Remarks don't match criteria
+[16:15:04] Record 6: Senior whole Health (BID)
+[16:15:04] Found instruction: Location=MA, Remarks=Both SN visit for each DOS must be completed, if n...
+[16:15:04] ⚠️ Skipped: Remarks don't match criteria
+[16:15:04] Record 7: Senior whole Health (BID)
+[16:15:04] Found instruction: Location=MA, Remarks=Both SN visit for each DOS must be completed, if n...
+[16:15:04] ⚠️ Skipped: Remarks don't match criteria
+[16:15:04] Record 8: FALLON COMMNITY HEALTH PLAN MAV
+[16:15:04] Found instruction: Location=MA, Remarks=Need to check for G code and T code from Authoriza...
+[16:15:04] ⚠️ Skipped: Remarks don't match criteria
+[16:15:04] Record 9: Senior whole Health (BID)
+[16:15:04] Found instruction: Location=MA, Remarks=Both SN visit for each DOS must be completed, if n...
+[16:15:04] ⚠️ Skipped: Remarks don't match criteria
+[16:15:04] Record 10: Senior whole Health (BID)
+[16:15:04] Found instruction: Location=MA, Remarks=Both SN visit for each DOS must be completed, if n...
+[16:15:04] ⚠️ Skipped: Remarks don't match criteria
+[16:15:04] Record 11: Senior whole Health (BID)
+[16:15:04] Found instruction: Location=MA, Remarks=Both SN visit for each DOS must be completed, if n...
+[16:15:04] ⚠️ Skipped: Remarks don't match criteria
+[16:15:04] Record 12: Senior whole Health (BID)
+[16:15:04] Found instruction: Location=MA, Remarks=Both SN visit for each DOS must be completed, if n...
+[16:15:04] ⚠️ Skipped: Remarks don't match criteria
+[16:15:04] Record 13: Senior whole Health (BID)
+[16:15:04] Found instruction: Location=MA, Remarks=Both SN visit for each DOS must be completed, if n...
+[16:15:04] ⚠️ Skipped: Remarks don't match criteria
+[16:15:04] Record 14: FALLON COMMNITY HEALTH PLAN MAV
+[16:15:04] Found instruction: Location=MA, Remarks=Need to check for G code and T code from Authoriza...
+[16:15:04] ⚠️ Skipped: Remarks don't match criteria
+[16:15:04] Record 15: Senior whole Health (BID)
+[16:15:04] Found instruction: Location=MA, Remarks=Both SN visit for each DOS must be completed, if n...
+[16:15:04] ⚠️ Skipped: Remarks don't match criteria
+[16:15:04] Record 16: Senior whole Health (BID)
+[16:15:04] Found instruction: Location=MA, Remarks=Both SN visit for each DOS must be completed, if n...
+[16:15:04] ⚠️ Skipped: Remarks don't match criteria
+[16:15:04] "No changes" insurances: 0 records
+[16:15:04] "Paper" insurances: 0 records
+[16:15:04] ✓ Ready To Send workflow completed
+[16:15:04] ✓ Total files for email: 0
+[16:15:04] - Summary Excel: 0
+[16:15:04] - Electronic claims Excel: 0
+[16:15:04] - PDF files: 0
+[16:15:04] ✓ Ready To Send completed with 0 files
+[16:15:04] ✓ Pending Approval and Ready To Send workflow completed for Nightingale - Taunton
+[16:15:04] ✓ Completed Nightingale - Taunton: 0 records from Ready tab, 0 records from Ready To Send tab
+[16:15:06] ================================================================================
+[16:15:06] FINAL SUMMARY
+[16:15:06] ================================================================================
+[16:15:06] Nightingale - Taunton: 0 records
+[16:15:06] Total records selected: 0
+[16:15:06] ================================================================================
+[16:15:06] === Sending Email ===
+[16:15:06] Sending email to: nvenu@solifetec.com, adua@HomeCareForYou.com, rtyagi@homecareforyou.com
+[16:15:06] From: nvenu@solifetec.com
+[16:15:06] SMTP Host: smtp-mail.outlook.com
+[16:15:06] SMTP Port: 587
+[16:15:06] Subject: Kinnser Billing Report - Nightingale - Taunton - 2026-04-13_16-15-06 [NO RECORDS PROCESSED]
+[16:15:06] Attachments: 0 files
+[16:15:06] [%s] %s %s 2026-04-13 10:45:06 DEBUG Creating transport: nodemailer (8.0.2; +https://nodemailer.com/; SMTP/8.0.2[client:8.0.2])
+[16:15:06] Verifying SMTP connection...
+[16:15:07] [%s] %s %s 2026-04-13 10:45:07 DEBUG [mRFFOqGDhiw] Resolved smtp-mail.outlook.com as 52.96.110.86 [cache miss]
+[16:15:17] [%s] %s %s 2026-04-13 10:45:17 INFO [mRFFOqGDhiw] Connection to 52.96.110.86 failed, trying 52.96.110.118
+[16:15:27] [%s] %s %s 2026-04-13 10:45:27 INFO [mRFFOqGDhiw] Connection to 52.96.110.118 failed, trying 52.96.228.134
