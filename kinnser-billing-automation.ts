@@ -2457,7 +2457,13 @@ async function processReadyToSend(page: Page, insuranceHelper: InsuranceHelper, 
             console.log(`  ✓ Categorized as: Paper`);
             paperRecords.push(record);
           } else {
-            console.log(`  ⚠️  Skipped: Remarks don't match criteria`);
+            // Check if this is a special handling insurance that should be sent electronically
+            if (insuranceHelper.requiresSpecialHandling(record.insurance)) {
+              console.log(`  ✓ Categorized as: Electronic (Special handling insurance)`);
+              noChangesRecords.push(record);
+            } else {
+              console.log(`  ⚠️  Skipped: Remarks don't match criteria`);
+            }
           }
         } else {
           console.log(`  ⚠️  Skipped: No remarks`);
