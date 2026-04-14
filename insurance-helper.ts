@@ -24,6 +24,7 @@ export class InsuranceHelper {
     // 1. "No changes are required except for identical claims"
     // 2. Exactly "Paper" as the remark
     // 3. Special handling insurances (like Community health Group with Severity points)
+    // 4. Partnership Health Plan of CA (auto Type of Bill 327)
     this.instructions.forEach(instruction => {
       if (instruction.Remarks) {
         const remarkLower = instruction.Remarks.toLowerCase().trim();
@@ -39,6 +40,11 @@ export class InsuranceHelper {
         }
         // Special handling: Community health Group (Severity points)
         else if (nameLower === "community health group" && remarkLower.includes("severity point")) {
+          this.noChangesInsurances.add(nameLower);
+          console.log(`  ℹ️  Added special handling insurance: ${instruction.Name}`);
+        }
+        // Special handling: Partnership Health Plan of CA (auto Type of Bill 327)
+        else if (nameLower === "partnership health plan of ca" && remarkLower.includes("taxonomy code")) {
           this.noChangesInsurances.add(nameLower);
           console.log(`  ℹ️  Added special handling insurance: ${instruction.Name}`);
         }
@@ -150,7 +156,8 @@ export class InsuranceHelper {
         
         return remarkLower.includes("no changes are required except for identical claims") || 
                remarkLower === "paper" ||
-               (nameLower === "community health group" && remarkLower.includes("severity point"));
+               (nameLower === "community health group" && remarkLower.includes("severity point")) ||
+               (nameLower === "partnership health plan of ca" && remarkLower.includes("taxonomy code"));
       })
       .map(instruction => instruction.Name)
       .sort();
@@ -161,7 +168,8 @@ export class InsuranceHelper {
    */
   requiresSpecialHandling(insuranceName: string): boolean {
     const nameLower = insuranceName.toLowerCase().trim();
-    return nameLower === "community health group";
+    return nameLower === "community health group" || 
+           nameLower === "partnership health plan of ca";
   }
 
   /**
@@ -172,6 +180,10 @@ export class InsuranceHelper {
     
     if (nameLower === "community health group") {
       return "severity-points";
+    }
+    
+    if (nameLower === "partnership health plan of ca") {
+      return "type-of-bill-327";
     }
     
     return null;
