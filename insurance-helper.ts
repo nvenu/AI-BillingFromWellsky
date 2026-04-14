@@ -188,4 +188,20 @@ export class InsuranceHelper {
     
     return null;
   }
+
+  /**
+   * Configuration for how special handling insurances should be processed in Ready To Send
+   * Returns: "electronic" | "paper" | null
+   */
+  getReadyToSendProcessingType(insuranceName: string): "electronic" | "paper" | null {
+    const nameLower = insuranceName.toLowerCase().trim();
+    
+    // Define processing type for each special handling insurance
+    const specialHandlingConfig: Record<string, "electronic" | "paper"> = {
+      "community health group": "electronic",           // Send electronically (Severity points)
+      "partnership health plan of ca": "electronic"     // Send electronically (Type of Bill 327)
+    };
+    
+    return specialHandlingConfig[nameLower] || null;
+  }
 }

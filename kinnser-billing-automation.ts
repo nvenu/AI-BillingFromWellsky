@@ -2457,12 +2457,16 @@ async function processReadyToSend(page: Page, insuranceHelper: InsuranceHelper, 
             console.log(`  ✓ Categorized as: Paper`);
             paperRecords.push(record);
           } else {
-            // Check if this is a special handling insurance that should be sent electronically
-            if (insuranceHelper.requiresSpecialHandling(record.insurance)) {
+            // Check if this is a special handling insurance
+            const processingType = insuranceHelper.getReadyToSendProcessingType(record.insurance);
+            if (processingType === 'electronic') {
               console.log(`  ✓ Categorized as: Electronic (Special handling insurance)`);
               noChangesRecords.push(record);
+            } else if (processingType === 'paper') {
+              console.log(`  ✓ Categorized as: Paper (Special handling insurance)`);
+              paperRecords.push(record);
             } else {
-              console.log(`  ⚠️  Skipped: Remarks don't match criteria`);
+              console.log(`  ⚠️  Skipped: Remarks don't match criteria and not a configured special handling insurance`);
             }
           }
         } else {
