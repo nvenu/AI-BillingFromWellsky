@@ -43,11 +43,12 @@ export async function extractDateOfAdmission(pdfBuffer: Buffer): Promise<string 
     
     // Pattern 4: Look for any 8-digit date that looks like mmddyyyy
     // This is a fallback - look for dates in valid range
-    const datePattern = /\b(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])(19|20)\d{2}\b/g;
+    // Skip dates that are too old (before 2020) as they're likely birth dates
+    const datePattern = /\b(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])(20[2-9]\d)\b/g;
     const allDates = text.match(datePattern);
     if (allDates && allDates.length > 0) {
-      console.log(`  ✓ Found potential date(s): ${allDates.join(', ')}`);
-      // Return the first valid date found
+      console.log(`  ✓ Found potential admission date(s): ${allDates.join(', ')}`);
+      // Return the first valid date found (should be admission date)
       return allDates[0];
     }
     
