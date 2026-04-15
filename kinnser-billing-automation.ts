@@ -2005,6 +2005,177 @@ async function processPendingApprovalRecords(page: Page, insuranceHelper: Insura
       console.log("✓ No PARTNERSHIP HEALTH PLAN OF CA records found");
     }
 
+    // Check for Community health Group records (add severity point to remarks)
+    console.log("\n=== CHECKING FOR COMMUNITY HEALTH GROUP RECORDS ===");
+    const communityHealthRecords = records.filter(r => 
+      r.insurance.toLowerCase().includes('community health group')
+    );
+
+    if (communityHealthRecords.length > 0) {
+      console.log(`\n⚠️  Found ${communityHealthRecords.length} Community health Group record(s)`);
+      console.log("  These records require Severity Point calculation based on Date of Admission");
+
+      // Import PDF helper functions
+      const { extractDateOfAdmission, calculateSeverityPoint, formatSeverityPointRemark } = await import('./pdf-helper');
+
+      for (const record of communityHealthRecords) {
+        console.log(`\nProcessing Community health Group record:`);
+        console.log(`  MRN: ${record.mrn}`);
+        console.log(`  Insurance: ${record.insurance}`);
+        console.log(`  Billing Period: ${record.billingPeriodText}`);
+        console.log(`  Billing Period Start: ${record.billingPeriodStart}`);
+
+        // Find the print icon for this record
+        const printIconId = await page.evaluate((rowIndex) => {
+          const rows = Array.from(document.querySelectorAll('table tbody tr'));
+          const row = rows[rowIndex];
+          if (!row) return null;
+          
+          const printIcon = row.querySelector('label[id*="openClaimPrintView"]');
+          return printIcon?.id || null;
+        }, record.index);
+
+        if (!printIconId) {
+          console.log(`  ⚠️  No print icon found for this record - skipping`);
+          continue;
+        }
+
+        console.log(`  Print Icon ID: ${printIconId}`);
+
+        try {
+          // Set up listener for new page (PDF tab) before clicking
+          const newPagePromise = page.context().waitForEvent('page', { timeout: 30000 });
+          
+          // Click print icon
+          console.log(`  Clicking print icon...`);
+          await page.click(`#${printIconId}`);
+          console.log(`  ✓ Print icon clicked`);
+          
+          // Wait for PDF tab to open
+          console.log(`  Waiting for PDF tab to open...`);
+          const pdfPage = await newPagePromise;
+          console.log(`  ✓ PDF tab opened`);
+          
+          // Wait for PDF to fully load
+          console.log(`  Waiting for PDF content to fully load...`);
+          await pdfPage.waitForLoadState('load', { timeout: 30000 });
+          await pdfPage.waitForTimeout(3000); // Extra time for PDF rendering
+          console.log(`  ✓ PDF content ready`);
+          
+          // Get the PDF URL
+          const pdfUrl = pdfPage.url();
+          console.log(`  PDF URL: ${pdfUrl}`);
+          
+          // Download the PDF content
+          console.log(`  Downloading PDF content...`);
+          const response = await pdfPage.context().request.fetch(pdfUrl);
+          const pdfBuffer = await response.body();
+          console.log(`  ✓ Downloaded PDF (${pdfBuffer.length} bytes)`);
+          
+          // Close the PDF tab
+          await pdfPage.close();
+          console.log(`  ✓ Closed PDF tab`);
+          
+          // Extract date of admission from PDF
+          console.log(`  Extracting date of admission from PDF...`);
+          const dateOfAdmission = await extractDateOfAdmission(pdfBuffer);
+          
+          if (!dateOfAdmission) {
+            console.log(`  ⚠️  Could not extract date of admission - skipping severity point calculation`);
+            continue;
+          }
+          
+          console.log(`  ✓ Date of Admission: ${dateOfAdmission}`);
+          
+          // Calculate severity point
+          const severityPoint = calculateSeverityPoint(dateOfAdmission, record.billingPeriodStart);
+          const severityRemark = formatSeverityPointRemark(severityPoint);
+          
+          console.log(`  ✓ Severity Point Remark: "${severityRemark}"`);
+          
+          // Now edit the record to add the severity point remark
+          if (record.editButtonId) {
+            console.log(`  Clicking Edit button: ${record.editButtonId}`);
+            await page.click(`#${record.editButtonId}`);
+            await page.waitForTimeout(2000);
+
+            // Click OK button in popup
+            await page.waitForSelector('#modal_go', { timeout: 10000 });
+            await page.click('#modal_go');
+            console.log("  ✓ Clicked OK button");
+            await page.waitForTimeout(2000);
+
+            // Find and fill the remarks field
+            // The remarks field is typically a textarea or input field
+            console.log("  Looking for remarks field...");
+            
+            // Try different selectors for remarks field
+            const remarksSelectors = [
+              'textarea[ng-model*="remark"]',
+              'textarea[id*="remark"]',
+              'textarea[name*="remark"]',
+              'input[ng-model*="remark"]',
+              'input[id*="remark"]'
+            ];
+            
+            let remarksFieldFound = false;
+            for (const selector of remarksSelectors) {
+              const field = await page.$(selector);
+              if (field) {
+                console.log(`  ✓ Found remarks field: ${selector}`);
+                
+                // Get current value
+                const currentValue = await page.$eval(selector, (el: any) => el.value || '');
+                console.log(`  Current remarks: "${currentValue}"`);
+                
+                // Append severity point remark
+                const newValue = currentValue ? `${currentValue}\n${severityRemark}` : severityRemark;
+                
+                // Clear and fill
+                await page.fill(selector, newValue);
+                console.log(`  ✓ Updated remarks to: "${newValue}"`);
+                
+                remarksFieldFound = true;
+                break;
+              }
+            }
+            
+            if (!remarksFieldFound) {
+              console.log(`  ⚠️  Could not find remarks field - severity point not added`);
+            }
+            
+            // Track this change
+            changedRecords.push({
+              mrn: record.mrn,
+              billingPeriod: record.billingPeriodText,
+              reason: `Community health Group - ${severityRemark}`
+            });
+            
+            await page.waitForTimeout(1000);
+
+            // Click Save and Close
+            await page.waitForSelector('#submitBtn', { timeout: 10000 });
+            await page.click('#submitBtn');
+            console.log("  ✓ Clicked Save and Close");
+
+            // Wait for page to reload
+            await page.waitForSelector('.loading-message', { state: 'hidden', timeout: 60000 });
+            await page.waitForTimeout(3000);
+            console.log(`  ✓ Community health Group record processed successfully`);
+          } else {
+            console.log(`  ⚠️  No edit button found for this record`);
+          }
+          
+        } catch (error) {
+          console.error(`  ✗ Error processing Community health Group record:`, error);
+        }
+      }
+
+      console.log(`\n✓ Completed processing ${communityHealthRecords.length} Community health Group records`);
+    } else {
+      console.log("✓ No Community health Group records found");
+    }
+
     // Check for duplicates with overlapping dates
     console.log("\n=== CHECKING FOR DUPLICATE MRNs WITH OVERLAPPING DATES ===");
     const duplicates = findDuplicatesWithOverlap(records);
