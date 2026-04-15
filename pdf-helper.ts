@@ -3,6 +3,7 @@ import { PDFParse } from 'pdf-parse';
 /**
  * Extract date of admission from UB-04 claim form PDF
  * The date is in mmddyyyy format (e.g., 12052025 for December 5, 2025)
+ * In UB-04 forms, the admission date typically appears after birth date and gender (F/M)
  */
 export async function extractDateOfAdmission(pdfBuffer: Buffer): Promise<string | null> {
   try {
@@ -12,51 +13,62 @@ export async function extractDateOfAdmission(pdfBuffer: Buffer): Promise<string 
     
     console.log("  DEBUG: PDF text length:", text.length);
     
-    // Look for date of admission patterns
-    // UB-04 form typically has "Date of Admission" or similar label
-    // The date is usually in mmddyyyy format
+    // Find all 8-digit dates in the PDF
+    const allDatesPattern = /\b(\d{8})\b/g;
+    const allDates = text.match(allDatesPattern);
     
-    // Pattern 1: Look for 8-digit date near "admission" keyword
-    const admissionPattern = /admission[:\s]*(\d{8})/i;
-    const match1 = text.match(admissionPattern);
-    if (match1) {
-      console.log(`  ✓ Found date of admission (pattern 1): ${match1[1]}`);
-      return match1[1];
+    if (!allDates || allDates.length === 0) {
+      console.log("  ⚠️  No 8-digit dates found in PDF");
+      return null;
     }
     
-    // Pattern 2: Look for "Statement Covers Period" which contains admission date
-    // Format: "Statement Covers Period From: 12052025 Through: 12312025"
-    const periodPattern = /statement\s+covers\s+period\s+from[:\s]*(\d{8})/i;
-    const match2 = text.match(periodPattern);
-    if (match2) {
-      console.log(`  ✓ Found date of admission (pattern 2 - Statement Period): ${match2[1]}`);
-      return match2[1];
+    console.log(`  ✓ Found potential date(s): ${allDates.join(', ')}`);
+    
+    // Filter for dates with year 2020-2030 (admission dates, not birth dates or claim IDs)
+    const validDates = allDates.filter(date => {
+      const year = parseInt(date.substring(4, 8));
+      const month = parseInt(date.substring(0, 2));
+      const day = parseInt(date.substring(2, 4));
+      
+      // Validate year range
+      if (year < 2020 || year > 2030) return false;
+      
+      // Validate month (1-12)
+      if (month < 1 || month > 12) return false;
+      
+      // Validate day (1-31)
+      if (day < 1 || day > 31) return false;
+      
+      return true;
+    });
+    
+    if (validDates.length === 0) {
+      console.log("  ⚠️  No valid dates found (year 2020-2030 with valid month/day)");
+      return null;
     }
     
-    // Pattern 3: Look for "From" date in the billing period section
-    const fromPattern = /from[:\s]*(\d{8})/i;
-    const match3 = text.match(fromPattern);
-    if (match3) {
-      console.log(`  ✓ Found date of admission (pattern 3 - From date): ${match3[1]}`);
-      return match3[1];
+    console.log(`  ✓ Filtered valid dates (2020-2030): ${validDates.join(', ')}`);
+    
+    // Strategy 1: Look for pattern "birth_date [whitespace] F/M [whitespace] admission_date"
+    // This is the typical UB-04 format where admission date follows birth date and gender
+    for (const date of validDates) {
+      // Look for this date preceded by F or M (gender) and another 8-digit number (birth date)
+      const pattern = new RegExp(`\\b\\d{8}\\s+[FM]\\s+${date}\\b`);
+      if (pattern.test(text)) {
+        console.log(`  ✓ Date of Admission (found after birth date and gender): ${date}`);
+        return date;
+      }
     }
     
-    // Pattern 4: Look for any 8-digit date that looks like mmddyyyy
-    // This is a fallback - look for dates in valid range
-    // Skip dates that are too old (before 2020) as they're likely birth dates
-    const datePattern = /\b(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])(20[2-9]\d)\b/g;
-    const allDates = text.match(datePattern);
-    if (allDates && allDates.length > 0) {
-      console.log(`  ✓ Found potential admission date(s): ${allDates.join(', ')}`);
-      // Return the first valid date found (should be admission date)
-      return allDates[0];
-    }
+    console.log("  ⚠️  Could not find date in birth_date-gender-admission pattern");
     
-    console.log("  ⚠️  Could not find date of admission in PDF");
-    console.log("  DEBUG: First 500 characters of PDF text:");
-    console.log(text.substring(0, 500));
+    // Strategy 2: Return the earliest valid date (most likely admission date)
+    validDates.sort();
+    const admissionDate = validDates[0];
     
-    return null;
+    console.log(`  ✓ Date of Admission (earliest valid date): ${admissionDate}`);
+    return admissionDate;
+    
   } catch (error) {
     console.error("  ✗ Error parsing PDF:", error);
     return null;
