@@ -198,8 +198,8 @@ export class InsuranceHelper {
     
     // Define processing type for each special handling insurance
     const specialHandlingConfig: Record<string, "electronic" | "paper"> = {
-      "community health group": "electronic",           // Send electronically (Severity points)
-      "partnership health plan of ca": "electronic"     // Send electronically (Type of Bill 327)
+      "community health group": "paper",                    // Download PDF (not electronic)
+      "partnership health plan of ca": "electronic"         // Send electronically (Type of Bill 327)
     };
     
     return specialHandlingConfig[nameLower] || null;

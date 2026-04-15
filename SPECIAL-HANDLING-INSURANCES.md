@@ -10,10 +10,21 @@ Some insurances require special handling beyond the standard "No changes" or "Pa
 
 ### 1. Community health Group (SD Location)
 - **Special Handling Type**: `severity-points`
-- **Ready To Send Processing**: `electronic`
+- **Ready To Send Processing**: `paper` (Download PDF)
 - **Remarks**: "In the remarks, we must need to mention Severity point..."
-- **Description**: Requires special handling for Severity points in remarks
-- **Implementation Status**: ⚠️ Pending - Special handling logic not yet implemented
+- **Description**: Calculates severity point based on days since admission and adds to remarks
+- **Implementation Status**: ✅ Implemented
+
+**Severity Point Calculation:**
+- Days from Date of Admission to Current Date ÷ 60 (using CEIL)
+- Days 1-60: Severity point 1
+- Days 61-120: Severity point 2
+- Days 121-180: Severity point 3
+- And so on...
+
+**Process Flow:**
+1. In Pending Approval: Click print icon → Extract Date of Admission from PDF → Calculate severity point → Click worksheet edit link → Add "Severity point X" to remarks → Save
+2. In Ready To Send: Download PDF (same as paper insurances)
 
 ### 2. PARTNERSHIP HEALTH PLAN OF CA (YC Location)
 - **Special Handling Type**: `type-of-bill-327`
@@ -96,8 +107,8 @@ If the insurance requires custom processing logic (like Type of Bill 327 for Par
 
 | Insurance Name | Location | Handling Type | Ready To Send | Status |
 |---------------|----------|---------------|---------------|--------|
-| Community health Group | SD | severity-points | electronic | Pending |
-| PARTNERSHIP HEALTH PLAN OF CA | YC | type-of-bill-327 | electronic | Implemented |
+| Community health Group | SD | severity-points | paper | ✅ Implemented |
+| PARTNERSHIP HEALTH PLAN OF CA | YC | type-of-bill-327 | electronic | ✅ Implemented |
 
 ## Notes
 

@@ -1869,6 +1869,10 @@ async function processPendingApprovalRecords(page: Page, insuranceHelper: Insura
         const editButton = row.querySelector('button[id*="edit"], button[ng-click*="edit"]');
         const editButtonId = editButton?.id || '';
 
+        // Find Worksheet link (for Community health Group)
+        const worksheetLink = row.querySelector('a[id*="openWorksheet"]');
+        const worksheetLinkId = worksheetLink?.id || '';
+
         return {
           index,
           mrn,
@@ -1878,6 +1882,7 @@ async function processPendingApprovalRecords(page: Page, insuranceHelper: Insura
           billingPeriodEnd,
           typeOfBill,
           editButtonId,
+          worksheetLinkId,
           allCells
         };
       });
@@ -2087,62 +2092,53 @@ async function processPendingApprovalRecords(page: Page, insuranceHelper: Insura
           
           console.log(`  ✓ Date of Admission: ${dateOfAdmission}`);
           
-          // Calculate severity point
-          const severityPoint = calculateSeverityPoint(dateOfAdmission, record.billingPeriodStart);
+          // Calculate severity point based on current date
+          const severityPoint = calculateSeverityPoint(dateOfAdmission);
           const severityRemark = formatSeverityPointRemark(severityPoint);
           
           console.log(`  ✓ Severity Point Remark: "${severityRemark}"`);
           
-          // Now edit the record to add the severity point remark
-          if (record.editButtonId) {
-            console.log(`  Clicking Edit button: ${record.editButtonId}`);
-            await page.click(`#${record.editButtonId}`);
-            await page.waitForTimeout(2000);
-
-            // Click OK button in popup
-            await page.waitForSelector('#modal_go', { timeout: 10000 });
-            await page.click('#modal_go');
-            console.log("  ✓ Clicked OK button");
-            await page.waitForTimeout(2000);
-
-            // Find and fill the remarks field
-            // The remarks field is typically a textarea or input field
-            console.log("  Looking for remarks field...");
+          // Now edit the record using the worksheet link
+          if (record.worksheetLinkId) {
+            console.log(`  Clicking Worksheet Edit link: ${record.worksheetLinkId}`);
+            await page.click(`#${record.worksheetLinkId}`);
+            console.log("  ✓ Worksheet link clicked");
             
-            // Try different selectors for remarks field
-            const remarksSelectors = [
-              'textarea[ng-model*="remark"]',
-              'textarea[id*="remark"]',
-              'textarea[name*="remark"]',
-              'input[ng-model*="remark"]',
-              'input[id*="remark"]'
-            ];
+            // Wait for loading to appear and disappear
+            console.log("  Waiting for loading to complete...");
+            await page.waitForTimeout(2000);
+            await page.waitForSelector('.loading-message', { state: 'hidden', timeout: 60000 });
+            await page.waitForTimeout(2000);
+            console.log("  ✓ Loading complete");
             
-            let remarksFieldFound = false;
-            for (const selector of remarksSelectors) {
-              const field = await page.$(selector);
-              if (field) {
-                console.log(`  ✓ Found remarks field: ${selector}`);
-                
-                // Get current value
-                const currentValue = await page.$eval(selector, (el: any) => el.value || '');
-                console.log(`  Current remarks: "${currentValue}"`);
-                
-                // Append severity point remark
-                const newValue = currentValue ? `${currentValue}\n${severityRemark}` : severityRemark;
-                
-                // Clear and fill
-                await page.fill(selector, newValue);
-                console.log(`  ✓ Updated remarks to: "${newValue}"`);
-                
-                remarksFieldFound = true;
-                break;
+            // Check if popup appeared and click OK if it exists
+            try {
+              const modalButton = await page.waitForSelector('#modal_go', { timeout: 5000 });
+              if (modalButton) {
+                console.log("  Popup detected, clicking OK...");
+                await page.click('#modal_go');
+                console.log("  ✓ Clicked OK button on popup");
+                await page.waitForTimeout(2000);
               }
+            } catch (e) {
+              console.log("  No popup detected, continuing...");
             }
+
+            // Wait for remarks textarea to be visible
+            console.log("  Waiting for remarks textarea...");
+            await page.waitForSelector('#remarks', { timeout: 10000 });
+            console.log("  ✓ Found remarks textarea");
             
-            if (!remarksFieldFound) {
-              console.log(`  ⚠️  Could not find remarks field - severity point not added`);
-            }
+            // Get current value
+            const currentValue = await page.$eval('#remarks', (el: any) => el.value || '');
+            console.log(`  Current remarks: "${currentValue}"`);
+            
+            // Append severity point remark
+            const newValue = currentValue ? `${currentValue}\n${severityRemark}` : severityRemark;
+            
+            // Clear and fill
+            await page.fill('#remarks', newValue);
+            console.log(`  ✓ Updated remarks to: "${newValue}"`);
             
             // Track this change
             changedRecords.push({
@@ -2154,16 +2150,17 @@ async function processPendingApprovalRecords(page: Page, insuranceHelper: Insura
             await page.waitForTimeout(1000);
 
             // Click Save and Close
+            console.log("  Clicking Save and Close button...");
             await page.waitForSelector('#submitBtn', { timeout: 10000 });
             await page.click('#submitBtn');
             console.log("  ✓ Clicked Save and Close");
 
-            // Wait for page to reload
+            // Wait for page to reload and return to Pending Approval
             await page.waitForSelector('.loading-message', { state: 'hidden', timeout: 60000 });
             await page.waitForTimeout(3000);
             console.log(`  ✓ Community health Group record processed successfully`);
           } else {
-            console.log(`  ⚠️  No edit button found for this record`);
+            console.log(`  ⚠️  No worksheet link found for this record`);
           }
           
         } catch (error) {

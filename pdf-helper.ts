@@ -63,37 +63,34 @@ export async function extractDateOfAdmission(pdfBuffer: Buffer): Promise<string 
 }
 
 /**
- * Calculate severity point based on date of admission and billing period start
+ * Calculate severity point based on date of admission and current date
  * Severity point increases every 60 days
  * - Days 1-60: Severity point 1
  * - Days 61-120: Severity point 2
  * - Days 121-180: Severity point 3
  * - And so on...
  */
-export function calculateSeverityPoint(admissionDate: string, billingPeriodStart: string): number {
+export function calculateSeverityPoint(admissionDate: string): number {
   try {
     // Parse dates from mmddyyyy format
     const admMonth = parseInt(admissionDate.substring(0, 2));
     const admDay = parseInt(admissionDate.substring(2, 4));
     const admYear = parseInt(admissionDate.substring(4, 8));
     
-    // Parse billing period start (MM/DD/YYYY format)
-    const [billMonth, billDay, billYear] = billingPeriodStart.split('/').map(s => parseInt(s));
-    
     // Create Date objects
     const admission = new Date(admYear, admMonth - 1, admDay);
-    const billing = new Date(billYear, billMonth - 1, billDay);
+    const currentDate = new Date();
     
     // Calculate days difference
-    const diffTime = billing.getTime() - admission.getTime();
+    const diffTime = currentDate.getTime() - admission.getTime();
     const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
     
     console.log(`  Date of Admission: ${admMonth}/${admDay}/${admYear}`);
-    console.log(`  Billing Period Start: ${billMonth}/${billDay}/${billYear}`);
+    console.log(`  Current Date: ${currentDate.toLocaleDateString()}`);
     console.log(`  Days since admission: ${diffDays}`);
     
-    // Calculate severity point (1-60 days = 1, 61-120 = 2, etc.)
-    const severityPoint = Math.floor(diffDays / 60) + 1;
+    // Calculate severity point using CEIL (1-60 days = 1, 61-120 = 2, etc.)
+    const severityPoint = Math.ceil(diffDays / 60);
     
     console.log(`  ✓ Calculated Severity Point: ${severityPoint}`);
     
