@@ -405,18 +405,21 @@ Total records selected from Ready tab: ${allSelectedRecords.length}
 Total offices processed: ${officesToProcess.length}
 
 TYPE OF BILL CHANGES (327 - Adjustment Claim):
-${total327Changes > 0 ? `Total records changed to 327: ${total327Changes}
+${total327Changes > 0 ? `Total records needing TOB 327: ${total327Changes}
 
-${summary.filter(s => s.changedTo327Count && s.changedTo327Count > 0).map(s => `${s.office}: ${s.changedTo327Count} record(s) changed to 327`).join('\n')}
+${summary.filter(s => s.changedTo327Count && s.changedTo327Count > 0).map(s => `${s.office}: ${s.changedTo327Count} record(s) need TOB 327`).join('\n')}
 
 DETAILED LIST:
 ${all327Changes.map(change => `  Office: ${change.office}
     - MRN: ${change.mrn}, Billing Period: ${change.billingPeriod}
       Reason: ${change.reason}`).join('\n')}
 
-Note: Records are automatically changed to Type of Bill 327 (Adjustment Claim) in the Pending Approval tab for:
+⚠️  IMPORTANT: These records were DESELECTED and remain in Pending Approval
+    They require manual change to Type of Bill 327 (Adjustment Claim) before approval
+
+Records needing TOB 327:
   1. Duplicate MRN records with overlapping billing periods
-  2. Partnership Health Plan of California insurance` : 'No duplicate records found - no Type of Bill changes needed'}
+  2. Partnership Health Plan of California insurance (if not already 327)` : 'No duplicate records found - no Type of Bill changes needed'} : 'No duplicate records found - no Type of Bill changes needed'}
 
 ${allSelectedRecords.length > 0 ? `
 WORKFLOW STATUS:
@@ -1910,7 +1913,46 @@ async function processPendingApprovalRecords(page: Page, insuranceHelper: Insura
       return []; // Exit function early with empty array
     }
 
-    // Check for PARTNERSHIP HEALTH PLAN OF CA records (always change to 327)
+    // IMPORTANT: Identify duplicates and records that need Type of Bill 327
+    // These will be DESELECTED before approval so they stay in Pending Approval for manual review
+    console.log("\n=== IDENTIFYING RECORDS THAT NEED TYPE OF BILL 327 ===");
+    const recordsNeedingTOB327: number[] = [];
+    
+    // Check for duplicates with overlapping dates
+    console.log("\n=== CHECKING FOR DUPLICATE MRNs WITH OVERLAPPING DATES ===");
+    const duplicates = findDuplicatesWithOverlap(records);
+
+    if (duplicates.length > 0) {
+      console.log(`\n⚠️  Found ${duplicates.length} duplicate MRN(s) with overlapping billing periods`);
+
+      for (const dup of duplicates) {
+        console.log(`\nDuplicate MRN: ${dup.mrn}`);
+        console.log(`  Record indices: ${dup.indices.join(', ')}`);
+        
+        // Add all duplicate record indices to the list
+        dup.indices.forEach((idx: number) => {
+          const record = records[idx];
+          // Only add if not already 327
+          if (!record.typeOfBill.includes('327')) {
+            recordsNeedingTOB327.push(idx);
+            console.log(`  - Record ${idx} (MRN: ${record.mrn}, Billing Period: ${record.billingPeriodText}) needs TOB 327`);
+            
+            // Track this for reporting
+            changedRecords.push({
+              mrn: record.mrn,
+              billingPeriod: record.billingPeriodText,
+              reason: 'Duplicate MRN with overlapping dates - needs Type of Bill 327'
+            });
+          } else {
+            console.log(`  - Record ${idx} already has TOB 327 - will be approved`);
+          }
+        });
+      }
+    } else {
+      console.log("✓ No duplicate MRNs with overlapping billing periods found");
+    }
+
+    // Check for PARTNERSHIP HEALTH PLAN OF CA records (always need 327)
     console.log("\n=== CHECKING FOR PARTNERSHIP HEALTH PLAN OF CA RECORDS ===");
     const partnershipRecords = records.filter(r => 
       r.insurance.toUpperCase().includes('PARTNERSHIP HEALTH PLAN')
@@ -1923,88 +1965,30 @@ async function processPendingApprovalRecords(page: Page, insuranceHelper: Insura
       const recordsNeedingChange = partnershipRecords.filter(r => !r.typeOfBill.includes('327'));
       
       if (recordsNeedingChange.length === 0) {
-        console.log(`✓ All ${partnershipRecords.length} PARTNERSHIP HEALTH PLAN records already have Type of Bill 327 - no changes needed`);
+        console.log(`✓ All ${partnershipRecords.length} PARTNERSHIP HEALTH PLAN records already have Type of Bill 327 - will be approved`);
       } else {
-        console.log(`⚠️  ${recordsNeedingChange.length} record(s) need to be changed to Type of Bill 327`);
-        console.log(`✓ ${partnershipRecords.length - recordsNeedingChange.length} record(s) already have Type of Bill 327 - will skip`);
+        console.log(`⚠️  ${recordsNeedingChange.length} record(s) need Type of Bill 327 - will be DESELECTED`);
+        console.log(`✓ ${partnershipRecords.length - recordsNeedingChange.length} record(s) already have Type of Bill 327 - will be approved`);
 
         for (const record of recordsNeedingChange) {
-          console.log(`\nProcessing PARTNERSHIP HEALTH PLAN record:`);
-          console.log(`  MRN: ${record.mrn}`);
+          console.log(`\n  MRN: ${record.mrn}`);
           console.log(`  Insurance: ${record.insurance}`);
           console.log(`  Billing Period: ${record.billingPeriodText}`);
           console.log(`  Current Type of Bill: ${record.typeOfBill}`);
-
-          if (record.editButtonId) {
-            console.log(`  Clicking Edit button: ${record.editButtonId}`);
-            await page.click(`#${record.editButtonId}`);
-            await page.waitForTimeout(2000);
-
-            // Click OK button in popup
-            await page.waitForSelector('#modal_go', { timeout: 10000 });
-            await page.click('#modal_go');
-            console.log("  ✓ Clicked OK button");
-            await page.waitForTimeout(2000);
-
-            // Select Type of Bill 327 - Adjustment Claim
-            console.log("  Waiting for Type of Bill dropdown...");
-            await page.waitForSelector('#typeOfBill', { timeout: 10000 });
-            
-            // Debug: Check available options
-            const options = await page.evaluate(() => {
-              const select = document.querySelector('#typeOfBill') as HTMLSelectElement;
-              if (!select) return [];
-              return Array.from(select.options).map(opt => ({
-                value: opt.value,
-                text: opt.text.trim()
-              }));
-            });
-            console.log("  Available Type of Bill options:", JSON.stringify(options, null, 2));
-            
-            // Find the option with 327 in the text
-            const option327 = options.find(opt => opt.text.includes('327'));
-            if (option327) {
-              console.log(`  Found 327 option: value="${option327.value}", text="${option327.text}"`);
-              await page.selectOption('#typeOfBill', option327.value);
-              console.log("  ✓ Selected Type of Bill 327 - Adjustment Claim");
-            } else {
-              console.log("  ⚠️  Could not find option with 327, using value '6' as fallback");
-              await page.selectOption('#typeOfBill', '6');
-              console.log("  ✓ Selected Type of Bill (value 6)");
-            }
-            
-            // Verify selection
-            const selectedValue = await page.$eval('#typeOfBill', (el: any) => el.value);
-            const selectedText = await page.$eval('#typeOfBill', (el: any) => {
-              const select = el as HTMLSelectElement;
-              return select.options[select.selectedIndex]?.text || '';
-            });
-            console.log(`  Verification - Selected: value="${selectedValue}", text="${selectedText}"`);
-            
-            // Track this change
-            changedRecords.push({
-              mrn: record.mrn,
-              billingPeriod: record.billingPeriodText,
-              reason: 'Partnership Health Plan CA'
-            });
-            
-            await page.waitForTimeout(1000);
-
-            // Click Save and Close
-            await page.waitForSelector('#submitBtn', { timeout: 10000 });
-            await page.click('#submitBtn');
-            console.log("  ✓ Clicked Save and Close");
-
-            // Wait for page to reload
-            await page.waitForSelector('.loading-message', { state: 'hidden', timeout: 60000 });
-            await page.waitForTimeout(3000);
-            console.log(`  ✓ PARTNERSHIP HEALTH PLAN record processed successfully`);
-          } else {
-            console.log(`  ⚠️  No edit button found for this record`);
-          }
+          console.log(`  → Will be DESELECTED (needs manual change to TOB 327)`);
+          
+          // Add to list of records needing 327
+          recordsNeedingTOB327.push(record.index);
+          
+          // Track this for reporting
+          changedRecords.push({
+            mrn: record.mrn,
+            billingPeriod: record.billingPeriodText,
+            reason: 'Partnership Health Plan CA - needs Type of Bill 327'
+          });
         }
 
-        console.log(`\n✓ Completed processing ${recordsNeedingChange.length} PARTNERSHIP HEALTH PLAN OF CA records`);
+        console.log(`\n✓ Identified ${recordsNeedingChange.length} PARTNERSHIP HEALTH PLAN OF CA records that need TOB 327`);
       }
     } else {
       console.log("✓ No PARTNERSHIP HEALTH PLAN OF CA records found");
@@ -2173,98 +2157,6 @@ async function processPendingApprovalRecords(page: Page, insuranceHelper: Insura
       console.log("✓ No Community health Group records found");
     }
 
-    // Check for duplicates with overlapping dates
-    console.log("\n=== CHECKING FOR DUPLICATE MRNs WITH OVERLAPPING DATES ===");
-    const duplicates = findDuplicatesWithOverlap(records);
-
-    if (duplicates.length > 0) {
-      console.log(`\n⚠️  Found ${duplicates.length} duplicate MRN(s) with overlapping billing periods`);
-
-      for (const dup of duplicates) {
-        console.log(`\nProcessing duplicate MRN: ${dup.mrn}`);
-        console.log(`  Records: ${dup.indices.join(', ')}`);
-
-        // Process ALL duplicate records, not just the first one
-        for (let i = 0; i < dup.indices.length; i++) {
-          const recordIndex = dup.indices[i];
-          const record = records[recordIndex];
-
-          if (record.editButtonId) {
-            console.log(`\n  Processing record ${i + 1}/${dup.indices.length} (index ${recordIndex})`);
-            console.log(`  Clicking Edit button: ${record.editButtonId}`);
-            await page.click(`#${record.editButtonId}`);
-            await page.waitForTimeout(2000);
-
-            // Click OK button in popup
-            await page.waitForSelector('#modal_go', { timeout: 10000 });
-            await page.click('#modal_go');
-            console.log("  ✓ Clicked OK button");
-            await page.waitForTimeout(2000);
-
-            // Select Type of Bill 327 - Adjustment Claim
-            console.log("  Waiting for Type of Bill dropdown...");
-            await page.waitForSelector('#typeOfBill', { timeout: 10000 });
-            
-            // Debug: Check available options
-            const options = await page.evaluate(() => {
-              const select = document.querySelector('#typeOfBill') as HTMLSelectElement;
-              if (!select) return [];
-              return Array.from(select.options).map(opt => ({
-                value: opt.value,
-                text: opt.text.trim()
-              }));
-            });
-            console.log("  Available Type of Bill options:", JSON.stringify(options, null, 2));
-            
-            // Find the option with 327 in the text
-            const option327 = options.find(opt => opt.text.includes('327'));
-            if (option327) {
-              console.log(`  Found 327 option: value="${option327.value}", text="${option327.text}"`);
-              await page.selectOption('#typeOfBill', option327.value);
-              console.log("  ✓ Selected Type of Bill 327 - Adjustment Claim");
-            } else {
-              console.log("  ⚠️  Could not find option with 327, using value '6' as fallback");
-              await page.selectOption('#typeOfBill', '6');
-              console.log("  ✓ Selected Type of Bill (value 6)");
-            }
-            
-            // Verify selection
-            const selectedValue = await page.$eval('#typeOfBill', (el: any) => el.value);
-            const selectedText = await page.$eval('#typeOfBill', (el: any) => {
-              const select = el as HTMLSelectElement;
-              return select.options[select.selectedIndex]?.text || '';
-            });
-            console.log(`  Verification - Selected: value="${selectedValue}", text="${selectedText}"`);
-            
-            // Track this change
-            changedRecords.push({
-              mrn: record.mrn,
-              billingPeriod: record.billingPeriodText,
-              reason: 'Duplicate MRN with overlapping dates'
-            });
-            
-            await page.waitForTimeout(1000);
-
-            // Click Save and Close
-            await page.waitForSelector('#submitBtn', { timeout: 10000 });
-            await page.click('#submitBtn');
-            console.log("  ✓ Clicked Save and Close");
-
-            // Wait for page to reload
-            await page.waitForSelector('.loading-message', { state: 'hidden', timeout: 60000 });
-            await page.waitForTimeout(3000);
-            console.log(`  ✓ Record ${i + 1} processed successfully`);
-          } else {
-            console.log(`  ⚠️  No edit button found for record ${recordIndex}`);
-          }
-        }
-
-        console.log(`\n✓ Completed processing all ${dup.indices.length} duplicate records for MRN ${dup.mrn}`);
-      }
-    } else {
-      console.log("✓ No duplicate MRNs with overlapping billing periods found");
-    }
-
     console.log("\n=== SELECTING ALL RECORDS FOR APPROVAL ===");
 
     // Try to find and click the "Select All" checkbox
@@ -2312,6 +2204,50 @@ async function processPendingApprovalRecords(page: Page, insuranceHelper: Insura
         return checkboxes.filter(cb => (cb as HTMLInputElement).checked).length;
       });
       console.log(`✓ After individual clicks: ${checkedCountAfter} checkboxes are checked`);
+    }
+
+    // DESELECT records that need Type of Bill 327
+    if (recordsNeedingTOB327.length > 0) {
+      console.log(`\n=== DESELECTING ${recordsNeedingTOB327.length} RECORDS THAT NEED TOB 327 ===`);
+      console.log(`These records will stay in Pending Approval for manual Type of Bill change to 327`);
+      
+      for (const recordIndex of recordsNeedingTOB327) {
+        const record = records[recordIndex];
+        console.log(`\nDeselecting record ${recordIndex}:`);
+        console.log(`  MRN: ${record.mrn}`);
+        console.log(`  Insurance: ${record.insurance}`);
+        console.log(`  Billing Period: ${record.billingPeriodText}`);
+        
+        // Find and click the checkbox for this row
+        const deselected = await page.evaluate((rowIndex) => {
+          const rows = Array.from(document.querySelectorAll('table tbody tr'));
+          const row = rows[rowIndex];
+          if (!row) return false;
+          
+          const checkbox = row.querySelector('input[type="checkbox"]') as HTMLInputElement;
+          if (checkbox && checkbox.checked) {
+            checkbox.click();
+            return true;
+          }
+          return false;
+        }, recordIndex);
+        
+        if (deselected) {
+          console.log(`  ✓ Deselected checkbox for record ${recordIndex}`);
+        } else {
+          console.log(`  ⚠️  Could not deselect checkbox for record ${recordIndex}`);
+        }
+        
+        await page.waitForTimeout(300);
+      }
+      
+      // Verify final count
+      const finalCheckedCount = await page.evaluate(() => {
+        const checkboxes = Array.from(document.querySelectorAll('table tbody tr input[type="checkbox"]'));
+        return checkboxes.filter(cb => (cb as HTMLInputElement).checked).length;
+      });
+      console.log(`\n✓ Final: ${finalCheckedCount} records selected for approval`);
+      console.log(`✓ ${recordsNeedingTOB327.length} records deselected (need TOB 327)`);
     }
 
     // Wait for any "checking" state to complete
