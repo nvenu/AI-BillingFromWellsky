@@ -1,215 +1,334 @@
-[16:50:51] 🚀 Starting automation for Aspire - San Diego...
-[16:50:51] Starting Kinnser automation for: 1407126,Clinic
-[16:50:51] Selected insurances: Community health Group
-[16:50:51] ============================================================
-[16:50:51] 🚀 Kinnser Billing Automation v2.3.0
-[16:50:51] 📅 Build Date: 2026-04-10
-[16:50:51] ⏰ Started: 2026-04-15 16:50:51
-[16:50:51] ============================================================
-[16:50:53] ℹ️ Added special handling insurance: Community health Group
-[16:50:53] ℹ️ Added special handling insurance: PARTNERSHIP HEALTH PLAN OF CA
-[16:50:53] Loaded 224 insurance instructions
-[16:50:53] Found 165 insurances with 'no changes' or 'paper' remark
-[16:50:53] Insurances to process: ["acadia insurance company","aetna better health","aetna better health for oh","aetna commercial","aim mutual insurance","alignment health plan","allegiant medical network","allied benefit systems inc","allied managed care inc.","ambetter","american zurich insurance company","anthem bc federal employee program","anthem bcbs commercial","anthem empireblue commerial","anthem loa","apogee surgery center","arizona priority care","asa geha","bcbs commercial il","bcbs federal plans of nv","bcbs mcr of nv","bcbs medicaid il","bcbs mn medicaid","blue cross blue shield commercial","blue cross blue shield medicare","blue cross blue shield of nevada","blue cross commercial","blue shield commercial","blue shield mcr","blue shield medicare","boston medical center health plan pps","brand new day","bristol hospice","bsc promise health medi-cal","california fair services authority","california health & wellness","caloptima","carecentrix","carelon medical benefits management","carelon medical benefits management aetna","caresource mcd","careworks","cca (masshealth)","cdphp","charity","cigna","clear price networks","community health group","compdme","corvel administrator","culinary health fund","dcm","dignity health","enloe medical center","essence healthcare","eternal health","fallon community health plan","federated mutual insurance company","first call","freedom health","gallagher","geha","geha nonpps","gsrma","hbmi","healthcomp inc","healthpartners com","healthpartners com na","healthpartners mcd","healthpartners mcr","healthscope","hennepin health plan","home care connect","homelink","humana","humana jencare","humana pps","imagine 360","imperial health plan","kaiser permanente","keenan & associates","liberty healthshare pps","magnolia compcare, llc","medcare partners","medcomp","medi-cal","medica health plan","medicaid il","medicaid mn","medical mutual commercial","medicare","medicare scripps aco","medigold","mercy home health","meridian health plan","meritain health","molina commercial","molina healthcare of ohio mcd","molina healthcare of ohio mcr","molina medi-cal ca","molina medi-cal yc","molina pps","network health","ohio medicaid","one call","one call care management - new","onecall care management","optum","optum care network nv-ppo","optum insurance","optum insurance new","optum-life1","orchid medical","oscar health","oscar insurance corporation","palomar health","paradigm","partnership health plan of ca","phmg","phmg – arc","phmg – graybill","phmg – inland","pma","pomona valley hospital medical center","preferred employers insurance","primary care associated medical group","priority health","private pay","professional health network","santa rosa memorial hospital","scan health plan","scripps","scripps loa","sedgwick","sedgwick wc","senior whole health","sfm risk solutions","sms national","southwest service administrators","state farm insurance","tribal first","tricare west region","tufts health plan","ucare minnesota","ucare minnesota mcd","ucsd medical center","uhc (masshealth)","uhc - empire plan","uhc commercial","uhhs commercial","umr","umr mn","united health care commercial","united healthcare 1500","united healthcare commercial","united healthcare il","united healthcare mcr","va - az","va northern california health care system","vantage medical group","wellcare medicare","western health adv","workers compensation trust","zeils","zing health"]
-[16:50:53] Navigating to Kinnser login page...
-[16:51:00] ✓ Login page loaded
-[16:51:00] Filling in credentials...
-[16:51:03] ✓ Credentials filled
-[16:51:03] Clicking login button...
-[16:51:03] Dialog detected: confirm - "This system is intended for business use only. All data herein is considered confidential and proprietary. Unauthorized access, use, modification, destruction, or disclosure of information supported by this system will result in prosecution. Click OK to continue."
-[16:51:03] Dialog accepted
-[16:51:07] Waiting for login to complete...
-[16:51:23] ✓ Logged in successfully, current URL: https://kinnser.net/AM/Message/inbox.cfm?sessionCacheKey=A8BBE17C-B179-4F08-D8A46787C3FB02DB:C8CA0D68
-[16:51:23] ================================================================================
-[16:51:23] STARTING PROCESSING
-[16:51:23] Offices to process: 1
-[16:51:23] - Aspire - San Diego (SD)
-[16:51:23] ================================================================================
-[16:51:23] [1/1] Processing Aspire - San Diego...
-[16:51:23] === Selecting Office: Aspire - San Diego ===
-[16:51:23] ✓ Selected office: Aspire - San Diego
-[16:51:26] Waiting for loading to complete...
-[16:51:26] No loading spinner element found on page
-[16:51:26] ✓ Loading complete
-[16:51:26] ✓ Office switched to Aspire - San Diego
-[16:51:26] ================================================================================
-[16:51:26] PROCESSING OFFICE: Aspire - San Diego (SD)
-[16:51:26] ================================================================================
-[16:51:26] === Navigating to Billing Manager ===
-[16:51:28] Clicking Go To menu...
-[16:51:31] Waiting for Billing Manager menu item to be visible...
-[16:51:31] Clicking Billing Manager...
-[16:51:52] ✓ Navigation completed, URL: https://kinnser.net/EHR/#/AM/billing?sessionCacheKey=A8BBE17C-B179-4F08-D8A46787C3FB02DB:C8CA0D68
-[16:51:52] Waiting for Billing Manager page to fully load...
-[16:51:52] Waiting for loading to complete...
-[16:51:52] Loading spinner is already hidden - page is ready
-[16:51:53] ✓ Loading complete
-[16:51:56] Checking for Primary Payer button...
-[16:52:03] ✓ Primary Payer button is visible
-[16:52:03] ✓ Billing Manager page fully loaded and ready
-[16:52:03] === Starting applyFilters ===
-[16:52:03] Current URL: https://kinnser.net/EHR/#/AM/billing?sessionCacheKey=A8BBE17C-B179-4F08-D8A46787C3FB02DB:C8CA0D68
-[16:52:03] Waiting for Primary Payer dropdown (#ManagedCareClaims)...
-[16:52:03] ✓ Found Primary Payer dropdown
-[16:52:03] Clicking Primary Payer dropdown...
-[16:52:04] Waiting for Ready link in dropdown (#managedCare-ready)...
-[16:52:04] ✓ Found Ready link
-[16:52:04] Clicking Ready link...
-[16:52:06] Waiting for Claims Manager page to load...
-[16:52:06] Waiting for loading to complete...
-[16:52:06] Loading spinner is already hidden - page is ready
-[16:52:06] ✓ Loading complete
-[16:52:06] ✓ Page loaded: You are about to be logged outclose
-[16:52:06] === applyFilters completed ===
-[16:52:06] Waiting for insurance dropdown...
-[16:52:08] Found 50 available insurances in dropdown
-[16:52:08] User selected 1 insurance(s)
-[16:52:08] Selecting specific insurance(s): Community health Group
-[16:52:08] Selecting insurance with value: 15
-[16:52:09] Waiting for records to load...
-[16:52:09] Waiting for loading to complete...
-[16:52:09] Loading spinner is already hidden - page is ready
-[16:52:09] ✓ Loading complete
-[16:52:09] Waiting for Angular to render table data...
-[16:52:14] Waiting for Angular to render table data...
-[16:52:14] Insurance selection completed successfully
-[16:52:14] Waiting for results table with data...
-[16:52:14] Waiting for loading spinner to disappear...
-[16:52:14] Waiting for loading to complete...
-[16:52:15] Loading spinner is already hidden - page is ready
-[16:52:15] ✓ Loading complete
-[16:52:15] Waiting for Angular to render table data...
-[16:52:23] Waiting for data to populate...
-[16:52:28] 📸 Screenshot saved: debug-table-check.png
-[16:52:28] ✓ Results table with data is ready
-[16:52:28] === PROCESSING RECORDS ONE BY ONE ===
-[16:52:28] Flow: Find valid record → Select → Scroll → Click Create → Check for errors → Repeat (stays on Ready tab)
-[16:52:28] --- Iteration 1 ---
-[16:52:30] Waiting for loading to complete...
-[16:52:30] Loading spinner is already hidden - page is ready
-[16:52:31] ✓ Loading complete
-[16:52:31] Filtering 1 records based on insurance criteria...
-[16:52:31] ✓ EXACT MATCH: "Community health Group" is in approved list
-[16:52:31] ✓ Valid: Community health Group
-[16:52:31] Result: 1 valid records out of 1 total
-[16:52:31] [Record 1] Processing: Community health Group
-[16:52:31] ✓ Selected checkbox
-[16:52:31] ⟳ Scrolling to Create button...
-[16:52:32] ⟳ Clicking Create button...
-[16:52:32] ✓ Create button clicked
-[16:52:32] ⏳ Waiting for claim creation...
-[16:52:35] Waiting for loading to complete...
-[16:52:35] Loading spinner is already hidden - page is ready
-[16:52:36] ✓ Loading complete
-[16:52:38] ✅ SUCCESS: Claim(s) have been created successfully and can be reviewed in the Pending Approval tab.
-[16:52:38] ✓ Processed successfully (Total: 1)
-[16:52:38] --- Iteration 2 ---
-[16:52:40] Waiting for loading to complete...
-[16:52:40] Loading spinner is already hidden - page is ready
-[16:52:40] ✓ Loading complete
-[16:52:40] Filtering 0 records based on insurance criteria...
-[16:52:40] Result: 0 valid records out of 0 total
-[16:52:40] ✓ No more valid records found - completed
-[16:52:40] === COMPLETED ===
-[16:52:40] Total records processed successfully: 1
-[16:52:40] Total records failed: 0
-[16:52:40] === Saving Excel File ===
-[16:52:40] Records to save: 1
-[16:52:40] Filename: selected-records-SD-Aspire___San_Diego-2026-04-15_16-52-40.xlsx
-[16:52:40] ✓ Successfully saved 1 selected records to selected-records-SD-Aspire___San_Diego-2026-04-15_16-52-40.xlsx
-[16:52:40] ✓ File verified: selected-records-SD-Aspire___San_Diego-2026-04-15_16-52-40.xlsx (16429 bytes)
-[16:52:40] ✓ All 1 claims created for Aspire - San Diego
-[16:52:40] === PROCESSING PENDING APPROVAL ===
-[16:52:40] Navigating to Pending Approval tab...
-[16:52:40] Not on Pending Approval page, clicking the tab...
-[16:52:42] ✓ Clicked Pending Approval tab
-[16:52:45] ✓ Pending Approval page loaded
-[16:52:45] Current URL: https://kinnser.net/EHR/#/AM/billing/claims-manager/managed-care/approve-claims?sessionCacheKey=A8BBE17C-B179-4F08-D8A46787C3FB02DB:C8CA0D68
-[16:52:45] Waiting for initial page load...
-[16:52:48] ✓ Initial loading complete
-[16:52:48] Selecting 'All Insurances' from dropdown...
-[16:52:48] Current dropdown value: 15
-[16:52:48] ✓ Selected 'All Insurances'
-[16:52:48] Waiting for records to load...
-[16:52:53] ✓ Records loaded
-[16:52:53] Extracting record details from table...
-[16:52:53] Found 5 records in Pending Approval
-[16:52:53] === SAMPLE RECORDS (first 3) ===
-[16:52:53] Record 1:
-[16:52:53] MRN: "SD251203113104"
-[16:52:53] Insurance: "Sharp Community"
-[16:52:53] Billing Period: "04/05/2026 - 04/11/2026"
-[16:52:53] Billing Period Start: "04/05/2026"
-[16:52:53] Billing Period End: "04/11/2026"
-[16:52:53] Type of Bill: "323"
-[16:52:53] Edit Button ID: ""
-[16:52:53] All Cells: [1. | | Cullum, Richard C. | SD251203113104 | Aspire Home Healthcare | Sharp Community | 04/05/2026 - 04/11/2026 | | 62941231 | Claim Created | 323 | $375.00 | | | ]
-[16:52:53] Record 2:
-[16:52:53] MRN: "SD241105126501"
-[16:52:53] Insurance: "Community health Group"
-[16:52:53] Billing Period: "04/05/2026 - 04/11/2026"
-[16:52:53] Billing Period Start: "04/05/2026"
-[16:52:53] Billing Period End: "04/11/2026"
-[16:52:53] Type of Bill: "323"
-[16:52:53] Edit Button ID: ""
-[16:52:53] All Cells: [2. | | Reyes Rodriguez, Maria | SD241105126501 | Aspire Home Healthcare | Community health Group | 04/05/2026 - 04/11/2026 | | 62941457 | Claim Created | 323 | $375.00 | | | ]
-[16:52:53] Record 3:
-[16:52:53] MRN: ""
-[16:52:53] Insurance: ""
-[16:52:53] Billing Period: ""
-[16:52:53] Billing Period Start: ""
-[16:52:53] Billing Period End: ""
-[16:52:53] Type of Bill: ""
-[16:52:53] Edit Button ID: ""
-[16:52:53] All Cells: [Date: | Next Follow up:]
-[16:52:53] === CHECKING FOR PARTNERSHIP HEALTH PLAN OF CA RECORDS ===
-[16:52:53] ✓ No PARTNERSHIP HEALTH PLAN OF CA records found
-[16:52:53] === CHECKING FOR COMMUNITY HEALTH GROUP RECORDS ===
-[16:52:53] ⚠️ Found 1 Community health Group record(s)
-[16:52:53] These records require Severity Point calculation based on Date of Admission
-[16:52:53] Processing Community health Group record:
-[16:52:53] MRN: SD241105126501
-[16:52:53] Insurance: Community health Group
-[16:52:53] Billing Period: 04/05/2026 - 04/11/2026
-[16:52:53] Billing Period Start: 04/05/2026
-[16:52:54] Print Icon ID: openClaimPrintView62941457
-[16:52:54] Clicking print icon...
-[16:52:54] ✓ Print icon clicked
-[16:52:54] Waiting for PDF tab to open...
-[16:52:57] ✓ PDF tab opened
-[16:52:57] Waiting for PDF content to fully load...
-[16:53:00] ✓ PDF content ready
-[16:53:00] PDF URL: https://kinnser.net/AM/SharedTemp/ub_A8CC5138-D1E4-1728-3BCE879CA5964FE1.pdf
-[16:53:00] Downloading PDF content...
-[16:53:04] ✓ Downloaded PDF (235291 bytes)
-[16:53:04] ✓ Closed PDF tab
-[16:53:04] Extracting date of admission from PDF...
-[16:53:04] DEBUG: PDF text length: 2523
-[16:53:04] ✓ Found potential date(s): 12051965, 08062025, 04072026
-[16:53:04] ✓ Date of Admission: 12051965
-[16:53:04] Date of Admission: 12/5/1965
-[16:53:04] Current Date: 4/15/2026
-[16:53:04] Days since admission: 22046
-[16:53:04] ✓ Calculated Severity Point: 368
-[16:53:04] ✓ Severity Point Remark: "Severity point 368"
-[16:53:04] Clicking Worksheet Edit link: openWorksheet62941457
-[16:53:05] ✓ Worksheet link clicked
-[16:53:05] Waiting for loading to complete...
-[16:53:15] ✓ Loading complete
-[16:53:15] Popup detected, clicking OK...
-[16:53:16] ✓ Clicked OK button on popup
-[16:53:18] Waiting for remarks textarea...
-[16:53:18] ✓ Found remarks textarea
-[16:53:18] Current remarks: ""
-[16:53:18] ✓ Updated remarks to: "Severity point 368"
-[16:53:19] Clicking Save and Close button...
-[16:53:19] ✓ Clicked Save and Close
-[16:53:32] ✓ Completed processing 1 Community health Group records
-[16:53:32] === CHECKING FOR DUPLICATE MRNs WITH OVERLAPPING DATES ===
-[16:53:32] ✓ No duplicate MRNs with overlapping billing periods found
-[16:53:32] === SELECTING ALL RECORDS FOR APPROVAL ===
-[16:53:32] Looking for 'Select All' checkbox...
-[16:53:32] Continuing anyway...
-[16:53:32] ✓ Successfully processed Aspire - San Diego
-[16:53:32] ✓ Completed Aspire - San Diego: 1 records from Ready tab, 0 records from Ready To Send tab
-[16:53:32] Cleaning up browser...
+[17:19:01] 🚀 Starting automation for Aspire - San Diego...
+[17:19:02] Starting Kinnser automation for: 1407126,Clinic
+[17:19:02] Selected insurances: Community health Group
+[17:19:02] ============================================================
+[17:19:02] 🚀 Kinnser Billing Automation v2.3.0
+[17:19:02] 📅 Build Date: 2026-04-10
+[17:19:02] ⏰ Started: 2026-04-15 11:49:02
+[17:19:02] ============================================================
+[17:19:02] ℹ️ Added special handling insurance: Community health Group
+[17:19:02] ℹ️ Added special handling insurance: PARTNERSHIP HEALTH PLAN OF CA
+[17:19:02] Loaded 224 insurance instructions
+[17:19:02] Found 165 insurances with 'no changes' or 'paper' remark
+[17:19:02] Insurances to process: ["acadia insurance company","aetna better health","aetna better health for oh","aetna commercial","aim mutual insurance","alignment health plan","allegiant medical network","allied benefit systems inc","allied managed care inc.","ambetter","american zurich insurance company","anthem bc federal employee program","anthem bcbs commercial","anthem empireblue commerial","anthem loa","apogee surgery center","arizona priority care","asa geha","bcbs commercial il","bcbs federal plans of nv","bcbs mcr of nv","bcbs medicaid il","bcbs mn medicaid","blue cross blue shield commercial","blue cross blue shield medicare","blue cross blue shield of nevada","blue cross commercial","blue shield commercial","blue shield mcr","blue shield medicare","boston medical center health plan pps","brand new day","bristol hospice","bsc promise health medi-cal","california fair services authority","california health & wellness","caloptima","carecentrix","carelon medical benefits management","carelon medical benefits management aetna","caresource mcd","careworks","cca (masshealth)","cdphp","charity","cigna","clear price networks","community health group","compdme","corvel administrator","culinary health fund","dcm","dignity health","enloe medical center","essence healthcare","eternal health","fallon community health plan","federated mutual insurance company","first call","freedom health","gallagher","geha","geha nonpps","gsrma","hbmi","healthcomp inc","healthpartners com","healthpartners com na","healthpartners mcd","healthpartners mcr","healthscope","hennepin health plan","home care connect","homelink","humana","humana jencare","humana pps","imagine 360","imperial health plan","kaiser permanente","keenan & associates","liberty healthshare pps","magnolia compcare, llc","medcare partners","medcomp","medi-cal","medica health plan","medicaid il","medicaid mn","medical mutual commercial","medicare","medicare scripps aco","medigold","mercy home health","meridian health plan","meritain health","molina commercial","molina healthcare of ohio mcd","molina healthcare of ohio mcr","molina medi-cal ca","molina medi-cal yc","molina pps","network health","ohio medicaid","one call","one call care management - new","onecall care management","optum","optum care network nv-ppo","optum insurance","optum insurance new","optum-life1","orchid medical","oscar health","oscar insurance corporation","palomar health","paradigm","partnership health plan of ca","phmg","phmg – arc","phmg – graybill","phmg – inland","pma","pomona valley hospital medical center","preferred employers insurance","primary care associated medical group","priority health","private pay","professional health network","santa rosa memorial hospital","scan health plan","scripps","scripps loa","sedgwick","sedgwick wc","senior whole health","sfm risk solutions","sms national","southwest service administrators","state farm insurance","tribal first","tricare west region","tufts health plan","ucare minnesota","ucare minnesota mcd","ucsd medical center","uhc (masshealth)","uhc - empire plan","uhc commercial","uhhs commercial","umr","umr mn","united health care commercial","united healthcare 1500","united healthcare commercial","united healthcare il","united healthcare mcr","va - az","va northern california health care system","vantage medical group","wellcare medicare","western health adv","workers compensation trust","zeils","zing health"]
+[17:19:02] Navigating to Kinnser login page...
+[17:19:02] ✓ Login page loaded
+[17:19:02] Filling in credentials...
+[17:19:02] ✓ Credentials filled
+[17:19:02] Clicking login button...
+[17:19:03] Dialog detected: confirm - "This system is intended for business use only. All data herein is considered confidential and proprietary. Unauthorized access, use, modification, destruction, or disclosure of information supported by this system will result in prosecution. Click OK to continue."
+[17:19:03] Dialog accepted
+[17:19:06] Waiting for login to complete...
+[17:19:11] ✓ Logged in successfully, current URL: https://kinnser.net/AM/Message/inbox.cfm?sessionCacheKey=A9BC21A7-97EF-E8C1-54D94DAE5D1D1508:C8CA0D68
+[17:19:11] ================================================================================
+[17:19:11] STARTING PROCESSING
+[17:19:11] Offices to process: 1
+[17:19:11] - Aspire - San Diego (SD)
+[17:19:11] ================================================================================
+[17:19:11] [1/1] Processing Aspire - San Diego...
+[17:19:11] === Selecting Office: Aspire - San Diego ===
+[17:19:11] ✓ Selected office: Aspire - San Diego
+[17:19:14] Waiting for loading to complete...
+[17:19:14] Loading spinner is already hidden - page is ready
+[17:19:15] ✓ Loading complete
+[17:19:15] ✓ Office switched to Aspire - San Diego
+[17:19:15] ================================================================================
+[17:19:15] PROCESSING OFFICE: Aspire - San Diego (SD)
+[17:19:15] ================================================================================
+[17:19:15] === Navigating to Billing Manager ===
+[17:19:15] Clicking Go To menu...
+[17:19:18] Waiting for Billing Manager menu item to be visible...
+[17:19:18] Clicking Billing Manager...
+[17:19:20] ✓ Navigation completed, URL: https://kinnser.net/EHR/#/AM/billing?sessionCacheKey=A9BC21A7-97EF-E8C1-54D94DAE5D1D1508:C8CA0D68
+[17:19:20] Waiting for Billing Manager page to fully load...
+[17:19:20] Waiting for loading to complete...
+[17:19:21] Loading spinner is already hidden - page is ready
+[17:19:21] ✓ Loading complete
+[17:19:24] Checking for Primary Payer button...
+[17:19:24] ✓ Primary Payer button is visible
+[17:19:24] ✓ Billing Manager page fully loaded and ready
+[17:19:24] === Starting applyFilters ===
+[17:19:24] Current URL: https://kinnser.net/EHR/#/AM/billing?sessionCacheKey=A9BC21A7-97EF-E8C1-54D94DAE5D1D1508:C8CA0D68
+[17:19:24] Waiting for Primary Payer dropdown (#ManagedCareClaims)...
+[17:19:24] ✓ Found Primary Payer dropdown
+[17:19:24] Clicking Primary Payer dropdown...
+[17:19:25] Waiting for Ready link in dropdown (#managedCare-ready)...
+[17:19:25] ✓ Found Ready link
+[17:19:25] Clicking Ready link...
+[17:19:25] Waiting for Claims Manager page to load...
+[17:19:25] Waiting for loading to complete...
+[17:19:26] Loading spinner is already hidden - page is ready
+[17:19:26] ✓ Loading complete
+[17:19:26] ✓ Page loaded: Claims Manager: Primary Managed CareTrouble creating claims? Click Here!
+[17:19:26] === applyFilters completed ===
+[17:19:26] Waiting for insurance dropdown...
+[17:19:26] Found 50 available insurances in dropdown
+[17:19:26] User selected 1 insurance(s)
+[17:19:26] Selecting specific insurance(s): Community health Group
+[17:19:26] Selecting insurance with value: 15
+[17:19:27] Waiting for records to load...
+[17:19:27] Waiting for loading to complete...
+[17:19:27] Loading spinner is already hidden - page is ready
+[17:19:27] ✓ Loading complete
+[17:19:27] Waiting for Angular to render table data...
+[17:19:32] Waiting for Angular to render table data...
+[17:19:32] Insurance selection completed successfully
+[17:19:32] Waiting for results table with data...
+[17:19:32] Waiting for loading spinner to disappear...
+[17:19:32] Waiting for loading to complete...
+[17:19:33] Loading spinner is already hidden - page is ready
+[17:19:33] ✓ Loading complete
+[17:19:33] Waiting for Angular to render table data...
+[17:19:41] Waiting for data to populate...
+[17:19:46] 📸 Screenshot saved: debug-table-check.png
+[17:19:46] ⚠️ No records found in tab - will skip to next tab
+[17:19:46] No records in Ready tab for Aspire - San Diego
+[17:19:46] Will still process Pending Approval and Ready To Send tabs...
+[17:19:46] === PROCESSING PENDING APPROVAL ===
+[17:19:46] Navigating to Pending Approval tab...
+[17:19:46] Not on Pending Approval page, clicking the tab...
+[17:19:46] ✓ Clicked Pending Approval tab
+[17:19:49] ✓ Pending Approval page loaded
+[17:19:49] Current URL: https://kinnser.net/EHR/#/AM/billing/claims-manager/managed-care/approve-claims?sessionCacheKey=A9BC21A7-97EF-E8C1-54D94DAE5D1D1508:C8CA0D68
+[17:19:49] Waiting for initial page load...
+[17:19:51] ✓ Initial loading complete
+[17:19:51] Selecting 'All Insurances' from dropdown...
+[17:19:51] Current dropdown value: 15
+[17:19:51] ✓ Selected 'All Insurances'
+[17:19:51] Waiting for records to load...
+[17:19:56] ✓ Records loaded
+[17:19:56] ✓ No records found in Pending Approval - nothing to approve
+[17:19:56] This is normal if no claims were created or all were already processed
+[17:19:56] Continuing to Ready To Send tab...
+[17:19:56] === Navigating to Ready To Send ===
+[17:19:57] ✓ Clicked Ready To Send tab
+[17:20:00] ✓ Ready To Send page loaded
+[17:20:00] === PROCESSING READY TO SEND ===
+[17:20:02] Selecting user-specified insurance(s) from dropdown...
+[17:20:02] Insurances to select: Community health Group
+[17:20:02] Waiting for insurance dropdown...
+[17:20:02] Found 50 available insurances in dropdown
+[17:20:02] User selected 1 insurance(s)
+[17:20:02] Selecting specific insurance(s): Community health Group
+[17:20:02] Selecting insurance with value: 15
+[17:20:02] Waiting for records to load...
+[17:20:02] Waiting for loading to complete...
+[17:20:02] Loading spinner is already hidden - page is ready
+[17:20:02] ✓ Loading complete
+[17:20:02] Waiting for Angular to render table data...
+[17:20:07] Waiting for Angular to render table data...
+[17:20:07] Insurance selection completed successfully
+[17:20:12] ✓ Records loaded
+[17:20:12] Extracting records from Ready To Send...
+[17:20:12] Found 0 records in Ready To Send
+[17:20:12] ✓ No records to process in Ready To Send
+[17:20:12] ✓ Ready To Send completed with 0 files
+[17:20:12] ✓ Pending Approval and Ready To Send workflow completed for Aspire - San Diego
+[17:20:12] ✓ Completed Aspire - San Diego: 0 records from Ready tab, 0 records from Ready To Send tab
+[17:20:14] ================================================================================
+[17:20:14] FINAL SUMMARY
+[17:20:14] ================================================================================
+[17:20:14] Aspire - San Diego: 0 records
+[17:20:14] Total records selected: 0
+[17:20:14] ================================================================================
+[17:20:14] === Sending Email ===
+[17:20:14] Sending email to: nvenu@solifetec.com,vipinsharma@HomeCareForYou.com, adua@HomeCareForYou.com, rtyagi@homecareforyou.com
+[17:20:14] From: nvenu@solifetec.com
+[17:20:14] SMTP Host: smtp.office365.com
+[17:20:14] SMTP Port: 587
+[17:20:14] Subject: Kinnser Billing Report - Aspire - San Diego - 2026-04-15_11-50-14 [NO RECORDS PROCESSED]
+[17:20:14] Attachments: 0 files
+[17:20:14] [%s] %s %s 2026-04-15 11:50:14 DEBUG Creating transport: nodemailer (8.0.2; +https://nodemailer.com/; SMTP/8.0.2[client:8.0.2])
+[17:20:14] Verifying SMTP connection...
+[17:20:14] [%s] %s %s 2026-04-15 11:50:14 DEBUG [vqJVyIud3vc] Resolved smtp.office365.com as 52.96.91.34 [cache miss]
+[17:20:14] [%s] %s %s 2026-04-15 11:50:14 INFO [vqJVyIud3vc] Connection established to 52.96.91.34:587
+[17:20:14] [%s] %s %s 2026-04-15 11:50:14 DEBUG [vqJVyIud3vc] S: 220 MW3PR06CA0030.outlook.office365.com Microsoft ESMTP MAIL Service ready at Wed, 15 Apr 2026 11:50:14 +0000 [08DE99393A17EB2E]
+[17:20:14] [%s] %s %s 2026-04-15 11:50:14 DEBUG [vqJVyIud3vc] C: EHLO [127.0.0.1]
+[17:20:14] [%s] %s %s 2026-04-15 11:50:14 DEBUG [vqJVyIud3vc] S: 250-MW3PR06CA0030.outlook.office365.com Hello [34.218.221.142]
+[17:20:14] [%s] %s %s 2026-04-15 11:50:14 DEBUG [vqJVyIud3vc] S: 250-SIZE 157286400
+[17:20:14] [%s] %s %s 2026-04-15 11:50:14 DEBUG [vqJVyIud3vc] S: 250-PIPELINING
+[17:20:14] [%s] %s %s 2026-04-15 11:50:14 DEBUG [vqJVyIud3vc] S: 250-DSN
+[17:20:14] [%s] %s %s 2026-04-15 11:50:14 DEBUG [vqJVyIud3vc] S: 250-ENHANCEDSTATUSCODES
+[17:20:14] [%s] %s %s 2026-04-15 11:50:14 DEBUG [vqJVyIud3vc] S: 250-STARTTLS
+[17:20:14] [%s] %s %s 2026-04-15 11:50:14 DEBUG [vqJVyIud3vc] S: 250-8BITMIME
+[17:20:14] [%s] %s %s 2026-04-15 11:50:14 DEBUG [vqJVyIud3vc] S: 250-BINARYMIME
+[17:20:14] [%s] %s %s 2026-04-15 11:50:14 DEBUG [vqJVyIud3vc] S: 250-CHUNKING
+[17:20:14] [%s] %s %s 2026-04-15 11:50:14 DEBUG [vqJVyIud3vc] S: 250 SMTPUTF8
+[17:20:14] [%s] %s %s 2026-04-15 11:50:14 DEBUG [vqJVyIud3vc] C: STARTTLS
+[17:20:14] [%s] %s %s 2026-04-15 11:50:14 DEBUG [vqJVyIud3vc] S: 220 2.0.0 SMTP server ready
+[17:20:14] [%s] %s %s 2026-04-15 11:50:14 INFO [vqJVyIud3vc] Connection upgraded with STARTTLS
+[17:20:14] [%s] %s %s 2026-04-15 11:50:14 DEBUG [vqJVyIud3vc] C: EHLO [127.0.0.1]
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 DEBUG [vqJVyIud3vc] S: 250-MW3PR06CA0030.outlook.office365.com Hello [34.218.221.142]
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 DEBUG [vqJVyIud3vc] S: 250-SIZE 157286400
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 DEBUG [vqJVyIud3vc] S: 250-PIPELINING
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 DEBUG [vqJVyIud3vc] S: 250-DSN
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 DEBUG [vqJVyIud3vc] S: 250-ENHANCEDSTATUSCODES
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 DEBUG [vqJVyIud3vc] S: 250-AUTH LOGIN XOAUTH2
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 DEBUG [vqJVyIud3vc] S: 250-8BITMIME
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 DEBUG [vqJVyIud3vc] S: 250-BINARYMIME
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 DEBUG [vqJVyIud3vc] S: 250-CHUNKING
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 DEBUG [vqJVyIud3vc] S: 250 SMTPUTF8
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 DEBUG [vqJVyIud3vc] SMTP handshake finished
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 DEBUG [vqJVyIud3vc] C: AUTH LOGIN
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 DEBUG [vqJVyIud3vc] S: 334 VXNlcm5hbWU6
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 DEBUG [vqJVyIud3vc] C: bnZlbnVAc29saWZldGVjLmNvbQ==
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 DEBUG [vqJVyIud3vc] S: 334 UGFzc3dvcmQ6
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 DEBUG [vqJVyIud3vc] C: Lyogc2VjcmV0ICov
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 DEBUG [vqJVyIud3vc] S: 235 2.7.0 Authentication successful
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 INFO [vqJVyIud3vc] User "nvenu@solifetec.com" authenticated
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 DEBUG [vqJVyIud3vc] C: QUIT
+[17:20:15] ✓ SMTP connection verified successfully
+[17:20:15] ⚠️ No attachments to send
+[17:20:15] Sending email...
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 DEBUG Sending mail using SMTP/8.0.2[client:8.0.2]
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 DEBUG [Q1QEZWJMgwU] Resolved smtp.office365.com as 2603:1036:308:2817::2 [cache hit]
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 INFO [Q1QEZWJMgwU] Connection to 2603:1036:308:2817::2 failed, trying 52.96.91.34
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 INFO [Q1QEZWJMgwU] Connection established to 52.96.91.34:587
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 DEBUG [Q1QEZWJMgwU] S: 220 MW3PR06CA0016.outlook.office365.com Microsoft ESMTP MAIL Service ready at Wed, 15 Apr 2026 11:50:15 +0000 [08DE9A13DB78C894]
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 DEBUG [Q1QEZWJMgwU] C: EHLO [127.0.0.1]
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 DEBUG [vqJVyIud3vc] S: 221 2.0.0 Service closing transmission channel
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 DEBUG [vqJVyIud3vc] Closing connection to the server using "end"
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 DEBUG [Q1QEZWJMgwU] S: 250-MW3PR06CA0016.outlook.office365.com Hello [34.218.221.142]
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 DEBUG [Q1QEZWJMgwU] S: 250-SIZE 157286400
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 DEBUG [Q1QEZWJMgwU] S: 250-PIPELINING
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 DEBUG [Q1QEZWJMgwU] S: 250-DSN
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 DEBUG [Q1QEZWJMgwU] S: 250-ENHANCEDSTATUSCODES
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 DEBUG [Q1QEZWJMgwU] S: 250-STARTTLS
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 DEBUG [Q1QEZWJMgwU] S: 250-8BITMIME
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 DEBUG [Q1QEZWJMgwU] S: 250-BINARYMIME
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 DEBUG [Q1QEZWJMgwU] S: 250-CHUNKING
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 DEBUG [Q1QEZWJMgwU] S: 250 SMTPUTF8
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 DEBUG [Q1QEZWJMgwU] C: STARTTLS
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 DEBUG [Q1QEZWJMgwU] S: 220 2.0.0 SMTP server ready
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 INFO [Q1QEZWJMgwU] Connection upgraded with STARTTLS
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 DEBUG [Q1QEZWJMgwU] C: EHLO [127.0.0.1]
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 DEBUG [Q1QEZWJMgwU] S: 250-MW3PR06CA0016.outlook.office365.com Hello [34.218.221.142]
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 DEBUG [Q1QEZWJMgwU] S: 250-SIZE 157286400
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 DEBUG [Q1QEZWJMgwU] S: 250-PIPELINING
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 DEBUG [Q1QEZWJMgwU] S: 250-DSN
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 DEBUG [Q1QEZWJMgwU] S: 250-ENHANCEDSTATUSCODES
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 DEBUG [Q1QEZWJMgwU] S: 250-AUTH LOGIN XOAUTH2
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 DEBUG [Q1QEZWJMgwU] S: 250-8BITMIME
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 DEBUG [Q1QEZWJMgwU] S: 250-BINARYMIME
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 DEBUG [Q1QEZWJMgwU] S: 250-CHUNKING
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 DEBUG [Q1QEZWJMgwU] S: 250 SMTPUTF8
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 DEBUG [Q1QEZWJMgwU] SMTP handshake finished
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 DEBUG [Q1QEZWJMgwU] C: AUTH LOGIN
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 DEBUG [Q1QEZWJMgwU] S: 334 VXNlcm5hbWU6
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 DEBUG [Q1QEZWJMgwU] C: bnZlbnVAc29saWZldGVjLmNvbQ==
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 DEBUG [Q1QEZWJMgwU] S: 334 UGFzc3dvcmQ6
+[17:20:15] [%s] %s %s 2026-04-15 11:50:15 DEBUG [Q1QEZWJMgwU] C: Lyogc2VjcmV0ICov
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] S: 235 2.7.0 Authentication successful
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 INFO [Q1QEZWJMgwU] User "nvenu@solifetec.com" authenticated
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 INFO Sending message <49bff862-30b3-0be5-b2cc-463c648acd8f@solifetec.com> to <nvenu@solifetec.com, vipinsharma@homecareforyou.com, ...and 2 more>
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] C: MAIL FROM:<nvenu@solifetec.com>
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] S: 250 2.1.0 Sender OK
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] C: RCPT TO:<nvenu@solifetec.com>
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] C: RCPT TO:<vipinsharma@homecareforyou.com>
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] C: RCPT TO:<adua@homecareforyou.com>
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] C: RCPT TO:<rtyagi@homecareforyou.com>
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] S: 250 2.1.5 Recipient OK
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] S: 250 2.1.5 Recipient OK
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] S: 250 2.1.5 Recipient OK
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] S: 250 2.1.5 Recipient OK
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] C: DATA
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] S: 354 Start mail input; end with <CRLF>.<CRLF>
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] From: nvenu@solifetec.com
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] To: nvenu@solifetec.com, vipinsharma@homecareforyou.com,
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] adua@homecareforyou.com, rtyagi@homecareforyou.com
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] Subject: Kinnser Billing Report - Aspire - San Diego - 2026-04-15_11-50-14
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] [NO RECORDS PROCESSED]
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] Message-ID: <49bff862-30b3-0be5-b2cc-463c648acd8f@solifetec.com>
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] Date: Wed, 15 Apr 2026 11:50:15 +0000
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] MIME-Version: 1.0
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] Content-Type: multipart/alternative;
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] boundary="--_NmP-a304c356728892be-Part_1"
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU]
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] ----_NmP-a304c356728892be-Part_1
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] Content-Type: text/plain; charset=utf-8
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] Content-Transfer-Encoding: quoted-printable
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU]
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU]
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] Kinnser Billing Automation Report
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] Version: 2.3.0 (Build: 2026-04-10)
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] Generated: 2026-04-15 11:50:14
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU]
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] OFFICES PROCESSED: Aspire - San Diego
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU]
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] READY TAB SUMMARY:
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] Aspire - San Diego: 0 records selected
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU]
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] Total records selected from Ready tab: 0
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] Total offices processed: 1
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU]
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] TYPE OF BILL CHANGES (327 - Adjustment Claim):
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] No duplicate records found -=
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] no Type of Bill changes needed
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU]
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU]
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] NO RECORDS PROCESSED:
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] - All records in Ready tab were skipped (insurances not in approved list or=
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] invalid authorization)
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] - No claims were created
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] - Pending Approval and =
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] Ready To Send tabs were checked but had no matching records
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU]
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] WORKFLOW COMPLETED:
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] =E2=9C=93 Ready tab checked - 0 records selected
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] =E2=9C=93 Pending Approval checked
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] =E2=9C=93 Ready To Send checked
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU]
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] No action was taken as no records met the processing criteria.
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU]
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] =20
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] ----_NmP-a304c356728892be-Part_1
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] Content-Type: text/html; charset=utf-8
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] Content-Transfer-Encoding: quoted-printable
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU]
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] <pre>
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] Kinnser Billing Automation Report
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] Version: 2.3.0 (Build: 2026-04-10)
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] Generated: 2026-04-15 11:50:14
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU]
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] OFFICES PROCESSED: Aspire - San Diego
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU]
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] READY TAB SUMMARY:
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] Aspire - San Diego: 0 records selected
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU]
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] Total records selected from Ready tab: 0
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] Total offices processed: 1
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU]
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] TYPE OF BILL CHANGES (327 - Adjustment Claim):
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] No duplicate records found -=
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] no Type of Bill changes needed
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU]
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU]
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] NO RECORDS PROCESSED:
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] - All records in Ready tab were skipped (insurances not in approved list or=
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] invalid authorization)
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] - No claims were created
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] - Pending Approval and =
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] Ready To Send tabs were checked but had no matching records
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU]
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] WORKFLOW COMPLETED:
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] =E2=9C=93 Ready tab checked - 0 records selected
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] =E2=9C=93 Pending Approval checked
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] =E2=9C=93 Ready To Send checked
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU]
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] No action was taken as no records met the processing criteria.
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU]
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] </pre>
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] ----_NmP-a304c356728892be-Part_1--
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] .
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 INFO [Q1QEZWJMgwU] <2452 bytes encoded mime message (source size 2391 bytes)>
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] S: 250 2.0.0 OK <49bff862-30b3-0be5-b2cc-463c648acd8f@solifetec.com> [Hostname=SJ2PR11MB7672.namprd11.prod.outlook.com]
+[17:20:16] [%s] %s %s 2026-04-15 11:50:16 DEBUG [Q1QEZWJMgwU] Closing connection to the server using "end"
+[17:20:16] ✓ Email sent successfully!
+[17:20:16] Message ID: <49bff862-30b3-0be5-b2cc-463c648acd8f@solifetec.com>
+[17:20:16] Response: 250 2.0.0 OK <49bff862-30b3-0be5-b2cc-463c648acd8f@solifetec.com> [Hostname=SJ2PR11MB7672.namprd11.prod.outlook.com]
+[17:20:16] ✓ Email sent successfully to nvenu@solifetec.com,vipinsharma@HomeCareForYou.com, adua@HomeCareForYou.com, rtyagi@homecareforyou.com
+[17:20:16] No attachments (0 records processed)
+[17:20:16] ✓ Automation completed. Closing browser...
+[17:20:16] ✓ Browser closed
+[17:27:01] ⚠️ Connection lost. Reconnecting...
+[17:27:06] ✓ Connected to live log stream

@@ -272,7 +272,7 @@ export async function loginAndProcessOffices(officeValue: string = 'all', select
       fs.mkdirSync(downloadsPath, { recursive: true });
     }
     
-    browser = await chromium.launch({ headless: true });
+    browser = await chromium.launch({ headless: false });
     const context = await browser.newContext({
       acceptDownloads: true
     });
@@ -3086,7 +3086,9 @@ function findDuplicatesWithOverlap(records: any[]): any[] {
   Object.keys(mrnGroups).forEach(mrn => {
     const group = mrnGroups[mrn];
     if (group.length > 1) {
-      // Check if any dates overlap
+      // Find all records with overlapping dates
+      const overlappingIndices: number[] = [];
+      
       for (let i = 0; i < group.length; i++) {
         for (let j = i + 1; j < group.length; j++) {
           const record1 = group[i];
@@ -3100,13 +3102,23 @@ function findDuplicatesWithOverlap(records: any[]): any[] {
           
           // Check for overlap
           if (start1 <= end2 && start2 <= end1) {
-            duplicates.push({
-              mrn,
-              indices: [record1.originalIndex, record2.originalIndex]
-            });
-            break;
+            // Add both indices if not already added
+            if (!overlappingIndices.includes(record1.originalIndex)) {
+              overlappingIndices.push(record1.originalIndex);
+            }
+            if (!overlappingIndices.includes(record2.originalIndex)) {
+              overlappingIndices.push(record2.originalIndex);
+            }
           }
         }
+      }
+      
+      // If we found overlapping records, add them as a group
+      if (overlappingIndices.length > 1) {
+        duplicates.push({
+          mrn,
+          indices: overlappingIndices.sort((a, b) => a - b) // Sort indices
+        });
       }
     }
   });
