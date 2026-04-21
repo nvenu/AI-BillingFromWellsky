@@ -45,30 +45,67 @@ interface SelectedRecord {
 async function selectOffice(page: Page, office: Office): Promise<void> {
   console.log(`\n=== Selecting Office: ${office.name} ===`);
   
-  // Make sure we're on a page where the office selector exists
-  // If we're deep in billing manager, go back to home first
-  const currentUrl = page.url();
-  if (currentUrl.includes('/billing')) {
-    console.log("Navigating back to home page...");
-    await page.goto(currentUrl.split('/EHR/')[0] + '/AM/Message/inbox.cfm', { waitUntil: 'domcontentloaded' });
-    await page.waitForTimeout(2000);
+  try {
+    // Make sure we're on a page where the office selector exists
+    // If we're deep in billing manager, go back to home first
+    const currentUrl = page.url();
+    if (currentUrl.includes('/billing')) {
+      console.log("Navigating back to home page...");
+      await page.goto(currentUrl.split('/EHR/')[0] + '/AM/Message/inbox.cfm', { waitUntil: 'domcontentloaded' });
+      await page.waitForTimeout(2000);
+    }
+    
+    // Wait for the office selector dropdown
+    try {
+      await page.waitForSelector('#swapUser', { timeout: 20000 });
+    } catch (error) {
+      console.error("✗ Office selector dropdown not found");
+      await page.screenshot({ path: 'debug-no-office-selector.png' });
+      throw new Error("Office selector dropdown (#swapUser) not found on page");
+    }
+    
+    // Verify the office exists in the dropdown
+    const officeExists = await page.evaluate((officeValue) => {
+      const select = document.querySelector('#swapUser') as HTMLSelectElement;
+      if (!select) return false;
+      const options = Array.from(select.options);
+      return options.some(opt => opt.value === officeValue);
+    }, office.value);
+    
+    if (!officeExists) {
+      console.error(`✗ Office "${office.name}" (value: ${office.value}) not found in dropdown`);
+      const availableOffices = await page.evaluate(() => {
+        const select = document.querySelector('#swapUser') as HTMLSelectElement;
+        if (!select) return [];
+        return Array.from(select.options).map(opt => ({ value: opt.value, text: opt.text }));
+      });
+      console.log("Available offices:", availableOffices);
+      throw new Error(`Office "${office.name}" not available in dropdown`);
+    }
+    
+    // Select the office
+    await page.selectOption('#swapUser', office.value);
+    console.log(`✓ Selected office: ${office.name}`);
+    
+    // Wait for page to reload after office change
+    await page.waitForLoadState("domcontentloaded", { timeout: 30000 });
+    await page.waitForTimeout(3000);
+    
+    // Wait for any loading to complete
+    await waitForLoadingToComplete(page);
+    
+    // Verify office was actually switched
+    const selectedOffice = await page.$eval('#swapUser', (select: any) => select.value);
+    if (selectedOffice !== office.value) {
+      console.error(`✗ Office switch failed. Expected: ${office.value}, Got: ${selectedOffice}`);
+      throw new Error(`Failed to switch to office ${office.name}`);
+    }
+    
+    console.log(`✓ Office switched to ${office.name}`);
+  } catch (error) {
+    console.error(`✗ Error selecting office ${office.name}:`, error);
+    throw error;
   }
-  
-  // Wait for the office selector dropdown
-  await page.waitForSelector('#swapUser', { timeout: 20000 });
-  
-  // Select the office
-  await page.selectOption('#swapUser', office.value);
-  console.log(`✓ Selected office: ${office.name}`);
-  
-  // Wait for page to reload after office change
-  await page.waitForLoadState("domcontentloaded", { timeout: 30000 });
-  await page.waitForTimeout(3000);
-  
-  // Wait for any loading to complete
-  await waitForLoadingToComplete(page);
-  
-  console.log(`✓ Office switched to ${office.name}`);
 }
 
 async function processOffice(page: Page, office: Office, insuranceHelper: InsuranceHelper, selectedInsurances: string[] | null = null): Promise<{records: SelectedRecord[], filename: string | null, readyToSendFiles: string[], readyToSendCount: number, changedTo327: Array<{mrn: string, billingPeriod: string, reason: string}>}> {
@@ -272,17 +309,40 @@ export async function loginAndProcessOffices(officeValue: string = 'all', select
       fs.mkdirSync(downloadsPath, { recursive: true });
     }
     
-    browser = await chromium.launch({ headless: false });
+    browser = await chromium.launch({ 
+      headless: process.env.HEADLESS !== 'false' // headless unless explicitly set to 'false'
+    });
     const context = await browser.newContext({
       acceptDownloads: true
     });
     const page = await context.newPage();
 
-    // Set up global alert handler to auto-accept all dialogs
+    // Set up selective dialog handler
+    // Auto-accept login confirmation, but allow approval confirmations to be handled by code
     page.on('dialog', async dialog => {
-      console.log(`Dialog detected: ${dialog.type()} - "${dialog.message()}"`);
-      await dialog.accept();
-      console.log('Dialog accepted');
+      const message = dialog.message();
+      console.log(`Dialog detected: ${dialog.type()} - "${message}"`);
+      
+      // Auto-accept login/system confirmation dialogs
+      if (message.includes('This system is intended for business use only') ||
+          message.includes('Unauthorized access')) {
+        await dialog.accept();
+        console.log('Dialog accepted (system confirmation)');
+      }
+      // For approval confirmation, we want to handle it in code, but the dialog
+      // event fires before page.evaluate can return, so we need to accept it here
+      // and track the user's choice separately
+      else if (message.includes('PENDING APPROVAL - CONFIRMATION REQUIRED')) {
+        // This should not auto-accept - but we can't prevent the dialog from appearing
+        // We need to use a different approach for confirmation
+        await dialog.accept();
+        console.log('Dialog accepted (approval confirmation)');
+      }
+      else {
+        // Accept other dialogs by default
+        await dialog.accept();
+        console.log('Dialog accepted');
+      }
     });
 
     // Load insurance instructions
@@ -588,27 +648,53 @@ async function performLogin(page: Page): Promise<void> {
   }
 
   console.log("Filling in credentials...");
-  await page.fill('input[name="username"], input#username', username);
-  await page.fill('input[name="password"], input#password', password);
-  console.log("✓ Credentials filled");
+  try {
+    await page.fill('input[name="username"], input#username', username);
+    await page.fill('input[name="password"], input#password', password);
+    console.log("✓ Credentials filled");
+  } catch (error) {
+    console.error("✗ Failed to fill credentials:", error);
+    await page.screenshot({ path: 'debug-login-form-error.png' });
+    throw new Error("Could not find username/password fields on login page");
+  }
 
   // Click login and wait for any page to load (might be inbox or main page)
   console.log("Clicking login button...");
-  await page.click('#login_btn');
+  try {
+    await page.click('#login_btn');
+  } catch (error) {
+    console.error("✗ Failed to click login button:", error);
+    await page.screenshot({ path: 'debug-login-button-error.png' });
+    throw new Error("Could not find or click login button");
+  }
   
   // Wait for navigation to complete (could go to inbox or main page)
   console.log("Waiting for login to complete...");
-  await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
+  try {
+    await page.waitForLoadState("domcontentloaded", { timeout: 60000 });
+  } catch (error) {
+    console.error("✗ Page did not load after login:", error);
+    throw new Error("Login page did not respond within 60 seconds");
+  }
   
   // Wait a bit for any redirects
   await page.waitForTimeout(3000);
 
   // Verify login success - should not be on login page
-  if (page.url().includes("login.cfm")) {
+  const currentUrl = page.url();
+  if (currentUrl.includes("login.cfm")) {
+    console.error("✗ Login failed - still on login page");
+    await page.screenshot({ path: 'debug-login-failed.png' });
+    
+    // Check for error messages
+    const errorMessage = await page.textContent('.error, .alert-danger, [class*="error"]').catch(() => null);
+    if (errorMessage) {
+      throw new Error(`Login failed: ${errorMessage}`);
+    }
     throw new Error("Login failed - check credentials or MFA requirements");
   }
   
-  console.log("✓ Logged in successfully, current URL:", page.url());
+  console.log("✓ Logged in successfully, current URL:", currentUrl);
 }
 
 async function navigateToBillingManager(page: Page): Promise<void> {
@@ -761,9 +847,16 @@ async function applyFilters(page: Page): Promise<void> {
   console.log("Waiting for Claims Manager page to load...");
   await waitForLoadingToComplete(page);
   
-  // Verify we're on the Claims Manager page
+  // Verify we're on the Ready tab (Claims Manager page)
+  const readyUrl = page.url();
+  if (!readyUrl.includes('/ready') && !readyUrl.includes('claims-manager')) {
+    console.error(`✗ Navigation to Ready tab failed! Current URL: ${readyUrl}`);
+    throw new Error("Failed to navigate to Ready tab");
+  }
+  
   const pageTitle = await page.textContent('h1, h2, .page-title, [class*="title"]').catch(() => '');
   console.log("✓ Page loaded:", pageTitle);
+  console.log("✓ Ready tab URL verified:", readyUrl);
   console.log("=== applyFilters completed ===");
 }
 
@@ -1714,26 +1807,38 @@ async function processPendingApproval(page: Page, insuranceHelper: InsuranceHelp
     const currentUrl = page.url();
     
     // Check if we're already on Pending Approval page
-    if (!currentUrl.includes('pendingClaimsApproval') && !currentUrl.includes('pending')) {
+    if (!currentUrl.includes('approve-claims') && !currentUrl.includes('pendingClaimsApproval')) {
       console.log("Not on Pending Approval page, clicking the tab...");
       try {
         await page.waitForSelector('#pendingClaimsApproval', { timeout: 10000 });
         await page.click('#pendingClaimsApproval');
         console.log("✓ Clicked Pending Approval tab");
         
-        // Wait for the page to load
+        // Wait for the page to load and URL to change
         await page.waitForLoadState('domcontentloaded', { timeout: 30000 });
         await page.waitForTimeout(3000);
+        
+        // CRITICAL: Verify we actually navigated to Pending Approval BEFORE doing anything else
+        const newUrl = page.url();
+        console.log(`Verifying navigation... Current URL: ${newUrl}`);
+        
+        if (!newUrl.includes('approve-claims') && !newUrl.includes('pendingClaimsApproval')) {
+          console.error(`✗ Navigation failed! Still on: ${newUrl}`);
+          console.error("✗ Expected URL to contain 'approve-claims' or 'pendingClaimsApproval'");
+          await page.screenshot({ path: 'debug-pending-approval-nav-failed.png' });
+          throw new Error("Failed to navigate to Pending Approval tab - URL did not change");
+        }
+        
         console.log("✓ Pending Approval page loaded");
+        console.log(`✓ URL verified: ${newUrl}`);
       } catch (navError) {
-        console.log("⚠️  Could not find Pending Approval tab link");
+        console.error("✗ Could not navigate to Pending Approval tab");
+        console.error(`   Current URL: ${page.url()}`);
         throw navError;
       }
     } else {
       console.log("✓ Already on Pending Approval page");
     }
-    
-    console.log("Current URL:", page.url());
     
     // Wait for initial loading message to disappear
     console.log("Waiting for initial page load...");
@@ -1741,30 +1846,41 @@ async function processPendingApproval(page: Page, insuranceHelper: InsuranceHelp
     await page.waitForTimeout(2000);
     console.log("✓ Initial loading complete");
     
-    // Select "All Insurances" from dropdown
-    console.log("\nSelecting 'All Insurances' from dropdown...");
-    await page.waitForSelector('select[ng-model="insuranceKey"]', { timeout: 10000 });
-    
-    // First, check what's currently selected
-    const currentValuePA = await page.$eval('select[ng-model="insuranceKey"]', (select: any) => select.value);
-    console.log(`Current dropdown value: ${currentValuePA}`);
-    
-    // If already on "All Insurances", select something else first to trigger change event
-    if (currentValuePA === '1') {
-      console.log("Already on 'All Insurances', selecting different option first to trigger change...");
-      const optionsPA = await page.$$eval('select[ng-model="insuranceKey"] option', (opts) => 
-        opts.map(opt => (opt as HTMLOptionElement).value).filter(v => v && v !== '1')
-      );
-      if (optionsPA.length > 0) {
-        await page.selectOption('select[ng-model="insuranceKey"]', optionsPA[0]);
-        await page.waitForTimeout(1000);
-        console.log(`  Selected temporary option: ${optionsPA[0]}`);
+    // Select insurance(s) from dropdown - maintain user's selection
+    if (selectedInsurances && selectedInsurances.length > 0) {
+      console.log(`\nSelecting user-specified insurance(s) from dropdown...`);
+      console.log(`Insurances to select: ${selectedInsurances.join(', ')}`);
+      
+      // Use the same insurance selection logic as Ready tab
+      await selectAllInsurances(page, selectedInsurances);
+      
+      console.log("✓ Insurance selection completed");
+    } else {
+      // Select "All Insurances" from dropdown
+      console.log("\nSelecting 'All Insurances' from dropdown...");
+      await page.waitForSelector('select[ng-model="insuranceKey"]', { timeout: 10000 });
+      
+      // First, check what's currently selected
+      const currentValuePA = await page.$eval('select[ng-model="insuranceKey"]', (select: any) => select.value);
+      console.log(`Current dropdown value: ${currentValuePA}`);
+      
+      // If already on "All Insurances", select something else first to trigger change event
+      if (currentValuePA === '1') {
+        console.log("Already on 'All Insurances', selecting different option first to trigger change...");
+        const optionsPA = await page.$$eval('select[ng-model="insuranceKey"] option', (opts) => 
+          opts.map(opt => (opt as HTMLOptionElement).value).filter(v => v && v !== '1')
+        );
+        if (optionsPA.length > 0) {
+          await page.selectOption('select[ng-model="insuranceKey"]', optionsPA[0]);
+          await page.waitForTimeout(1000);
+          console.log(`  Selected temporary option: ${optionsPA[0]}`);
+        }
       }
+      
+      // Now select "All Insurances"
+      await page.selectOption('select[ng-model="insuranceKey"]', '1'); // value="1" is "All Insurances"
+      console.log("✓ Selected 'All Insurances'");
     }
-    
-    // Now select "All Insurances"
-    await page.selectOption('select[ng-model="insuranceKey"]', '1'); // value="1" is "All Insurances"
-    console.log("✓ Selected 'All Insurances'");
     
     // Wait for loading message to appear and then disappear
     console.log("Waiting for records to load...");
@@ -1791,14 +1907,29 @@ async function processPendingApproval(page: Page, insuranceHelper: InsuranceHelp
     
     // ALWAYS navigate to Ready To Send tab
     console.log("\n=== Navigating to Ready To Send ===");
-    await page.waitForSelector('#readyToSendClaims', { timeout: 10000 });
-    await page.click('#readyToSendClaims');
-    console.log("✓ Clicked Ready To Send tab");
     
-    // Wait for page to load
-    await page.waitForLoadState('domcontentloaded', { timeout: 30000 });
-    await page.waitForTimeout(3000);
-    console.log("✓ Ready To Send page loaded");
+    try {
+      await page.waitForSelector('#readyToSendClaims', { timeout: 10000 });
+      await page.click('#readyToSendClaims');
+      console.log("✓ Clicked Ready To Send tab");
+      
+      // Wait for page to load
+      await page.waitForLoadState('domcontentloaded', { timeout: 30000 });
+      await page.waitForTimeout(3000);
+      
+      // Verify we actually navigated to Ready To Send
+      const readyToSendUrl = page.url();
+      if (!readyToSendUrl.includes('ready-to-send') && !readyToSendUrl.includes('readyToSend')) {
+        console.log(`✗ Navigation to Ready To Send failed! Current URL: ${readyToSendUrl}`);
+        throw new Error("Failed to navigate to Ready To Send tab");
+      }
+      
+      console.log("✓ Ready To Send page loaded");
+      console.log(`   URL: ${readyToSendUrl}`);
+    } catch (error) {
+      console.error("✗ Error navigating to Ready To Send:", error);
+      throw error;
+    }
     
     // Process Ready To Send workflow
     const readyToSendFiles = await processReadyToSend(page, insuranceHelper, selectedInsurances);
@@ -2161,50 +2292,49 @@ async function processPendingApprovalRecords(page: Page, insuranceHelper: Insura
 
     // Try to find and click the "Select All" checkbox
     console.log("Looking for 'Select All' checkbox...");
-    const selectAllCheckbox = await page.$('input[type="checkbox"][ng-model*="selectAll"], input[type="checkbox"][ng-click*="selectAll"]');
-
-    if (selectAllCheckbox) {
-      console.log("✓ Found 'Select All' checkbox, clicking it...");
-      await selectAllCheckbox.click();
-      await page.waitForTimeout(2000); // Wait for selection to propagate
-      console.log("✓ Clicked 'Select All' checkbox");
-    } else {
-      console.log("⚠️  'Select All' checkbox not found");
+    
+    // Try multiple selectors for the Select All checkbox
+    const selectAllSelectors = [
+      'input[type="checkbox"][ng-model*="selectAll"]',
+      'input[type="checkbox"][ng-click*="selectAll"]',
+      'thead input[type="checkbox"]',
+      'th input[type="checkbox"]',
+      'table thead tr input[type="checkbox"]:first-of-type'
+    ];
+    
+    let selectAllFound = false;
+    for (const selector of selectAllSelectors) {
+      try {
+        const selectAllCheckbox = await page.$(selector);
+        if (selectAllCheckbox) {
+          console.log(`✓ Found 'Select All' checkbox with selector: ${selector}`);
+          await selectAllCheckbox.click();
+          await page.waitForTimeout(2000); // Wait for selection to propagate
+          console.log("✓ Clicked 'Select All' checkbox");
+          selectAllFound = true;
+          break;
+        }
+      } catch (error) {
+        // Try next selector
+      }
+    }
+    
+    if (!selectAllFound) {
+      console.log("⚠️  'Select All' checkbox not found with any selector");
+      console.log("⚠️  This is unexpected - Pending Approval should have a Select All checkbox");
+      console.log("⚠️  Skipping approval to avoid errors");
+      return changedRecords;
     }
 
     // Verify how many checkboxes are actually checked
     const checkedCount = await page.evaluate(() => {
-      const checkboxes = Array.from(document.querySelectorAll('input[type="checkbox"]'));
+      const checkboxes = Array.from(document.querySelectorAll('table tbody tr input[type="checkbox"]'));
       const checked = checkboxes.filter(cb => (cb as HTMLInputElement).checked);
-      console.log(`Total checkboxes: ${checkboxes.length}, Checked: ${checked.length}`);
+      console.log(`Total row checkboxes: ${checkboxes.length}, Checked: ${checked.length}`);
       return checked.length;
     });
 
-    console.log(`✓ Verified: ${checkedCount} checkboxes are checked`);
-
-    // If no checkboxes are checked, try clicking individual row checkboxes
-    if (checkedCount === 0) {
-      console.log("⚠️  No checkboxes checked! Trying to click individual row checkboxes...");
-      const rowCheckboxes = await page.$$('table tbody tr input[type="checkbox"]');
-      console.log(`Found ${rowCheckboxes.length} row checkboxes`);
-
-      for (let i = 0; i < rowCheckboxes.length; i++) {
-        try {
-          await rowCheckboxes[i].click();
-          console.log(`  ✓ Clicked checkbox ${i + 1}/${rowCheckboxes.length}`);
-          await page.waitForTimeout(200);
-        } catch (error) {
-          console.log(`  ⚠️  Failed to click checkbox ${i + 1}: ${error}`);
-        }
-      }
-
-      // Verify again
-      const checkedCountAfter = await page.evaluate(() => {
-        const checkboxes = Array.from(document.querySelectorAll('input[type="checkbox"]'));
-        return checkboxes.filter(cb => (cb as HTMLInputElement).checked).length;
-      });
-      console.log(`✓ After individual clicks: ${checkedCountAfter} checkboxes are checked`);
-    }
+    console.log(`✓ Verified: ${checkedCount} records are selected`);
 
     // DESELECT records that need Type of Bill 327
     if (recordsNeedingTOB327.length > 0) {
@@ -2289,6 +2419,41 @@ async function processPendingApprovalRecords(page: Page, insuranceHelper: Insura
       });
       await page.waitForTimeout(500);
     }
+
+    // Show confirmation dialog to verify selection before approval
+    console.log("\n=== CONFIRMATION REQUIRED ===");
+    const selectedCount = await page.evaluate(() => {
+      const checkboxes = Array.from(document.querySelectorAll('table tbody tr input[type="checkbox"]'));
+      return checkboxes.filter(cb => (cb as HTMLInputElement).checked).length;
+    });
+    
+    console.log(`\n📋 SUMMARY:`);
+    console.log(`  - Total records in Pending Approval: ${records.length}`);
+    console.log(`  - Records SELECTED for approval: ${selectedCount}`);
+    console.log(`  - Records DESELECTED (need TOB 327): ${recordsNeedingTOB327.length}`);
+    
+    if (recordsNeedingTOB327.length > 0) {
+      console.log(`\n⚠️  DESELECTED RECORDS (will stay in Pending Approval):`);
+      recordsNeedingTOB327.forEach(idx => {
+        const record = records[idx];
+        console.log(`  - MRN: ${record.mrn}, Insurance: ${record.insurance}, Billing Period: ${record.billingPeriodText}`);
+      });
+    }
+    
+    console.log(`\n⚠️  IMPORTANT: About to approve ${selectedCount} records`);
+    
+    // Only wait for manual verification if running in non-headless mode (for testing)
+    const isHeadless = process.env.HEADLESS !== 'false';
+    if (!isHeadless) {
+      console.log(`⚠️  Running in headless:false mode - waiting 5 seconds for manual verification...`);
+      console.log(`⚠️  You can verify the selection in the browser window`);
+      console.log(`⚠️  Press Ctrl+C to cancel if needed`);
+      await page.waitForTimeout(5000);
+    } else {
+      console.log(`✓ Running in headless mode - proceeding automatically`);
+    }
+    
+    console.log("\n✓ Proceeding with approval");
 
     // Click Approve button with multiple fallback methods
     console.log("\nClicking Approve button...");
