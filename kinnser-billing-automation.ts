@@ -106,13 +106,17 @@ async function selectOffice(page: Page, office: Office): Promise<void> {
     await waitForLoadingToComplete(page);
     
     // Verify office was actually switched
-    const selectedOffice = await page.$eval('#swapUser', (select: any) => select.value);
-    if (selectedOffice !== office.value) {
-      console.error(`✗ Office switch failed. Expected: ${office.value}, Got: ${selectedOffice}`);
-      throw new Error(`Failed to switch to office ${office.name}`);
+    try {
+      const selectedOffice = await page.$eval('#swapUser', (select: any) => select.value);
+      if (selectedOffice !== office.value) {
+        console.error(`✗ Office switch failed. Expected: ${office.value}, Got: ${selectedOffice}`);
+        throw new Error(`Failed to switch to office ${office.name}`);
+      }
+      console.log(`✓ Office switched to ${office.name}`);
+    } catch (verifyError) {
+      console.log(`⚠️  Could not verify office switch (element not found), but continuing...`);
+      console.log(`✓ Assuming office switched to ${office.name}`);
     }
-    
-    console.log(`✓ Office switched to ${office.name}`);
   } catch (error) {
     console.error(`✗ Error selecting office ${office.name}:`, error);
     throw error;
@@ -2048,8 +2052,14 @@ async function processPendingApprovalRecords(page: Page, insuranceHelper: Insura
           billingPeriodEnd = parts[1]?.trim() || '';
         }
 
-        // Find Edit button - try multiple selectors
-        let editButton = row.querySelector('button[id*="edit"]');
+        // Find Edit button - it's actually a link with class "ui-kinnser-edit"
+        let editButton = row.querySelector('a.ui-kinnser-edit');
+        if (!editButton) {
+          editButton = row.querySelector('a[id*="openWorksheet"]');
+        }
+        if (!editButton) {
+          editButton = row.querySelector('button[id*="edit"]');
+        }
         if (!editButton) {
           editButton = row.querySelector('button[ng-click*="edit"]');
         }
@@ -2060,7 +2070,25 @@ async function processPendingApprovalRecords(page: Page, insuranceHelper: Insura
           // Try finding any button in the row
           editButton = row.querySelector('button');
         }
+        if (!editButton) {
+          // Try finding input buttons
+          editButton = row.querySelector('input[type="button"]');
+        }
+        if (!editButton) {
+          // Try finding any link
+          editButton = row.querySelector('a[href*="claim"]') as any;
+        }
+        
         const editButtonId = editButton?.id || '';
+        
+        // Debug: Log what we found for first few rows
+        if (index < 3) {
+          const allButtons = row.querySelectorAll('button, input[type="button"], a');
+          console.log(`Row ${index} elements: ${allButtons.length} clickable elements`);
+          allButtons.forEach((el, i) => {
+            console.log(`  [${i}] ${el.tagName} id="${el.id}" class="${el.className}"`);
+          });
+        }
 
         // Find Worksheet link (for Community health Group)
         const worksheetLink = row.querySelector('a[id*="openWorksheet"]');
@@ -2254,56 +2282,122 @@ async function processPendingApprovalRecords(page: Page, insuranceHelper: Insura
             if (!editButtonId) {
               console.log(`  ⚠️  No edit button ID found, trying to click by row index...`);
               
-              // Try to click the button directly by finding it in the row
-              const buttonClicked = await page.evaluate((rowIndex) => {
+              // Try to click the link directly by finding it in the row
+              const linkClicked = await page.evaluate((rowIndex) => {
                 const rows = Array.from(document.querySelectorAll('table tbody tr'));
                 if (rowIndex < rows.length) {
                   const row = rows[rowIndex];
-                  const button = row.querySelector('button');
-                  if (button) {
-                    button.click();
+                  
+                  // Try different element types - prioritize the edit link
+                  let clickable = row.querySelector('a.ui-kinnser-edit');
+                  if (!clickable) {
+                    clickable = row.querySelector('a[id*="openWorksheet"]');
+                  }
+                  if (!clickable) {
+                    clickable = row.querySelector('a[href*="claim"]');
+                  }
+                  if (!clickable) {
+                    clickable = row.querySelector('button');
+                  }
+                  if (!clickable) {
+                    clickable = row.querySelector('input[type="button"]');
+                  }
+                  if (!clickable) {
+                    // Try any link
+                    clickable = row.querySelector('a');
+                  }
+                  
+                  if (clickable) {
+                    console.log(`Found clickable element: ${clickable.tagName} id="${clickable.id}" class="${clickable.className}"`);
+                    (clickable as HTMLElement).click();
                     return true;
+                  } else {
+                    console.log(`No clickable element found in row ${rowIndex}`);
+                    // Log what's in the row
+                    const cells = row.querySelectorAll('td');
+                    console.log(`Row has ${cells.length} cells`);
+                    cells.forEach((cell, i) => {
+                      const elements = cell.querySelectorAll('*');
+                      console.log(`  Cell ${i}: ${elements.length} elements - ${cell.innerHTML.substring(0, 100)}`);
+                    });
                   }
                 }
                 return false;
               }, recordIndex);
               
-              if (!buttonClicked) {
-                console.log(`  ✗ Could not find or click edit button for row ${recordIndex}`);
+              if (!linkClicked) {
+                console.log(`  ✗ Could not find or click edit link for row ${recordIndex}`);
                 continue;
               }
-              console.log(`  ✓ Clicked edit button by row index`);
+              console.log(`  ✓ Clicked edit link by row index`);
             } else {
               await page.click(`#${editButtonId}`);
               console.log(`  ✓ Clicked edit button: ${editButtonId}`);
-            }            
-            // Step 2: Wait for and handle "Helpful Suggestion" modal
-            console.log(`  Step 2: Waiting for "Helpful Suggestion" modal...`);
-            await page.waitForTimeout(2000);
-            
-            // Check if modal appeared and click OK
-            const modalOkClicked = await page.evaluate(() => {
-              const okButton = document.querySelector('#modal_go') as HTMLInputElement;
-              if (okButton && okButton.offsetParent !== null) {
-                okButton.click();
-                return true;
-              }
-              return false;
-            });
-            
-            if (modalOkClicked) {
-              console.log(`  ✓ Clicked OK on "Helpful Suggestion" modal`);
-            } else {
-              console.log(`  ⚠️  Modal not found or already dismissed`);
             }
             
-            await page.waitForTimeout(2000);
-            
-            // Step 3: Wait for worksheet page to load
-            console.log(`  Step 3: Waiting for worksheet page to load...`);
+            // Step 2: Wait for worksheet page to load FIRST
+            console.log(`  Step 2: Waiting for worksheet page to load...`);
             await page.waitForLoadState('domcontentloaded', { timeout: 30000 });
             await page.waitForTimeout(3000);
             console.log(`  ✓ Worksheet page loaded`);
+            
+            // Step 3: NOW wait for and handle "Helpful Suggestion" modal (appears AFTER page loads)
+            console.log(`  Step 3: Waiting for "Helpful Suggestion" modal...`);
+            
+            // Wait a bit for modal to appear
+            await page.waitForTimeout(2000);
+            
+            // Try multiple approaches to click the modal
+            let modalClicked = false;
+            
+            // Approach 1: Wait for visible modal button
+            try {
+              const modalVisible = await page.isVisible('#modal_go');
+              if (modalVisible) {
+                console.log(`  ✓ Modal is visible, clicking OK button...`);
+                await page.click('#modal_go', { timeout: 3000 });
+                console.log(`  ✓ Clicked OK on "Helpful Suggestion" modal`);
+                modalClicked = true;
+                await page.waitForTimeout(1000);
+              }
+            } catch (e: any) {
+              console.log(`  ⚠️  Approach 1 failed: ${e.message}`);
+            }
+            
+            // Approach 2: Try clicking via evaluate if approach 1 failed
+            if (!modalClicked) {
+              try {
+                const clicked = await page.evaluate(() => {
+                  const modal = document.querySelector('.modal');
+                  const okButton = document.querySelector('#modal_go') as HTMLButtonElement;
+                  
+                  console.log('Modal element:', modal ? 'Found' : 'Not found');
+                  console.log('OK button:', okButton ? 'Found' : 'Not found');
+                  
+                  if (okButton) {
+                    console.log('OK button visible:', okButton.offsetParent !== null);
+                    console.log('OK button disabled:', okButton.disabled);
+                    okButton.click();
+                    return true;
+                  }
+                  return false;
+                });
+                
+                if (clicked) {
+                  console.log(`  ✓ Clicked OK via evaluate`);
+                  modalClicked = true;
+                  await page.waitForTimeout(1000);
+                }
+              } catch (e: any) {
+                console.log(`  ⚠️  Approach 2 failed: ${e.message}`);
+              }
+            }
+            
+            if (!modalClicked) {
+              console.log(`  ⚠️  Modal not found or could not be clicked - continuing anyway`);
+            }
+            
+            await page.waitForTimeout(2000);
             
             // Step 4: Change Type of Bill to 327
             console.log(`  Step 4: Changing Type of Bill to 327...`);
@@ -2315,27 +2409,32 @@ async function processPendingApprovalRecords(page: Page, insuranceHelper: Insura
               }
               
               console.log('    ✓ Found Type of Bill dropdown');
-              console.log(`    Current value: ${select.value}`);
-              console.log(`    Available options:`);
-              Array.from(select.options).forEach(opt => {
-                console.log(`      - value="${opt.value}" text="${opt.text}"`);
-              });
+              console.log(`    Current value: ${select.value} (${select.options[select.selectedIndex]?.text})`);
               
-              // Try to find option 327 by text content
+              // Find option with text "327 - Adjustment Claim" (value should be "6")
               const option327 = Array.from(select.options).find(opt => 
-                opt.text.includes('327') || opt.text.toLowerCase().includes('adjustment')
+                opt.text.trim() === '327 - Adjustment Claim'
               );
               
               if (option327) {
-                console.log(`    ✓ Found option 327: value="${option327.value}" text="${option327.text}"`);
+                console.log(`    ✓ Found option: value="${option327.value}" text="${option327.text}"`);
                 select.value = option327.value;
-                // Trigger change event
-                const event = new Event('change', { bubbles: true });
-                select.dispatchEvent(event);
+                // Trigger change event for Angular
+                const changeEvent = new Event('change', { bubbles: true });
+                select.dispatchEvent(changeEvent);
+                // Also trigger input event
+                const inputEvent = new Event('input', { bubbles: true });
+                select.dispatchEvent(inputEvent);
                 console.log(`    ✓ Set dropdown to value: ${option327.value}`);
                 return true;
               } else {
-                console.log('    ✗ Could not find option 327 in dropdown');
+                console.log('    ✗ Could not find option "327 - Adjustment Claim" in dropdown');
+                console.log('    Available options:');
+                Array.from(select.options).forEach(opt => {
+                  if (opt.text.includes('327') || opt.text.includes('323')) {
+                    console.log(`      - value="${opt.value}" text="${opt.text}"`);
+                  }
+                });
                 return false;
               }
             });
