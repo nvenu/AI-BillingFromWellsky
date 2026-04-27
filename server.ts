@@ -1,6 +1,6 @@
 import "dotenv/config";
 import express, { Request, Response } from "express";
-import { loginAndProcessOffices, setLogBroadcaster } from "./kinnser-billing-automation";
+import { loginAndProcessOffices, setLogBroadcaster, setStopCheckFunction } from "./kinnser-billing-automation";
 import { OFFICES } from "./office-config";
 import { InsuranceHelper } from "./insurance-helper";
 
@@ -13,11 +13,27 @@ const insuranceHelper = new InsuranceHelper("Insurance Instructions.xlsx");
 // Set up log broadcasting
 setLogBroadcaster(broadcastLog);
 
+// Set up stop check function
+setStopCheckFunction(isStopRequested);
+
 app.use(express.json());
 app.use(express.static("public"));
 
 // Store SSE clients
 const sseClients: Response[] = [];
+
+// Stop flag
+let stopRequested = false;
+
+// Function to check if stop is requested
+export function isStopRequested(): boolean {
+  return stopRequested;
+}
+
+// Function to reset stop flag
+export function resetStopFlag() {
+  stopRequested = false;
+}
 
 // Function to broadcast logs to all connected clients
 export function broadcastLog(message: string) {
@@ -619,6 +635,39 @@ app.get("/billing", (req: Request, res: Response) => {
           cursor: not-allowed;
         }
         
+        /* Stop Button Styles */
+        .stop-btn {
+          margin-top: 20px;
+          padding: 12px 24px;
+          font-size: 1rem;
+          font-weight: 600;
+          border: 2px solid #ef5350;
+          background: white;
+          color: #ef5350;
+          cursor: pointer;
+          border-radius: 8px;
+          transition: all 0.3s;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          width: 100%;
+        }
+        
+        .stop-btn:hover:not(:disabled) {
+          background: #ef5350;
+          color: white;
+          transform: translateY(-2px);
+          box-shadow: 0 4px 12px rgba(239, 83, 80, 0.3);
+        }
+        
+        .stop-btn:disabled {
+          background: #f5f5f5;
+          border-color: #cbd5e0;
+          color: #cbd5e0;
+          cursor: not-allowed;
+          transform: none;
+        }
+        
         .modal-btn-secondary {
           background: #e2e8f0;
           color: #2d3748;
@@ -787,6 +836,32 @@ app.get("/billing", (req: Request, res: Response) => {
           document.getElementById('consoleOutput').innerHTML = '';
         }
         
+        async function stopAutomation() {
+          if (confirm('Are you sure you want to stop the automation? It will finish the current record and then stop.')) {
+            appendToConsole(new Date().toISOString(), '⚠️  Stop requested by user...');
+            
+            try {
+              const response = await fetch('/stop-automation', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+              });
+              
+              if (response.ok) {
+                appendToConsole(new Date().toISOString(), '✓ Stop signal sent. Automation will stop gracefully after current record.');
+                
+                // Disable stop button
+                const stopBtn = document.getElementById('stopBtn');
+                if (stopBtn) {
+                  stopBtn.disabled = true;
+                  stopBtn.innerHTML = '<svg style="width: 20px; height: 20px; margin-right: 8px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>Stopping...';
+                }
+              }
+            } catch (error) {
+              appendToConsole(new Date().toISOString(), '✗ Failed to send stop signal: ' + error.message);
+            }
+          }
+        }
+        
         function showConsole() {
           document.getElementById('liveConsole').style.display = 'block';
         }
@@ -936,6 +1011,13 @@ app.get("/billing", (req: Request, res: Response) => {
             </div>
             <p style="color: #666; margin-top: 8px;">This may take several minutes. Please wait...</p>
             \${insuranceInfo}
+            <button id="stopBtn" class="stop-btn" onclick="stopAutomation()">
+              <svg style="width: 20px; height: 20px; margin-right: 8px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z"></path>
+              </svg>
+              Stop Automation
+            </button>
           \`;
           
           try {
@@ -1029,6 +1111,9 @@ app.get("/health", (req: Request, res: Response) => {
 // API endpoint to run automation
 app.post("/run-automation", async (req: Request, res: Response) => {
   try {
+    // Reset stop flag at the start
+    resetStopFlag();
+    
     const { officeValue, selectedInsurances } = req.body;
     console.log(`Starting Kinnser automation for: ${officeValue}`);
     if (selectedInsurances) {
@@ -1051,6 +1136,14 @@ app.post("/run-automation", async (req: Request, res: Response) => {
       error: error instanceof Error ? error.message : "Unknown error"
     });
   }
+});
+
+// API endpoint to stop automation
+app.post("/stop-automation", (req: Request, res: Response) => {
+  console.log("⚠️  STOP REQUESTED BY USER");
+  stopRequested = true;
+  broadcastLog("⚠️  STOP REQUESTED - Automation will stop after current record...");
+  res.json({ success: true, message: "Stop requested - will stop gracefully after current record" });
 });
 
 app.listen(PORT, () => {

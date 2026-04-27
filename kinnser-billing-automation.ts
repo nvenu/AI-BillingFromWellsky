@@ -19,6 +19,17 @@ export function setLogBroadcaster(broadcaster: (message: string) => void) {
   logBroadcaster = broadcaster;
 }
 
+// Stop check function (will be set by server)
+let stopCheckFunction: (() => boolean) | null = null;
+
+export function setStopCheckFunction(checkFn: () => boolean) {
+  stopCheckFunction = checkFn;
+}
+
+function isStopRequested(): boolean {
+  return stopCheckFunction ? stopCheckFunction() : false;
+}
+
 // Override console.log to broadcast to web interface
 const originalConsoleLog = console.log;
 console.log = function(...args: any[]) {
@@ -1317,6 +1328,19 @@ async function processRecordsOneByOne(page: Page, insuranceHelper: InsuranceHelp
         console.log(`  ✓ Processed (Total: ${totalProcessed})`);
       }
       
+      // Check if stop was requested
+      if (isStopRequested()) {
+        console.log(`\n⚠️  ═══════════════════════════════════════════════════════`);
+        console.log(`⚠️  STOP REQUESTED BY USER`);
+        console.log(`⚠️  ═══════════════════════════════════════════════════════`);
+        console.log(`✓ Current record completed successfully`);
+        console.log(`✓ Stopping gracefully...`);
+        console.log(`✓ Records processed: ${totalProcessed}`);
+        console.log(`✓ Records failed: ${totalFailed}`);
+        console.log(`⚠️  ═══════════════════════════════════════════════════════\n`);
+        break; // Exit the while loop
+      }
+      
     } catch (error) {
       console.error(`  ✗ Error processing record:`, error);
       // Mark as failed to avoid retrying
@@ -1326,6 +1350,12 @@ async function processRecordsOneByOne(page: Page, insuranceHelper: InsuranceHelp
         failureReason: `Exception: ${error}`
       });
       totalFailed++;
+      
+      // Check if stop was requested even after error
+      if (isStopRequested()) {
+        console.log(`\n⚠️  STOP REQUESTED BY USER - Stopping after error...`);
+        break;
+      }
     }
   }
   
@@ -1801,6 +1831,12 @@ async function clickCreateButton(page: Page): Promise<void> {
 async function processPendingApproval(page: Page, insuranceHelper: InsuranceHelper, selectedInsurances: string[] | null = null): Promise<{files: string[], changedTo327: Array<{mrn: string, billingPeriod: string, reason: string}>}> {
   console.log("\n=== PROCESSING PENDING APPROVAL ===");
   
+  // Check if stop was requested before starting
+  if (isStopRequested()) {
+    console.log(`⚠️  STOP REQUESTED - Skipping Pending Approval tab`);
+    return { files: [], changedTo327: [] };
+  }
+  
   try {
     // Navigate to Pending Approval tab
     console.log("Navigating to Pending Approval tab...");
@@ -1966,6 +2002,19 @@ async function processPendingApprovalRecords(page: Page, insuranceHelper: Insura
       console.log('Type of Bill column index:', typeOfBillIndex);
 
       const rows = Array.from(document.querySelectorAll('table tbody tr'));
+      console.log(`Found ${rows.length} rows in Pending Approval table`);
+      
+      // Debug: Check first row for button structure
+      if (rows.length > 0) {
+        const firstRow = rows[0];
+        const buttons = firstRow.querySelectorAll('button');
+        const links = firstRow.querySelectorAll('a');
+        console.log(`First row has ${buttons.length} buttons and ${links.length} links`);
+        buttons.forEach((btn, i) => {
+          console.log(`  Button ${i}: id="${btn.id}" class="${btn.className}" onclick="${btn.getAttribute('onclick')}" ng-click="${btn.getAttribute('ng-click')}"`);
+        });
+      }
+      
       return rows.map((row, index) => {
         const cells = row.querySelectorAll('td');
         const allCells = Array.from(cells).map(cell => cell.textContent?.trim() || '');
@@ -1999,8 +2048,18 @@ async function processPendingApprovalRecords(page: Page, insuranceHelper: Insura
           billingPeriodEnd = parts[1]?.trim() || '';
         }
 
-        // Find Edit button
-        const editButton = row.querySelector('button[id*="edit"], button[ng-click*="edit"]');
+        // Find Edit button - try multiple selectors
+        let editButton = row.querySelector('button[id*="edit"]');
+        if (!editButton) {
+          editButton = row.querySelector('button[ng-click*="edit"]');
+        }
+        if (!editButton) {
+          editButton = row.querySelector('button[onclick*="edit"]');
+        }
+        if (!editButton) {
+          // Try finding any button in the row
+          editButton = row.querySelector('button');
+        }
         const editButtonId = editButton?.id || '';
 
         // Find Worksheet link (for Community health Group)
@@ -2023,10 +2082,19 @@ async function processPendingApprovalRecords(page: Page, insuranceHelper: Insura
     });
 
     console.log(`\nFound ${records.length} records in Pending Approval`);
+    
+    // Filter out empty records
+    const validRecords = records.filter(r => r.mrn && r.mrn.trim() !== '');
+    console.log(`Valid records (with MRN): ${validRecords.length}`);
+    
+    if (validRecords.length === 0) {
+      console.log("\n✓ No valid records to process in Pending Approval");
+      return [];
+    }
 
     // Log first few records for debugging
     console.log("\n=== SAMPLE RECORDS (first 3) ===");
-    records.slice(0, 3).forEach((record, idx) => {
+    validRecords.slice(0, 3).forEach((record, idx) => {
       console.log(`\nRecord ${idx + 1}:`);
       console.log(`  MRN: "${record.mrn}"`);
       console.log(`  Insurance: "${record.insurance}"`);
@@ -2038,21 +2106,15 @@ async function processPendingApprovalRecords(page: Page, insuranceHelper: Insura
       console.log(`  All Cells: [${record.allCells.join(' | ')}]`);
     });
 
-    // Additional check: if no records found, exit gracefully
-    if (records.length === 0) {
-      console.log("\n✓ No records to process in Pending Approval");
-      return []; // Exit function early with empty array
-    }
-
     // IMPORTANT: Identify duplicates and records that need Type of Bill 327
-    // These will be DESELECTED before approval so they stay in Pending Approval for manual review
+    // Use validRecords instead of records
     console.log("\n=== IDENTIFYING RECORDS THAT NEED TYPE OF BILL 327 ===");
     const recordsNeedingTOB327: number[] = [];
     
     // DEBUG: Show all extracted records with full details
     console.log("\n=== DEBUG: ALL EXTRACTED RECORDS ===");
-    console.log(`Total records extracted: ${records.length}`);
-    records.forEach((record, index) => {
+    console.log(`Total records extracted: ${validRecords.length}`);
+    validRecords.forEach((record, index) => {
       console.log(`\n[${index}] Record Details:`);
       console.log(`  MRN: "${record.mrn}"`);
       console.log(`  Insurance: "${record.insurance}"`);
@@ -2070,14 +2132,14 @@ async function processPendingApprovalRecords(page: Page, insuranceHelper: Insura
     
     // Check for duplicates with overlapping dates
     console.log("\n=== CHECKING FOR DUPLICATE MRNs WITH OVERLAPPING DATES ===");
-    const duplicates = findDuplicatesWithOverlap(records);
+    const duplicates = findDuplicatesWithOverlap(validRecords);
     
     // DEBUG: Show duplicate detection details
     console.log("\n=== DEBUG: DUPLICATE DETECTION ANALYSIS ===");
     
     // Group by MRN for analysis
     const mrnGroups: { [key: string]: any[] } = {};
-    records.forEach((record, index) => {
+    validRecords.forEach((record, index) => {
       if (!mrnGroups[record.mrn]) {
         mrnGroups[record.mrn] = [];
       }
@@ -2127,7 +2189,7 @@ async function processPendingApprovalRecords(page: Page, insuranceHelper: Insura
         
         // Show details for each record in the duplicate group
         dup.indices.forEach((idx: number) => {
-          const record = records[idx];
+          const record = validRecords[idx];
           console.log(`\n  Record [${idx}]:`);
           console.log(`    MRN: ${record.mrn}`);
           console.log(`    Insurance: ${record.insurance}`);
@@ -2140,29 +2202,210 @@ async function processPendingApprovalRecords(page: Page, insuranceHelper: Insura
         
         // Add all duplicate record indices to the list
         dup.indices.forEach((idx: number) => {
-          const record = records[idx];
-          // Only add if not already 327
-          if (!record.typeOfBill.includes('327')) {
+          const record = validRecords[idx];
+          // Only add if Type of Bill is 323 (needs to be changed to 327)
+          if (record.typeOfBill.includes('323')) {
             recordsNeedingTOB327.push(idx);
-            console.log(`    ❌ Record [${idx}] DOES NOT have TOB 327 → Will be DESELECTED`);
+            console.log(`    ❌ Record [${idx}] has TOB 323 → Will be changed to TOB 327`);
             console.log(`       MRN: ${record.mrn}, Period: ${record.billingPeriodText}`);
             
             // Track this for reporting
             changedRecords.push({
               mrn: record.mrn,
               billingPeriod: record.billingPeriodText,
-              reason: 'Duplicate MRN with overlapping dates - needs Type of Bill 327'
+              reason: 'Duplicate MRN with overlapping dates - changing TOB from 323 to 327'
             });
-          } else {
+          } else if (record.typeOfBill.includes('327')) {
             console.log(`    ✅ Record [${idx}] ALREADY HAS TOB 327 → Will be APPROVED`);
+            console.log(`       MRN: ${record.mrn}, Period: ${record.billingPeriodText}`);
+          } else {
+            console.log(`    ℹ️  Record [${idx}] has TOB ${record.typeOfBill} → Will be left as is`);
             console.log(`       MRN: ${record.mrn}, Period: ${record.billingPeriodText}`);
           }
         });
       }
       
       console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-      console.log(`SUMMARY: ${recordsNeedingTOB327.length} record(s) will be DESELECTED (need TOB 327)`);
+      console.log(`SUMMARY: ${recordsNeedingTOB327.length} record(s) with TOB 323 need to be changed to TOB 327`);
       console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+      
+      // AUTOMATICALLY CHANGE TYPE OF BILL FROM 323 TO 327 for duplicate records
+      if (recordsNeedingTOB327.length > 0) {
+        console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+        console.log(`  AUTOMATICALLY CHANGING ${recordsNeedingTOB327.length} RECORDS FROM TOB 323 TO TOB 327`);
+        console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+        
+        for (const recordIndex of recordsNeedingTOB327) {
+          const record = validRecords[recordIndex];
+          console.log(`\n┌─────────────────────────────────────────────────────────┐`);
+          console.log(`│ Changing Record [${recordIndex}] to TOB 327`);
+          console.log(`├─────────────────────────────────────────────────────────┤`);
+          console.log(`│ MRN: ${record.mrn}`);
+          console.log(`│ Insurance: ${record.insurance}`);
+          console.log(`│ Billing Period: ${record.billingPeriodText}`);
+          console.log(`│ Current TOB: ${record.typeOfBill}`);
+          console.log(`└─────────────────────────────────────────────────────────┘`);
+          
+          try {
+            // Step 1: Click the edit button
+            console.log(`  Step 1: Clicking edit button...`);
+            const editButtonId = record.editButtonId;
+            
+            if (!editButtonId) {
+              console.log(`  ⚠️  No edit button ID found, trying to click by row index...`);
+              
+              // Try to click the button directly by finding it in the row
+              const buttonClicked = await page.evaluate((rowIndex) => {
+                const rows = Array.from(document.querySelectorAll('table tbody tr'));
+                if (rowIndex < rows.length) {
+                  const row = rows[rowIndex];
+                  const button = row.querySelector('button');
+                  if (button) {
+                    button.click();
+                    return true;
+                  }
+                }
+                return false;
+              }, recordIndex);
+              
+              if (!buttonClicked) {
+                console.log(`  ✗ Could not find or click edit button for row ${recordIndex}`);
+                continue;
+              }
+              console.log(`  ✓ Clicked edit button by row index`);
+            } else {
+              await page.click(`#${editButtonId}`);
+              console.log(`  ✓ Clicked edit button: ${editButtonId}`);
+            }            
+            // Step 2: Wait for and handle "Helpful Suggestion" modal
+            console.log(`  Step 2: Waiting for "Helpful Suggestion" modal...`);
+            await page.waitForTimeout(2000);
+            
+            // Check if modal appeared and click OK
+            const modalOkClicked = await page.evaluate(() => {
+              const okButton = document.querySelector('#modal_go') as HTMLInputElement;
+              if (okButton && okButton.offsetParent !== null) {
+                okButton.click();
+                return true;
+              }
+              return false;
+            });
+            
+            if (modalOkClicked) {
+              console.log(`  ✓ Clicked OK on "Helpful Suggestion" modal`);
+            } else {
+              console.log(`  ⚠️  Modal not found or already dismissed`);
+            }
+            
+            await page.waitForTimeout(2000);
+            
+            // Step 3: Wait for worksheet page to load
+            console.log(`  Step 3: Waiting for worksheet page to load...`);
+            await page.waitForLoadState('domcontentloaded', { timeout: 30000 });
+            await page.waitForTimeout(3000);
+            console.log(`  ✓ Worksheet page loaded`);
+            
+            // Step 4: Change Type of Bill to 327
+            console.log(`  Step 4: Changing Type of Bill to 327...`);
+            const tobChanged = await page.evaluate(() => {
+              const select = document.querySelector('#typeOfBill') as HTMLSelectElement;
+              if (!select) {
+                console.log('    ✗ Type of Bill dropdown not found');
+                return false;
+              }
+              
+              console.log('    ✓ Found Type of Bill dropdown');
+              console.log(`    Current value: ${select.value}`);
+              console.log(`    Available options:`);
+              Array.from(select.options).forEach(opt => {
+                console.log(`      - value="${opt.value}" text="${opt.text}"`);
+              });
+              
+              // Try to find option 327 by text content
+              const option327 = Array.from(select.options).find(opt => 
+                opt.text.includes('327') || opt.text.toLowerCase().includes('adjustment')
+              );
+              
+              if (option327) {
+                console.log(`    ✓ Found option 327: value="${option327.value}" text="${option327.text}"`);
+                select.value = option327.value;
+                // Trigger change event
+                const event = new Event('change', { bubbles: true });
+                select.dispatchEvent(event);
+                console.log(`    ✓ Set dropdown to value: ${option327.value}`);
+                return true;
+              } else {
+                console.log('    ✗ Could not find option 327 in dropdown');
+                return false;
+              }
+            });
+            
+            if (tobChanged) {
+              console.log(`  ✓ Changed Type of Bill to 327 - Adjustment Claim`);
+            } else {
+              console.log(`  ✗ Could not change Type of Bill - dropdown not found or option not available`);
+              // Navigate back to Pending Approval
+              await page.click('#pendingClaimsApproval');
+              await page.waitForTimeout(3000);
+              continue;
+            }
+            
+            await page.waitForTimeout(1000);
+            
+            // Step 5: Scroll to and click Save and Close
+            console.log(`  Step 5: Scrolling to Save and Close button...`);
+            await page.evaluate(() => {
+              const saveButton = document.querySelector('#submitBtn') as HTMLElement;
+              if (saveButton) {
+                saveButton.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              }
+            });
+            await page.waitForTimeout(1000);
+            
+            console.log(`  Step 6: Clicking Save and Close...`);
+            await page.click('#submitBtn');
+            console.log(`  ✓ Clicked Save and Close`);
+            
+            // Step 6: Wait for Pending Approval page to reload
+            console.log(`  Step 7: Waiting for Pending Approval page to reload...`);
+            await page.waitForLoadState('domcontentloaded', { timeout: 30000 });
+            await page.waitForTimeout(3000);
+            console.log(`  ✓ Returned to Pending Approval page`);
+            
+            console.log(`  ✅ Successfully changed record [${recordIndex}] to TOB 327`);
+            
+            // Check if stop was requested
+            if (isStopRequested()) {
+              console.log(`\n⚠️  STOP REQUESTED - Stopping TOB 327 changes...`);
+              break;
+            }
+            
+          } catch (error) {
+            console.error(`  ✗ Error changing TOB 327 for record [${recordIndex}]:`, error);
+            // Try to navigate back to Pending Approval
+            try {
+              await page.click('#pendingClaimsApproval');
+              await page.waitForTimeout(3000);
+            } catch (navError) {
+              console.error(`  ✗ Could not navigate back to Pending Approval`);
+            }
+          }
+        }
+        
+        console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+        console.log(`  TOB 323 → 327 CHANGES COMPLETE`);
+        console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+        console.log(`✓ Changed ${recordsNeedingTOB327.length} record(s) from TOB 323 to TOB 327`);
+        console.log(`✓ All duplicate records with TOB 323 now have TOB 327`);
+        console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+        
+        // Reload the page to get fresh data with updated TOB values
+        console.log(`\nReloading Pending Approval page to refresh data...`);
+        await page.reload();
+        await page.waitForLoadState('domcontentloaded', { timeout: 30000 });
+        await page.waitForTimeout(3000);
+        console.log(`✓ Page reloaded with updated data`);
+      }
     } else {
       console.log("✓ No duplicate MRNs with overlapping billing periods found");
     }
@@ -2420,76 +2663,8 @@ async function processPendingApprovalRecords(page: Page, insuranceHelper: Insura
 
     console.log(`✓ Verified: ${checkedCount} records are selected`);
 
-    // DESELECT records that need Type of Bill 327
-    if (recordsNeedingTOB327.length > 0) {
-      console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-      console.log(`  DESELECTING ${recordsNeedingTOB327.length} RECORDS THAT NEED TOB 327`);
-      console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-      console.log(`These records will stay in Pending Approval for manual Type of Bill change to 327`);
-      
-      for (const recordIndex of recordsNeedingTOB327) {
-        const record = records[recordIndex];
-        console.log(`\n┌─────────────────────────────────────────────────────────┐`);
-        console.log(`│ Deselecting Record [${recordIndex}]`);
-        console.log(`├─────────────────────────────────────────────────────────┤`);
-        console.log(`│ MRN: ${record.mrn}`);
-        console.log(`│ Insurance: ${record.insurance}`);
-        console.log(`│ Billing Period: ${record.billingPeriodText}`);
-        console.log(`│ Type of Bill: ${record.typeOfBill}`);
-        console.log(`└─────────────────────────────────────────────────────────┘`);
-        
-        // Find and click the checkbox for this row
-        const deselected = await page.evaluate((rowIndex) => {
-          const rows = Array.from(document.querySelectorAll('table tbody tr'));
-          const row = rows[rowIndex];
-          if (!row) {
-            console.log(`ERROR: Row ${rowIndex} not found in table`);
-            return false;
-          }
-          
-          const checkbox = row.querySelector('input[type="checkbox"]') as HTMLInputElement;
-          if (!checkbox) {
-            console.log(`ERROR: Checkbox not found in row ${rowIndex}`);
-            return false;
-          }
-          
-          console.log(`Row ${rowIndex} checkbox state BEFORE: ${checkbox.checked ? 'CHECKED' : 'UNCHECKED'}`);
-          
-          if (checkbox.checked) {
-            checkbox.click();
-            console.log(`Row ${rowIndex} checkbox state AFTER: ${checkbox.checked ? 'CHECKED' : 'UNCHECKED'}`);
-            return true;
-          } else {
-            console.log(`Row ${rowIndex} checkbox was already UNCHECKED`);
-            return false;
-          }
-        }, recordIndex);
-        
-        if (deselected) {
-          console.log(`  ✅ Successfully DESELECTED checkbox for record [${recordIndex}]`);
-        } else {
-          console.log(`  ⚠️  WARNING: Could not deselect checkbox for record [${recordIndex}]`);
-          console.log(`  ⚠️  This record may still be selected for approval!`);
-        }
-        
-        await page.waitForTimeout(300);
-      }
-      
-      // Verify final count
-      const finalCheckedCount = await page.evaluate(() => {
-        const checkboxes = Array.from(document.querySelectorAll('table tbody tr input[type="checkbox"]'));
-        return checkboxes.filter(cb => (cb as HTMLInputElement).checked).length;
-      });
-      
-      console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-      console.log(`  DESELECTION COMPLETE`);
-      console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-      console.log(`✓ Final count: ${finalCheckedCount} records SELECTED for approval`);
-      console.log(`✓ ${recordsNeedingTOB327.length} records DESELECTED (need TOB 327)`);
-      console.log(`✓ Expected to approve: ${finalCheckedCount} records`);
-      console.log(`✓ Expected to stay in Pending Approval: ${recordsNeedingTOB327.length} records`);
-      console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-    }
+    // Note: Records needing TOB 327 have already been changed automatically above
+    // All records should now have correct Type of Bill, so we can proceed with approval
 
     // Wait for any "checking" state to complete
     console.log("\nWaiting for any 'checking' state to complete...");
@@ -2632,6 +2807,12 @@ async function processPendingApprovalRecords(page: Page, insuranceHelper: Insura
 
 async function processReadyToSend(page: Page, insuranceHelper: InsuranceHelper, selectedInsurances: string[] | null = null): Promise<string[]> {
   console.log("\n=== PROCESSING READY TO SEND ===");
+  
+  // Check if stop was requested before starting
+  if (isStopRequested()) {
+    console.log(`⚠️  STOP REQUESTED - Skipping Ready To Send tab`);
+    return [];
+  }
   
   try {
     // Wait for loading to complete
