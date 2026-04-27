@@ -2049,16 +2049,94 @@ async function processPendingApprovalRecords(page: Page, insuranceHelper: Insura
     console.log("\n=== IDENTIFYING RECORDS THAT NEED TYPE OF BILL 327 ===");
     const recordsNeedingTOB327: number[] = [];
     
+    // DEBUG: Show all extracted records with full details
+    console.log("\n=== DEBUG: ALL EXTRACTED RECORDS ===");
+    console.log(`Total records extracted: ${records.length}`);
+    records.forEach((record, index) => {
+      console.log(`\n[${index}] Record Details:`);
+      console.log(`  MRN: "${record.mrn}"`);
+      console.log(`  Insurance: "${record.insurance}"`);
+      console.log(`  Billing Period Text: "${record.billingPeriodText}"`);
+      console.log(`  Billing Period Start: "${record.billingPeriodStart}"`);
+      console.log(`  Billing Period End: "${record.billingPeriodEnd}"`);
+      console.log(`  Type of Bill: "${record.typeOfBill}"`);
+      
+      // Test date parsing
+      const startDate = new Date(record.billingPeriodStart);
+      const endDate = new Date(record.billingPeriodEnd);
+      console.log(`  Parsed Start Date: ${startDate.toISOString()} (Valid: ${!isNaN(startDate.getTime())})`);
+      console.log(`  Parsed End Date: ${endDate.toISOString()} (Valid: ${!isNaN(endDate.getTime())})`);
+    });
+    
     // Check for duplicates with overlapping dates
     console.log("\n=== CHECKING FOR DUPLICATE MRNs WITH OVERLAPPING DATES ===");
     const duplicates = findDuplicatesWithOverlap(records);
+    
+    // DEBUG: Show duplicate detection details
+    console.log("\n=== DEBUG: DUPLICATE DETECTION ANALYSIS ===");
+    
+    // Group by MRN for analysis
+    const mrnGroups: { [key: string]: any[] } = {};
+    records.forEach((record, index) => {
+      if (!mrnGroups[record.mrn]) {
+        mrnGroups[record.mrn] = [];
+      }
+      mrnGroups[record.mrn].push({ ...record, index });
+    });
+    
+    console.log(`\nTotal unique MRNs: ${Object.keys(mrnGroups).length}`);
+    Object.keys(mrnGroups).forEach(mrn => {
+      const group = mrnGroups[mrn];
+      if (group.length > 1) {
+        console.log(`\n⚠️  MRN "${mrn}" has ${group.length} records:`);
+        group.forEach(record => {
+          console.log(`    [${record.index}] ${record.billingPeriodText} - ${record.insurance} - TOB: ${record.typeOfBill}`);
+        });
+        
+        // Check for overlaps
+        console.log(`  Checking for date overlaps:`);
+        for (let i = 0; i < group.length; i++) {
+          for (let j = i + 1; j < group.length; j++) {
+            const r1 = group[i];
+            const r2 = group[j];
+            const start1 = new Date(r1.billingPeriodStart);
+            const end1 = new Date(r1.billingPeriodEnd);
+            const start2 = new Date(r2.billingPeriodStart);
+            const end2 = new Date(r2.billingPeriodEnd);
+            
+            const overlaps = start1 <= end2 && start2 <= end1;
+            console.log(`    [${r1.index}] vs [${r2.index}]: ${overlaps ? '⚠️ OVERLAP DETECTED' : '✓ No overlap'}`);
+            if (overlaps) {
+              console.log(`      ${r1.billingPeriodStart} to ${r1.billingPeriodEnd}`);
+              console.log(`      ${r2.billingPeriodStart} to ${r2.billingPeriodEnd}`);
+            }
+          }
+        }
+      }
+    });
 
     if (duplicates.length > 0) {
-      console.log(`\n⚠️  Found ${duplicates.length} duplicate MRN(s) with overlapping billing periods`);
+      console.log(`\n⚠️  DUPLICATE DETECTION RESULTS: Found ${duplicates.length} duplicate MRN group(s) with overlapping billing periods`);
 
       for (const dup of duplicates) {
-        console.log(`\nDuplicate MRN: ${dup.mrn}`);
-        console.log(`  Record indices: ${dup.indices.join(', ')}`);
+        console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+        console.log(`Duplicate Group - MRN: ${dup.mrn}`);
+        console.log(`  Total records in group: ${dup.indices.length}`);
+        console.log(`  Record indices: [${dup.indices.join(', ')}]`);
+        console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+        
+        // Show details for each record in the duplicate group
+        dup.indices.forEach((idx: number) => {
+          const record = records[idx];
+          console.log(`\n  Record [${idx}]:`);
+          console.log(`    MRN: ${record.mrn}`);
+          console.log(`    Insurance: ${record.insurance}`);
+          console.log(`    Billing Period: ${record.billingPeriodText}`);
+          console.log(`    Type of Bill: ${record.typeOfBill}`);
+          console.log(`    Has TOB 327: ${record.typeOfBill.includes('327') ? 'YES ✓' : 'NO ✗'}`);
+        });
+        
+        console.log(`\n  Processing duplicate records:`);
         
         // Add all duplicate record indices to the list
         dup.indices.forEach((idx: number) => {
@@ -2066,7 +2144,8 @@ async function processPendingApprovalRecords(page: Page, insuranceHelper: Insura
           // Only add if not already 327
           if (!record.typeOfBill.includes('327')) {
             recordsNeedingTOB327.push(idx);
-            console.log(`  - Record ${idx} (MRN: ${record.mrn}, Billing Period: ${record.billingPeriodText}) needs TOB 327`);
+            console.log(`    ❌ Record [${idx}] DOES NOT have TOB 327 → Will be DESELECTED`);
+            console.log(`       MRN: ${record.mrn}, Period: ${record.billingPeriodText}`);
             
             // Track this for reporting
             changedRecords.push({
@@ -2075,10 +2154,15 @@ async function processPendingApprovalRecords(page: Page, insuranceHelper: Insura
               reason: 'Duplicate MRN with overlapping dates - needs Type of Bill 327'
             });
           } else {
-            console.log(`  - Record ${idx} already has TOB 327 - will be approved`);
+            console.log(`    ✅ Record [${idx}] ALREADY HAS TOB 327 → Will be APPROVED`);
+            console.log(`       MRN: ${record.mrn}, Period: ${record.billingPeriodText}`);
           }
         });
       }
+      
+      console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+      console.log(`SUMMARY: ${recordsNeedingTOB327.length} record(s) will be DESELECTED (need TOB 327)`);
+      console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
     } else {
       console.log("✓ No duplicate MRNs with overlapping billing periods found");
     }
@@ -2338,34 +2422,54 @@ async function processPendingApprovalRecords(page: Page, insuranceHelper: Insura
 
     // DESELECT records that need Type of Bill 327
     if (recordsNeedingTOB327.length > 0) {
-      console.log(`\n=== DESELECTING ${recordsNeedingTOB327.length} RECORDS THAT NEED TOB 327 ===`);
+      console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+      console.log(`  DESELECTING ${recordsNeedingTOB327.length} RECORDS THAT NEED TOB 327`);
+      console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
       console.log(`These records will stay in Pending Approval for manual Type of Bill change to 327`);
       
       for (const recordIndex of recordsNeedingTOB327) {
         const record = records[recordIndex];
-        console.log(`\nDeselecting record ${recordIndex}:`);
-        console.log(`  MRN: ${record.mrn}`);
-        console.log(`  Insurance: ${record.insurance}`);
-        console.log(`  Billing Period: ${record.billingPeriodText}`);
+        console.log(`\n┌─────────────────────────────────────────────────────────┐`);
+        console.log(`│ Deselecting Record [${recordIndex}]`);
+        console.log(`├─────────────────────────────────────────────────────────┤`);
+        console.log(`│ MRN: ${record.mrn}`);
+        console.log(`│ Insurance: ${record.insurance}`);
+        console.log(`│ Billing Period: ${record.billingPeriodText}`);
+        console.log(`│ Type of Bill: ${record.typeOfBill}`);
+        console.log(`└─────────────────────────────────────────────────────────┘`);
         
         // Find and click the checkbox for this row
         const deselected = await page.evaluate((rowIndex) => {
           const rows = Array.from(document.querySelectorAll('table tbody tr'));
           const row = rows[rowIndex];
-          if (!row) return false;
+          if (!row) {
+            console.log(`ERROR: Row ${rowIndex} not found in table`);
+            return false;
+          }
           
           const checkbox = row.querySelector('input[type="checkbox"]') as HTMLInputElement;
-          if (checkbox && checkbox.checked) {
-            checkbox.click();
-            return true;
+          if (!checkbox) {
+            console.log(`ERROR: Checkbox not found in row ${rowIndex}`);
+            return false;
           }
-          return false;
+          
+          console.log(`Row ${rowIndex} checkbox state BEFORE: ${checkbox.checked ? 'CHECKED' : 'UNCHECKED'}`);
+          
+          if (checkbox.checked) {
+            checkbox.click();
+            console.log(`Row ${rowIndex} checkbox state AFTER: ${checkbox.checked ? 'CHECKED' : 'UNCHECKED'}`);
+            return true;
+          } else {
+            console.log(`Row ${rowIndex} checkbox was already UNCHECKED`);
+            return false;
+          }
         }, recordIndex);
         
         if (deselected) {
-          console.log(`  ✓ Deselected checkbox for record ${recordIndex}`);
+          console.log(`  ✅ Successfully DESELECTED checkbox for record [${recordIndex}]`);
         } else {
-          console.log(`  ⚠️  Could not deselect checkbox for record ${recordIndex}`);
+          console.log(`  ⚠️  WARNING: Could not deselect checkbox for record [${recordIndex}]`);
+          console.log(`  ⚠️  This record may still be selected for approval!`);
         }
         
         await page.waitForTimeout(300);
@@ -2376,8 +2480,15 @@ async function processPendingApprovalRecords(page: Page, insuranceHelper: Insura
         const checkboxes = Array.from(document.querySelectorAll('table tbody tr input[type="checkbox"]'));
         return checkboxes.filter(cb => (cb as HTMLInputElement).checked).length;
       });
-      console.log(`\n✓ Final: ${finalCheckedCount} records selected for approval`);
-      console.log(`✓ ${recordsNeedingTOB327.length} records deselected (need TOB 327)`);
+      
+      console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+      console.log(`  DESELECTION COMPLETE`);
+      console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+      console.log(`✓ Final count: ${finalCheckedCount} records SELECTED for approval`);
+      console.log(`✓ ${recordsNeedingTOB327.length} records DESELECTED (need TOB 327)`);
+      console.log(`✓ Expected to approve: ${finalCheckedCount} records`);
+      console.log(`✓ Expected to stay in Pending Approval: ${recordsNeedingTOB327.length} records`);
+      console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
     }
 
     // Wait for any "checking" state to complete
