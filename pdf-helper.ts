@@ -1,4 +1,4 @@
-import { PDFParse } from 'pdf-parse';
+import pdf from 'pdf-parse';
 
 /**
  * Extract date of admission from UB-04 claim form PDF
@@ -7,9 +7,8 @@ import { PDFParse } from 'pdf-parse';
  */
 export async function extractDateOfAdmission(pdfBuffer: Buffer): Promise<string | null> {
   try {
-    const parser = new PDFParse({ data: pdfBuffer });
-    const result = await parser.getText();
-    const text = result.text;
+    const data = await pdf(pdfBuffer);
+    const text = data.text;
     
     console.log("  DEBUG: PDF text length:", text.length);
     
