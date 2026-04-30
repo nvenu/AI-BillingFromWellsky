@@ -1,4 +1,4 @@
-import pdf from 'pdf-parse';
+import * as pdf from 'pdf-parse';
 
 /**
  * Extract date of admission from UB-04 claim form PDF
@@ -24,7 +24,7 @@ export async function extractDateOfAdmission(pdfBuffer: Buffer): Promise<string 
     console.log(`  ✓ Found potential date(s): ${allDates.join(', ')}`);
     
     // Filter for dates with year 2020-2030 (admission dates, not birth dates or claim IDs)
-    const validDates = allDates.filter(date => {
+    const validDates = allDates.filter((date: string) => {
       const year = parseInt(date.substring(4, 8));
       const month = parseInt(date.substring(0, 2));
       const day = parseInt(date.substring(2, 4));
