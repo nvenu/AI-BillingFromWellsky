@@ -1,4 +1,4 @@
-import * as pdf from 'pdf-parse';
+const pdf = require('pdf-parse');
 
 /**
  * Extract date of admission from UB-04 claim form PDF
