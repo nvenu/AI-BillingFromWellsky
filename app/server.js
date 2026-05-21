@@ -1143,6 +1143,79 @@ cron.schedule(deviationSchedule, async () => {
   }
 });
 
+// Cleanup old data files (older than 15 days) - runs daily at midnight UTC
+cron.schedule('0 0 * * *', async () => {
+  console.log('🗑️  Running daily cleanup of old data files (>15 days)...');
+  
+  const fifteenDaysAgo = new Date();
+  fifteenDaysAgo.setDate(fifteenDaysAgo.getDate() - 15);
+  
+  try {
+    const files = await fs.readdir(DATA_DIR);
+    let deletedCount = 0;
+    
+    for (const file of files) {
+      // Skip non-data files
+      if (file === '.gitkeep' || file === '.DS_Store') continue;
+      
+      const filepath = path.join(DATA_DIR, file);
+      const stats = await fs.stat(filepath);
+      
+      // Skip directories
+      if (stats.isDirectory()) continue;
+      
+      // Check if file has a date in its name
+      const dateMatch = file.match(/(\d{4}-\d{2}-\d{2})/);
+      
+      if (dateMatch) {
+        const fileDate = new Date(dateMatch[1]);
+        if (fileDate < fifteenDaysAgo) {
+          await fs.unlink(filepath);
+          console.log(`   🗑️  Deleted: ${file}`);
+          deletedCount++;
+        }
+      } else if (file.endsWith('.png')) {
+        // Delete screenshots older than 15 days based on file modification time
+        if (stats.mtime < fifteenDaysAgo) {
+          await fs.unlink(filepath);
+          console.log(`   🗑️  Deleted screenshot: ${file}`);
+          deletedCount++;
+        }
+      }
+    }
+    
+    // Also clean up JSON data files (keep only last 15 days of records)
+    const jsonFiles = ['deviation_data.json', 'eoe_data.json', 'dx_data.json', 'unbilled_data.json'];
+    
+    for (const jsonFile of jsonFiles) {
+      const jsonPath = path.join(DATA_DIR, jsonFile);
+      try {
+        const content = await fs.readFile(jsonPath, 'utf-8');
+        const data = JSON.parse(content);
+        
+        if (Array.isArray(data)) {
+          const filtered = data.filter(record => {
+            const recordDate = new Date(record.date);
+            return recordDate >= fifteenDaysAgo;
+          });
+          
+          if (filtered.length < data.length) {
+            await fs.writeFile(jsonPath, JSON.stringify(filtered, null, 2));
+            console.log(`   🗑️  ${jsonFile}: removed ${data.length - filtered.length} old records`);
+            deletedCount += (data.length - filtered.length);
+          }
+        }
+      } catch (e) {
+        // File doesn't exist or isn't valid JSON, skip
+      }
+    }
+    
+    console.log(`✅ Cleanup complete: removed ${deletedCount} old items`);
+  } catch (error) {
+    console.error('❌ Cleanup error:', error.message);
+  }
+});
+
 httpServer.listen(PORT, () => {
   console.log(`\n🚀 Kinnser Report Dashboard running at http://localhost:${PORT}\n`);
 });
