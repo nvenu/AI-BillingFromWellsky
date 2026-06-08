@@ -456,9 +456,9 @@ ${all327Changes.map(change => `  Office: ${change.office}
 
 Records needing TOB 327:
   1. Duplicate MRN records with overlapping billing periods
-  2. Partnership Health Plan of California insurance (if not already 327)` : 'No duplicate records found - no Type of Bill changes needed'} : 'No duplicate records found - no Type of Bill changes needed'}
+  2. Partnership Health Plan of California insurance (if not already 327)` : 'No duplicate records found - no Type of Bill changes needed'}
 
-${allSelectedRecords.length > 0 ? `
+${(allSelectedRecords.length > 0 || allReadyToSendFiles.length > 0) ? `
 WORKFLOW STATUS:
 ✓ Ready tab: ${allSelectedRecords.length} records selected and Create button clicked
 ✓ Pending Approval tab: Processed (duplicates fixed if found)
@@ -505,7 +505,7 @@ No action was taken as no records met the processing criteria.
       `;
             await (0, email_helper_1.sendEmail)({
                 to: process.env.EMAIL_RECIPIENTS || "nvenu@solifetec.com",
-                subject: `Kinnser Billing Report - ${officeNames} - ${timestamp}${allSelectedRecords.length === 0 ? ' [NO RECORDS PROCESSED]' : ''}`,
+                subject: `Kinnser Billing Report - ${officeNames} - ${timestamp}${(allSelectedRecords.length === 0 && allReadyToSendFiles.length === 0) ? ' [NO RECORDS PROCESSED]' : ''}`,
                 body: emailBody,
                 attachments: allAttachments
             });
