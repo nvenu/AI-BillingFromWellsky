@@ -3003,24 +3003,36 @@ async function processReadyToSend(page, insuranceHelper, selectedInsurances = nu
                         console.log(`  ✓ PDF tab opened`);
                         // Wait for PDF to fully load in new tab
                         console.log(`  Waiting for PDF content to fully load...`);
-                        try {
-                            await newPage.waitForLoadState('load', { timeout: 30000 });
-                            console.log(`  ✓ Load state reached`);
+                        
+                        // Wait for the URL to become a valid PDF URL (not about:blank or empty)
+                        let pdfUrl = '';
+                        for (let attempt = 0; attempt < 15; attempt++) {
+                            await newPage.waitForTimeout(2000);
+                            pdfUrl = newPage.url();
+                            if (pdfUrl && pdfUrl.includes('.pdf')) {
+                                console.log(`  ✓ PDF URL ready (attempt ${attempt + 1})`);
+                                break;
+                            }
+                            if (pdfUrl && pdfUrl.includes('SharedTemp')) {
+                                console.log(`  ✓ PDF URL ready (SharedTemp detected, attempt ${attempt + 1})`);
+                                break;
+                            }
+                            console.log(`  ⏳ Waiting for PDF URL... (attempt ${attempt + 1}, current: ${pdfUrl})`);
                         }
-                        catch (loadError) {
-                            console.log(`  ⚠️  Load timeout, continuing anyway...`);
+                        
+                        // Try load states if URL is valid
+                        if (pdfUrl && pdfUrl.length > 5 && pdfUrl !== 'about:blank') {
+                            try {
+                                await newPage.waitForLoadState('load', { timeout: 15000 });
+                                console.log(`  ✓ Load state reached`);
+                            }
+                            catch (loadError) {
+                                console.log(`  ⚠️  Load timeout, continuing anyway...`);
+                            }
                         }
-                        try {
-                            await newPage.waitForLoadState('networkidle', { timeout: 10000 });
-                            console.log(`  ✓ Network idle reached`);
-                        }
-                        catch (idleError) {
-                            console.log(`  ⚠️  Network idle timeout, continuing anyway...`);
-                        }
+                        
                         await newPage.waitForTimeout(2000); // Extra time for PDF rendering
                         console.log(`  ✓ PDF content ready for download`);
-                        // Get the PDF URL
-                        const pdfUrl = newPage.url();
                         console.log(`  PDF URL: ${pdfUrl}`);
                         // Generate filename
                         const timestamp = (0, date_fns_1.format)(new Date(), 'yyyy-MM-dd_HH-mm-ss');
