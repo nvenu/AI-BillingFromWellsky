@@ -1723,7 +1723,7 @@ async function processPendingApproval(page, insuranceHelper, selectedInsurances 
             await page.waitForTimeout(3000);
             // Verify we actually navigated to Ready To Send
             const readyToSendUrl = page.url();
-            if (!readyToSendUrl.includes('ready-to-send') && !readyToSendUrl.includes('readyToSend')) {
+            if (!readyToSendUrl.includes('ready-to-send') && !readyToSendUrl.includes('readyToSend') && !readyToSendUrl.includes('send-claims')) {
                 console.log(`✗ Navigation to Ready To Send failed! Current URL: ${readyToSendUrl}`);
                 throw new Error("Failed to navigate to Ready To Send tab");
             }
@@ -2396,11 +2396,34 @@ async function processPendingApprovalRecords(page, insuranceHelper) {
             const selectAllCheckbox = await page.$(selector);
             if (selectAllCheckbox) {
                 console.log(`✓ Found 'Select All' checkbox with selector: ${selector}`);
-                await selectAllCheckbox.click();
-                await page.waitForTimeout(2000); // Wait for selection to propagate
-                console.log("✓ Clicked 'Select All' checkbox");
-                selectAllFound = true;
-                break;
+                try {
+                    await page.click(selector, { timeout: 5000 });
+                    await page.waitForTimeout(2000); // Wait for selection to propagate
+                    console.log("✓ Clicked 'Select All' checkbox");
+                    selectAllFound = true;
+                    break;
+                }
+                catch (clickError) {
+                    console.log(`  ⚠️ Found but click failed: ${clickError.message}`);
+                    // Try force click via evaluate
+                    try {
+                        await page.evaluate((sel) => {
+                            const cb = document.querySelector(sel);
+                            if (cb) {
+                                cb.click();
+                                return true;
+                            }
+                            return false;
+                        }, selector);
+                        await page.waitForTimeout(2000);
+                        console.log("✓ Clicked 'Select All' checkbox via evaluate");
+                        selectAllFound = true;
+                        break;
+                    }
+                    catch (evalError) {
+                        console.log(`  ⚠️ Evaluate click also failed`);
+                    }
+                }
             }
         }
         catch (error) {
