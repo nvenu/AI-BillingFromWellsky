@@ -11,6 +11,7 @@ backend/data/
 *.xlsx
 *.xls
 *.db
+!Insurance Instructions.xlsx
 
 # Logs
 *.log
