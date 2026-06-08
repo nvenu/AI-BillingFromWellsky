@@ -2993,6 +2993,17 @@ async function processReadyToSend(page, insuranceHelper, selectedInsurances = nu
                     try {
                         // Set up listener for new page (tab) before clicking
                         const newPagePromise = page.context().waitForEvent('page', { timeout: 30000 });
+                        
+                        // Also listen for any PDF response on the context
+                        let capturedPdfUrl = '';
+                        const responseHandler = (response) => {
+                            const url = response.url();
+                            if (url.includes('.pdf') || url.includes('SharedTemp') || url.includes('ClaimPrintView')) {
+                                capturedPdfUrl = url;
+                            }
+                        };
+                        page.context().on('response', responseHandler);
+                        
                         // Click print icon
                         console.log(`  Clicking print icon...`);
                         await page.click(`#${record.printIconId}`);
@@ -3004,24 +3015,54 @@ async function processReadyToSend(page, insuranceHelper, selectedInsurances = nu
                         // Wait for PDF to fully load in new tab
                         console.log(`  Waiting for PDF content to fully load...`);
                         
-                        // Wait for the URL to become a valid PDF URL (not about:blank or empty)
+                        // Wait for the page to navigate to the actual PDF URL
                         let pdfUrl = '';
-                        for (let attempt = 0; attempt < 15; attempt++) {
-                            await newPage.waitForTimeout(2000);
+                        try {
+                            // Wait for the page to navigate (the PDF tab redirects to the actual PDF)
+                            await newPage.waitForURL(/\.pdf|SharedTemp|ClaimPrintView/, { timeout: 30000 });
                             pdfUrl = newPage.url();
-                            if (pdfUrl && pdfUrl.includes('.pdf')) {
-                                console.log(`  ✓ PDF URL ready (attempt ${attempt + 1})`);
-                                break;
+                            console.log(`  ✓ PDF URL resolved via navigation: ${pdfUrl}`);
+                        } catch (navError) {
+                            // If waitForURL fails, try getting the URL directly
+                            pdfUrl = newPage.url();
+                            console.log(`  ⚠️ waitForURL timed out, current URL: ${pdfUrl}`);
+                            
+                            // If URL is still empty/invalid, try to get it from the page's frame
+                            if (!pdfUrl || pdfUrl === ':' || pdfUrl === 'about:blank') {
+                                // Try getting URL from frames
+                                const frames = newPage.frames();
+                                for (const frame of frames) {
+                                    const frameUrl = frame.url();
+                                    if (frameUrl.includes('.pdf') || frameUrl.includes('SharedTemp')) {
+                                        pdfUrl = frameUrl;
+                                        console.log(`  ✓ Found PDF URL in frame: ${pdfUrl}`);
+                                        break;
+                                    }
+                                }
                             }
-                            if (pdfUrl && pdfUrl.includes('SharedTemp')) {
-                                console.log(`  ✓ PDF URL ready (SharedTemp detected, attempt ${attempt + 1})`);
-                                break;
+                            
+                            // If still no valid URL, try to get it from response
+                            if (!pdfUrl || pdfUrl === ':' || pdfUrl === 'about:blank') {
+                                console.log(`  ⚠️ Could not get PDF URL, trying to fetch via page context...`);
+                                // Try to get the PDF from the print icon's href directly
+                                const printHref = await page.evaluate((iconId) => {
+                                    const label = document.querySelector('#' + iconId);
+                                    if (label) {
+                                        const link = label.closest('a') || label.querySelector('a');
+                                        if (link) return link.href;
+                                    }
+                                    return null;
+                                }, record.printIconId);
+                                
+                                if (printHref) {
+                                    pdfUrl = printHref;
+                                    console.log(`  ✓ Got PDF URL from print icon href: ${pdfUrl}`);
+                                }
                             }
-                            console.log(`  ⏳ Waiting for PDF URL... (attempt ${attempt + 1}, current: ${pdfUrl})`);
                         }
                         
-                        // Try load states if URL is valid
-                        if (pdfUrl && pdfUrl.length > 5 && pdfUrl !== 'about:blank') {
+                        // Final wait for content
+                        if (pdfUrl && pdfUrl.includes('.pdf')) {
                             try {
                                 await newPage.waitForLoadState('load', { timeout: 15000 });
                                 console.log(`  ✓ Load state reached`);
@@ -3031,7 +3072,7 @@ async function processReadyToSend(page, insuranceHelper, selectedInsurances = nu
                             }
                         }
                         
-                        await newPage.waitForTimeout(2000); // Extra time for PDF rendering
+                        await newPage.waitForTimeout(2000);
                         console.log(`  ✓ PDF content ready for download`);
                         console.log(`  PDF URL: ${pdfUrl}`);
                         // Generate filename
@@ -3041,6 +3082,16 @@ async function processReadyToSend(page, insuranceHelper, selectedInsurances = nu
                         const filepath = path.join(downloadsPath, filename);
                         // Download the actual PDF file
                         console.log(`  Downloading PDF...`);
+                        
+                        // Use captured PDF URL if page URL is invalid
+                        if ((!pdfUrl || pdfUrl === ':' || pdfUrl === 'about:blank') && capturedPdfUrl) {
+                            pdfUrl = capturedPdfUrl;
+                            console.log(`  ✓ Using captured PDF URL from response: ${pdfUrl}`);
+                        }
+                        
+                        // Remove response handler
+                        page.context().removeListener('response', responseHandler);
+                        
                         try {
                             // Wait additional time for PDF to fully render
                             await newPage.waitForTimeout(3000);
