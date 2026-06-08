@@ -25,9 +25,16 @@
       max-width: 500px;
       width: 90%;
     }
-    .logo {
-      font-size: 64px;
-      margin-bottom: 20px;
+    .logos {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 30px;
+      margin-bottom: 30px;
+    }
+    .logos img {
+      height: 60px;
+      width: auto;
     }
     h1 {
       font-size: 28px;
@@ -67,7 +74,10 @@
 </head>
 <body>
   <div class="container">
-    <div class="logo">🏥</div>
+    <div class="logos">
+      <img src="/SOLT-LOGO-WITHOUT-TEXT.svg" alt="SOLT Healthcare">
+      <img src="/WS_HomeHealthHospice_Stacked.svg" alt="WellSky">
+    </div>
     <h1>SOLT Healthcare</h1>
     <p class="subtitle">Kinnser Billing Automation System</p>
     <a href="/billing" class="btn">Open Billing Automation</a>
