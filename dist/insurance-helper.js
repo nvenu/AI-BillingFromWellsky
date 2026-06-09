@@ -204,7 +204,8 @@ class InsuranceHelper {
         // Define processing type for each special handling insurance
         const specialHandlingConfig = {
             "community health group": "paper", // Download PDF (not electronic)
-            "partnership health plan of ca": "electronic" // Send electronically (Type of Bill 327)
+            "partnership health plan of ca": "electronic", // Send electronically (Type of Bill 327)
+            "senior whole health (bid)": "electronic" // Send electronically (after SN visit validation)
         };
         return specialHandlingConfig[nameLower] || null;
     }
