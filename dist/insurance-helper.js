@@ -73,6 +73,11 @@ class InsuranceHelper {
                     this.noChangesInsurances.add(nameLower);
                     console.log(`  ℹ️  Added special handling insurance: ${instruction.Name}`);
                 }
+                // Special handling: Senior whole Health (BID) - needs SN visit validation
+                else if (nameLower === "senior whole health (bid)") {
+                    this.noChangesInsurances.add(nameLower);
+                    console.log(`  ℹ️  Added special handling insurance: ${instruction.Name}`);
+                }
             }
         });
         console.log(`Loaded ${this.instructions.length} insurance instructions`);
@@ -163,7 +168,8 @@ class InsuranceHelper {
             return remarkLower.includes("no changes are required except for identical claims") ||
                 remarkLower === "paper" ||
                 (nameLower === "community health group" && remarkLower.includes("severity point")) ||
-                (nameLower === "partnership health plan of ca" && remarkLower.includes("taxonomy code"));
+                (nameLower === "partnership health plan of ca" && remarkLower.includes("taxonomy code")) ||
+                (nameLower === "senior whole health (bid)");
         })
             .map(instruction => instruction.Name)
             .sort();

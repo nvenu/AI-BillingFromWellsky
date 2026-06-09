@@ -155,16 +155,18 @@ async function processOffice(page, office, insuranceHelper, selectedInsurances =
             // Skip directly to Pending Approval and Ready To Send
             let readyToSendFiles = [];
             let changedTo327 = [];
+            let snFailures = [];
             try {
                 const result = await processPendingApproval(page, insuranceHelper, selectedInsurances);
                 readyToSendFiles = result.files;
                 changedTo327 = result.changedTo327;
+                snFailures = result.snFailures || [];
                 console.log(`✓ Pending Approval and Ready To Send workflow completed for ${office.name}`);
             }
             catch (error) {
                 console.error(`⚠️  Error in Pending Approval/Ready To Send for ${office.name}:`, error);
             }
-            return { records: [], filename: null, readyToSendFiles, readyToSendCount: readyToSendFiles.length > 0 ? readyToSendFiles.filter(f => f.includes('electronic') || f.includes('paper-claim')).length : 0, changedTo327 };
+            return { records: [], filename: null, readyToSendFiles, readyToSendCount: readyToSendFiles.length > 0 ? readyToSendFiles.filter(f => f.includes('electronic') || f.includes('paper-claim')).length : 0, changedTo327, snFailures };
         }
         // 5. Process records ONE BY ONE: select valid record → click create → repeat
         const { selectedCount, selectedRecords, failedRecords } = await processRecordsOneByOne(page, insuranceHelper);
@@ -192,10 +194,12 @@ async function processOffice(page, office, insuranceHelper, selectedInsurances =
         // 8. ALWAYS process Pending Approval and Ready To Send (even if no records were selected in Ready)
         let readyToSendFiles = [];
         let changedTo327 = [];
+        let snFailures = [];
         try {
             const result = await processPendingApproval(page, insuranceHelper, selectedInsurances);
             readyToSendFiles = result.files;
             changedTo327 = result.changedTo327;
+            snFailures = result.snFailures || [];
             console.log(`✓ Pending Approval and Ready To Send workflow completed for ${office.name}`);
         }
         catch (error) {
@@ -204,7 +208,7 @@ async function processOffice(page, office, insuranceHelper, selectedInsurances =
         }
         console.log(`✓ Successfully processed ${office.name}`);
         const readyToSendCount = readyToSendFiles.length > 0 ? readyToSendFiles.filter(f => f.includes('electronic') || f.includes('paper-claim')).length : 0;
-        return { records: selectedRecords, filename, readyToSendFiles, readyToSendCount, changedTo327 };
+        return { records: selectedRecords, filename, readyToSendFiles, readyToSendCount, changedTo327, snFailures };
     }
     catch (error) {
         console.error(`✗ Error processing office ${office.name}:`, error);
@@ -364,6 +368,7 @@ async function loginAndProcessOffices(officeValue = 'all', selectedInsurances = 
         const excelFiles = [];
         const allReadyToSendFiles = [];
         const all327Changes = [];
+        const allSNFailures = [];
         // 2. Process each office
         for (let i = 0; i < officesToProcess.length; i++) {
             const office = officesToProcess[i];
@@ -371,7 +376,7 @@ async function loginAndProcessOffices(officeValue = 'all', selectedInsurances = 
             // Select the office
             await selectOffice(page, office);
             // Process this office
-            const { records: officeRecords, filename, readyToSendFiles, readyToSendCount, changedTo327 } = await processOffice(page, office, insuranceHelper, selectedInsurances);
+            const { records: officeRecords, filename, readyToSendFiles, readyToSendCount, changedTo327, snFailures } = await processOffice(page, office, insuranceHelper, selectedInsurances);
             allSelectedRecords.push(...officeRecords);
             const totalCount = officeRecords.length + (readyToSendCount || 0);
             summary.push({ office: office.name, count: officeRecords.length, readyToSendCount: readyToSendCount || 0, changedTo327Count: changedTo327.length });
@@ -384,6 +389,17 @@ async function loginAndProcessOffices(officeValue = 'all', selectedInsurances = 
                     reason: change.reason
                 });
             });
+            // Collect SN visit failures
+            if (snFailures && snFailures.length > 0) {
+                snFailures.forEach(failure => {
+                    allSNFailures.push({
+                        office: office.name,
+                        mrn: failure.mrn,
+                        billingPeriod: failure.billingPeriod,
+                        insurance: failure.insurance
+                    });
+                });
+            }
             if (filename) {
                 excelFiles.push(filename);
             }
@@ -457,6 +473,13 @@ ${all327Changes.map(change => `  Office: ${change.office}
 Records needing TOB 327:
   1. Duplicate MRN records with overlapping billing periods
   2. Partnership Health Plan of California insurance (if not already 327)` : 'No duplicate records found - no Type of Bill changes needed'}
+
+SENIOR WHOLE HEALTH (BID) - SN VISIT VALIDATION:
+${allSNFailures.length > 0 ? `⚠️  ${allSNFailures.length} record(s) NOT approved due to > 2 Skilled Nursing visits per day:
+${allSNFailures.map(f => `  - MRN: ${f.mrn}, Billing Period: ${f.billingPeriod}, Office: ${f.office}`).join('\n')}
+
+These records remain in Pending Approval for manual review.
+Please verify Skilled Nursing visit counts before billing.` : '✓ No Senior whole Health (BID) visit validation issues found'}
 
 ${(allSelectedRecords.length > 0 || allReadyToSendFiles.length > 0) ? `
 WORKFLOW STATUS:
@@ -1620,7 +1643,7 @@ async function processPendingApproval(page, insuranceHelper, selectedInsurances 
     // Check if stop was requested before starting
     if (isStopRequested()) {
         console.log(`⚠️  STOP REQUESTED - Skipping Pending Approval tab`);
-        return { files: [], changedTo327: [] };
+        return { files: [], changedTo327: [], snFailures: [] };
     }
     try {
         // Navigate to Pending Approval tab
@@ -1709,8 +1732,13 @@ async function processPendingApproval(page, insuranceHelper, selectedInsurances 
         }
         else {
             // Process Pending Approval records and capture 327 changes
-            changedTo327 = await processPendingApprovalRecords(page, insuranceHelper);
+            const pendingResult = await processPendingApprovalRecords(page, insuranceHelper);
+            changedTo327 = pendingResult.changedRecords || pendingResult;
+            const snFailures = pendingResult.snFailures || [];
             console.log(`✓ Type of Bill changes: ${changedTo327.length} records changed to 327`);
+            if (snFailures.length > 0) {
+                console.log(`✓ SN Visit failures: ${snFailures.length} records not approved (> 2 SN/day)`);
+            }
         }
         // ALWAYS navigate to Ready To Send tab
         console.log("\n=== Navigating to Ready To Send ===");
@@ -1737,8 +1765,8 @@ async function processPendingApproval(page, insuranceHelper, selectedInsurances 
         // Process Ready To Send workflow
         const readyToSendFiles = await processReadyToSend(page, insuranceHelper, selectedInsurances);
         console.log(`✓ Ready To Send completed with ${readyToSendFiles.length} files`);
-        // Return files and 327 changes for email
-        return { files: readyToSendFiles, changedTo327 };
+        // Return files and 327 changes and SN failures for email
+        return { files: readyToSendFiles, changedTo327, snFailures: snFailures || [] };
     }
     catch (error) {
         console.error("✗ Error in Pending Approval workflow:", error);
@@ -2379,6 +2407,149 @@ async function processPendingApprovalRecords(page, insuranceHelper) {
     else {
         console.log("✓ No Community health Group records found");
     }
+    // Check for SENIOR WHOLE HEALTH (BID) records - need SN visit validation
+    console.log("\n=== CHECKING FOR SENIOR WHOLE HEALTH (BID) RECORDS ===");
+    const seniorWholeHealthRecords = records.filter(r => r.insurance.toLowerCase().includes('senior whole health') && r.insurance.toLowerCase().includes('bid'));
+    const recordsFailingSNCheck = []; // Track records that have > 2 SN visits per day
+    if (seniorWholeHealthRecords.length > 0) {
+        console.log(`\n⚠️  Found ${seniorWholeHealthRecords.length} Senior whole Health (BID) record(s)`);
+        console.log("  These records require Skilled Nursing visit validation (max 2 per day)");
+        for (const record of seniorWholeHealthRecords) {
+            console.log(`\nValidating Senior whole Health (BID) record:`);
+            console.log(`  MRN: ${record.mrn}`);
+            console.log(`  Insurance: ${record.insurance}`);
+            console.log(`  Billing Period: ${record.billingPeriodText}`);
+            console.log(`  Edit Button ID: ${record.editButtonId}`);
+            if (!record.editButtonId) {
+                console.log(`  ⚠️  No edit button found - skipping validation`);
+                continue;
+            }
+            try {
+                // Step 1: Click edit button
+                console.log(`  Step 1: Clicking edit button...`);
+                await page.click(`#${record.editButtonId}`);
+                console.log(`  ✓ Clicked edit button`);
+                // Step 2: Wait for worksheet page to load
+                console.log(`  Step 2: Waiting for worksheet page to load...`);
+                await page.waitForLoadState('domcontentloaded', { timeout: 30000 });
+                await page.waitForTimeout(3000);
+                console.log(`  ✓ Worksheet page loaded`);
+                // Step 3: Handle "Helpful Suggestion" modal
+                console.log(`  Step 3: Waiting for modal...`);
+                await page.waitForTimeout(2000);
+                let modalClicked = false;
+                try {
+                    const modalVisible = await page.isVisible('#modal_go');
+                    if (modalVisible) {
+                        await page.click('#modal_go', { timeout: 3000 });
+                        console.log(`  ✓ Clicked OK on modal`);
+                        modalClicked = true;
+                        await page.waitForTimeout(1000);
+                    }
+                } catch (e) {}
+                if (!modalClicked) {
+                    try {
+                        await page.evaluate(() => {
+                            const btn = document.querySelector('#modal_go');
+                            if (btn) btn.click();
+                        });
+                        console.log(`  ✓ Clicked OK via evaluate`);
+                    } catch (e) {}
+                }
+                await page.waitForTimeout(2000);
+                // Step 4: Click "+ Visits" accordion to expand
+                console.log(`  Step 4: Expanding Visits section...`);
+                try {
+                    await page.click('a.accordion-toggle:has-text("Visits")');
+                    console.log(`  ✓ Clicked Visits accordion`);
+                    await page.waitForTimeout(2000);
+                } catch (visitsError) {
+                    // Try alternative selector
+                    try {
+                        await page.evaluate(() => {
+                            const links = Array.from(document.querySelectorAll('a.accordion-toggle'));
+                            const visitsLink = links.find(a => a.textContent.trim() === 'Visits');
+                            if (visitsLink) visitsLink.click();
+                        });
+                        console.log(`  ✓ Clicked Visits accordion via evaluate`);
+                        await page.waitForTimeout(2000);
+                    } catch (e) {
+                        console.log(`  ⚠️  Could not expand Visits section`);
+                    }
+                }
+                // Step 5: Extract Skilled Nursing visits and count per day
+                console.log(`  Step 5: Checking Skilled Nursing visits...`);
+                const snVisitCheck = await page.evaluate(() => {
+                    const rows = Array.from(document.querySelectorAll('table.table-striped tbody tr'));
+                    const snVisitsByDate = {};
+                    rows.forEach(row => {
+                        const cells = row.querySelectorAll('td');
+                        if (cells.length >= 2) {
+                            const date = cells[0].textContent.trim();
+                            const visitType = cells[1].textContent.trim();
+                            if (visitType === 'Skilled Nursing') {
+                                if (!snVisitsByDate[date]) {
+                                    snVisitsByDate[date] = 0;
+                                }
+                                snVisitsByDate[date]++;
+                            }
+                        }
+                    });
+                    // Check if any date has more than 2 SN visits
+                    let hasExceeded = false;
+                    const details = [];
+                    for (const [date, count] of Object.entries(snVisitsByDate)) {
+                        details.push({ date, count });
+                        if (count > 2) {
+                            hasExceeded = true;
+                        }
+                    }
+                    return { hasExceeded, details, totalSNVisits: Object.values(snVisitsByDate).reduce((a, b) => a + b, 0) };
+                });
+                console.log(`  SN Visit Summary:`);
+                snVisitCheck.details.forEach(d => {
+                    const status = d.count > 2 ? '❌ EXCEEDS LIMIT' : '✓ OK';
+                    console.log(`    ${d.date}: ${d.count} SN visit(s) ${status}`);
+                });
+                if (snVisitCheck.hasExceeded) {
+                    console.log(`  ❌ FAILED: Record has > 2 SN visits on at least one date`);
+                    console.log(`  → This record will NOT be approved (will stay in Pending Approval)`);
+                    recordsFailingSNCheck.push(record.index);
+                } else {
+                    console.log(`  ✓ PASSED: All dates have ≤ 2 SN visits`);
+                    console.log(`  → This record will be approved normally`);
+                }
+                // Step 6: Click Cancel to go back to Pending Approval
+                console.log(`  Step 6: Clicking Cancel to return...`);
+                await page.click('#returnBtn');
+                console.log(`  ✓ Clicked Cancel`);
+                // Wait for Pending Approval page to reload
+                await page.waitForLoadState('domcontentloaded', { timeout: 30000 });
+                await page.waitForTimeout(3000);
+                console.log(`  ✓ Returned to Pending Approval page`);
+            } catch (error) {
+                console.error(`  ✗ Error validating Senior whole Health (BID) record:`, error.message || error);
+                // Try to navigate back
+                try {
+                    await page.click('#returnBtn');
+                    await page.waitForTimeout(3000);
+                } catch (navError) {
+                    try {
+                        await page.click('#pendingClaimsApproval');
+                        await page.waitForTimeout(3000);
+                    } catch (e) {}
+                }
+            }
+        }
+        console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+        console.log(`SENIOR WHOLE HEALTH (BID) VALIDATION SUMMARY:`);
+        console.log(`  Total records checked: ${seniorWholeHealthRecords.length}`);
+        console.log(`  Records PASSING (≤ 2 SN/day): ${seniorWholeHealthRecords.length - recordsFailingSNCheck.length}`);
+        console.log(`  Records FAILING (> 2 SN/day): ${recordsFailingSNCheck.length}`);
+        console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+    } else {
+        console.log("✓ No Senior whole Health (BID) records found");
+    }
     console.log("\n=== SELECTING ALL RECORDS FOR APPROVAL ===");
     // Try to find and click the "Select All" checkbox
     console.log("Looking for 'Select All' checkbox...");
@@ -2434,7 +2605,10 @@ async function processPendingApprovalRecords(page, insuranceHelper) {
         console.log("⚠️  'Select All' checkbox not found with any selector");
         console.log("⚠️  This is unexpected - Pending Approval should have a Select All checkbox");
         console.log("⚠️  Skipping approval to avoid errors");
-        return changedRecords;
+        return { changedRecords, snFailures: recordsFailingSNCheck.map(idx => {
+            const record = records[idx];
+            return { mrn: record ? record.mrn : 'Unknown', billingPeriod: record ? record.billingPeriodText : 'Unknown', insurance: record ? record.insurance : 'Senior whole Health (BID)' };
+        })};
     }
     // Verify how many checkboxes are actually checked
     const checkedCount = await page.evaluate(() => {
@@ -2444,6 +2618,34 @@ async function processPendingApprovalRecords(page, insuranceHelper) {
         return checked.length;
     });
     console.log(`✓ Verified: ${checkedCount} records are selected`);
+    // Deselect Senior whole Health (BID) records that failed SN visit check
+    if (recordsFailingSNCheck.length > 0) {
+        console.log(`\n=== DESELECTING ${recordsFailingSNCheck.length} RECORDS THAT FAILED SN VISIT CHECK ===`);
+        console.log(`These records have > 2 Skilled Nursing visits per day and will stay in Pending Approval`);
+        for (const recordIndex of recordsFailingSNCheck) {
+            try {
+                await page.evaluate((rowIdx) => {
+                    const rows = Array.from(document.querySelectorAll('table tbody tr'));
+                    if (rowIdx < rows.length) {
+                        const checkbox = rows[rowIdx].querySelector('input[type="checkbox"]');
+                        if (checkbox && checkbox.checked) {
+                            checkbox.click();
+                        }
+                    }
+                }, recordIndex);
+                console.log(`  ✓ Deselected record [${recordIndex}] (failed SN visit check)`);
+            } catch (error) {
+                console.log(`  ⚠️  Could not deselect record [${recordIndex}]`);
+            }
+        }
+        await page.waitForTimeout(1000);
+        const updatedCheckedCount = await page.evaluate(() => {
+            const checkboxes = Array.from(document.querySelectorAll('table tbody tr input[type="checkbox"]'));
+            return checkboxes.filter(cb => cb.checked).length;
+        });
+        console.log(`✓ After deselection: ${updatedCheckedCount} records selected for approval`);
+        console.log(`✓ ${recordsFailingSNCheck.length} records staying in Pending Approval (need manual review)`);
+    }
     // Note: Records needing TOB 327 have already been changed automatically above
     // All records should now have correct Type of Bill, so we can proceed with approval
     // Wait for any "checking" state to complete
@@ -2570,8 +2772,11 @@ async function processPendingApprovalRecords(page, insuranceHelper) {
     else {
         console.log("✗ Failed to click Approve button - skipping approval");
     }
-    // Return the list of changed records
-    return changedRecords;
+    // Return the list of changed records and SN failures
+    return { changedRecords, snFailures: recordsFailingSNCheck.map(idx => {
+        const record = records[idx];
+        return { mrn: record ? record.mrn : 'Unknown', billingPeriod: record ? record.billingPeriodText : 'Unknown', insurance: record ? record.insurance : 'Senior whole Health (BID)' };
+    })};
 }
 async function processReadyToSend(page, insuranceHelper, selectedInsurances = null) {
     console.log("\n=== PROCESSING READY TO SEND ===");
