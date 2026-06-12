@@ -475,11 +475,11 @@ Records needing TOB 327:
   2. Partnership Health Plan of California insurance (if not already 327)` : 'No duplicate records found - no Type of Bill changes needed'}
 
 SENIOR WHOLE HEALTH (BID) - SN VISIT VALIDATION:
-${allSNFailures.length > 0 ? `⚠️  ${allSNFailures.length} record(s) NOT approved due to > 2 Skilled Nursing visits per day:
+${officesToProcess.some(o => o.stateCode === 'MA') ? (allSNFailures.length > 0 ? `⚠️  ${allSNFailures.length} record(s) NOT approved due to > 2 Skilled Nursing visits per day:
 ${allSNFailures.map(f => `  - MRN: ${f.mrn}, Billing Period: ${f.billingPeriod}, Office: ${f.office}`).join('\n')}
 
 These records remain in Pending Approval for manual review.
-Please verify Skilled Nursing visit counts before billing.` : '✓ No Senior whole Health (BID) visit validation issues found'}
+Please verify Skilled Nursing visit counts before billing.` : '✓ No Senior whole Health (BID) visit validation issues found') : 'N/A - Not applicable for selected office(s)'}
 
 ${(allSelectedRecords.length > 0 || allReadyToSendFiles.length > 0) ? `
 WORKFLOW STATUS:
