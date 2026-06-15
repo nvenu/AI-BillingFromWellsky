@@ -225,14 +225,23 @@ function saveSelectedRecordsToExcel(records, filename) {
     console.log(`Filename: ${filename}`);
     // Create worksheet data
     const wsData = [
-        ['Timestamp', 'Record ID', 'Insurance', 'Authorization', 'All Columns'],
-        ...records.map(r => [
-            r.timestamp,
-            r.id,
-            r.insurance,
-            r.authorization,
-            r.allColumns.join(' | ')
-        ])
+        ['Timestamp', 'Patient Name', 'MRN', 'Branch', 'Insurance', 'Authorization', 'Billing Period', 'Claim #', 'Status', 'TOB', 'Amount'],
+        ...records.map(r => {
+            const cols = r.allColumns || [];
+            return [
+                r.timestamp,
+                cols[2] || '',  // Patient Name
+                cols[3] || '',  // MRN
+                cols[4] || '',  // Branch
+                r.insurance || cols[5] || '',  // Insurance
+                r.authorization || '',  // Authorization
+                cols[6] || '',  // Billing Period
+                cols[8] || '',  // Claim #
+                cols[9] || '',  // Status
+                cols[10] || '', // TOB
+                cols[11] || ''  // Amount
+            ];
+        })
     ];
     const ws = XLSX.utils.aoa_to_sheet(wsData);
     const wb = XLSX.utils.book_new();
@@ -265,15 +274,24 @@ function saveFailedRecordsToExcel(records, filename) {
     console.log(`Filename: ${filename}`);
     // Create worksheet data with failure reason
     const wsData = [
-        ['Timestamp', 'Record ID', 'Insurance', 'Authorization', 'Failure Reason', 'All Columns'],
-        ...records.map(r => [
-            r.timestamp,
-            r.id,
-            r.insurance,
-            r.authorization,
-            r.failureReason || 'Unknown error',
-            r.allColumns.join(' | ')
-        ])
+        ['Timestamp', 'Patient Name', 'MRN', 'Branch', 'Insurance', 'Authorization', 'Billing Period', 'Failure Reason', 'Claim #', 'Status', 'TOB', 'Amount'],
+        ...records.map(r => {
+            const cols = r.allColumns || [];
+            return [
+                r.timestamp,
+                cols[2] || '',  // Patient Name
+                cols[3] || '',  // MRN
+                cols[4] || '',  // Branch
+                r.insurance || cols[5] || '',  // Insurance
+                r.authorization || '',  // Authorization
+                cols[6] || '',  // Billing Period
+                r.failureReason || 'Unknown error',
+                cols[8] || '',  // Claim #
+                cols[9] || '',  // Status
+                cols[10] || '', // TOB
+                cols[11] || ''  // Amount
+            ];
+        })
     ];
     const ws = XLSX.utils.aoa_to_sheet(wsData);
     const wb = XLSX.utils.book_new();
