@@ -206,9 +206,6 @@ async function processOffice(page, office, insuranceHelper, selectedInsurances =
             console.error(`⚠️  Error in Pending Approval/Ready To Send for ${office.name}:`, error);
             console.log(`Continuing anyway...`);
             // Try to find any ready-to-send files that were created despite the error
-            const fs = require('fs');
-            const path = require('path');
-            const downloadsPath = path.join(process.cwd(), 'downloads');
             try {
                 const allFiles = fs.readdirSync(process.cwd());
                 const rtsFiles = allFiles.filter(f => f.startsWith('ready-to-send-'));
@@ -217,6 +214,7 @@ async function processOffice(page, office, insuranceHelper, selectedInsurances =
                     console.log(`✓ Found ${rtsFiles.length} ready-to-send file(s) on disk despite error`);
                 }
                 // Also check downloads folder for PDFs
+                const downloadsPath = path.join(process.cwd(), 'downloads');
                 if (fs.existsSync(downloadsPath)) {
                     const dlFiles = fs.readdirSync(downloadsPath);
                     const pdfFiles = dlFiles.filter(f => f.startsWith('paper-claim-')).map(f => path.join(downloadsPath, f));
