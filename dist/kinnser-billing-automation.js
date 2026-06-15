@@ -1762,6 +1762,7 @@ async function processPendingApproval(page, insuranceHelper, selectedInsurances 
         console.log("✓ Records loaded");
         // Track 327 changes
         let changedTo327 = [];
+        let snFailures = [];
         // Check if there are no records to display
         const noRecordsMessage = await page.textContent('body');
         if (noRecordsMessage && noRecordsMessage.includes('There are currently no records to display.')) {
@@ -1774,7 +1775,7 @@ async function processPendingApproval(page, insuranceHelper, selectedInsurances 
             // Process Pending Approval records and capture 327 changes
             const pendingResult = await processPendingApprovalRecords(page, insuranceHelper);
             changedTo327 = pendingResult.changedRecords || pendingResult;
-            const snFailures = pendingResult.snFailures || [];
+            snFailures = pendingResult.snFailures || [];
             console.log(`✓ Type of Bill changes: ${changedTo327.length} records changed to 327`);
             if (snFailures.length > 0) {
                 console.log(`✓ SN Visit failures: ${snFailures.length} records not approved (> 2 SN/day)`);
