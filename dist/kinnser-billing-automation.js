@@ -2235,6 +2235,15 @@ async function processPendingApprovalRecords(page, insuranceHelper) {
             await page.reload();
             await page.waitForLoadState('domcontentloaded', { timeout: 30000 });
             await page.waitForTimeout(3000);
+            // Re-select All Insurances after reload (dropdown resets to None)
+            try {
+                await page.waitForSelector('select[ng-model="insuranceKey"]', { timeout: 10000 });
+                await page.selectOption('select[ng-model="insuranceKey"]', '1');
+                console.log(`✓ Re-selected 'All Insurances' after reload`);
+                await page.waitForTimeout(3000);
+            } catch (reloadError) {
+                console.log(`⚠️  Could not re-select insurances after reload`);
+            }
             console.log(`✓ Page reloaded with updated data`);
         }
     }
