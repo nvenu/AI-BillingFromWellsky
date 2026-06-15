@@ -225,21 +225,21 @@ function saveSelectedRecordsToExcel(records, filename) {
     console.log(`Filename: ${filename}`);
     // Create worksheet data
     const wsData = [
-        ['Timestamp', 'Patient Name', 'MRN', 'Branch', 'Insurance', 'Authorization', 'Billing Period', 'Claim #', 'Status', 'TOB', 'Amount'],
+        ['Timestamp', 'Record ID', 'Insurance', 'Authorization', 'Patient Name', 'MRN', 'Branch', 'Insurance (Full)', 'SOC Date', 'Billing Period', 'Authorization (Full)'],
         ...records.map(r => {
             const cols = r.allColumns || [];
             return [
                 r.timestamp,
+                r.id,
+                r.insurance,
+                r.authorization,
                 cols[2] || '',  // Patient Name
                 cols[3] || '',  // MRN
                 cols[4] || '',  // Branch
-                r.insurance || cols[5] || '',  // Insurance
-                r.authorization || '',  // Authorization
-                cols[6] || '',  // Billing Period
-                cols[8] || '',  // Claim #
-                cols[9] || '',  // Status
-                cols[10] || '', // TOB
-                cols[11] || ''  // Amount
+                cols[5] || '',  // Insurance (Full)
+                cols[6] || '',  // SOC Date
+                cols[7] || '',  // Billing Period
+                cols[8] || ''   // Authorization (Full)
             ];
         })
     ];
@@ -274,22 +274,22 @@ function saveFailedRecordsToExcel(records, filename) {
     console.log(`Filename: ${filename}`);
     // Create worksheet data with failure reason
     const wsData = [
-        ['Timestamp', 'Patient Name', 'MRN', 'Branch', 'Insurance', 'Authorization', 'Billing Period', 'Failure Reason', 'Claim #', 'Status', 'TOB', 'Amount'],
+        ['Timestamp', 'Record ID', 'Insurance', 'Authorization', 'Failure Reason', 'Patient Name', 'MRN', 'Branch', 'Insurance (Full)', 'SOC Date', 'Billing Period', 'Authorization (Full)'],
         ...records.map(r => {
             const cols = r.allColumns || [];
             return [
                 r.timestamp,
+                r.id,
+                r.insurance,
+                r.authorization,
+                r.failureReason || 'Unknown error',
                 cols[2] || '',  // Patient Name
                 cols[3] || '',  // MRN
                 cols[4] || '',  // Branch
-                r.insurance || cols[5] || '',  // Insurance
-                r.authorization || '',  // Authorization
-                cols[6] || '',  // Billing Period
-                r.failureReason || 'Unknown error',
-                cols[8] || '',  // Claim #
-                cols[9] || '',  // Status
-                cols[10] || '', // TOB
-                cols[11] || ''  // Amount
+                cols[5] || '',  // Insurance (Full)
+                cols[6] || '',  // SOC Date
+                cols[7] || '',  // Billing Period
+                cols[8] || ''   // Authorization (Full)
             ];
         })
     ];
