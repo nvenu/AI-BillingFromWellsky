@@ -2054,6 +2054,210 @@ async function processPendingApprovalRecords(page, insuranceHelper) {
         console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
         console.log(`SUMMARY: ${recordsNeedingTOB327.length} record(s) with TOB 323 need to be changed to TOB 327`);
         console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+        // PROCESS UNITED HEALTH CARE MA RECORDS BEFORE generic TOB 327 changes
+        // This opens each UHC MA record, adds UD modifier, checks SN visits
+        const uhcMARecords = validRecords.filter(r => r.insurance.toLowerCase().trim() === 'united health care ma');
+        const recordsNeedingTOB327ForUHC = [];
+        if (uhcMARecords.length > 0) {
+            console.log(`\n=== PROCESSING UNITED HEALTH CARE MA RECORDS ===`);
+            console.log(`Found ${uhcMARecords.length} United health care MA record(s)`);
+            console.log("  Requires: admission date check, UD modifier for >30 days, multiple SN check");
+            for (const record of uhcMARecords) {
+                console.log(`\nProcessing UHC MA record:`);
+                console.log(`  MRN: ${record.mrn}`);
+                console.log(`  Insurance: ${record.insurance}`);
+                console.log(`  Billing Period: ${record.billingPeriodText}`);
+                if (!record.editButtonId) {
+                    console.log(`  ⚠️  No edit button found - skipping`);
+                    continue;
+                }
+                try {
+                    // Step 1: Click print icon to get admission date from PDF
+                    console.log(`  Step 1: Getting admission date from PDF...`);
+                    let admissionDate = null;
+                    // Derive print icon ID from edit button ID (same claim number)
+                    // editButtonId: openWorksheet64335176 → printIconId: openClaimPrintView64335176
+                    const claimNumber = record.editButtonId.replace('openWorksheet', '');
+                    const printIconId = `openClaimPrintView${claimNumber}`;
+                    if (printIconId) {
+                        try {
+                            // Wait for print icon to be available on page (page might still be loading)
+                            await page.waitForSelector(`#${printIconId}`, { timeout: 15000 });
+                            const newPagePromise = page.context().waitForEvent('page', { timeout: 30000 });
+                            await page.click(`#${printIconId}`);
+                            console.log(`  ✓ Clicked print icon: ${printIconId}`);
+                            const pdfPage = await newPagePromise;
+                            let pdfUrl = '';
+                            try {
+                                await pdfPage.waitForURL(/\.pdf|SharedTemp/, { timeout: 30000 });
+                                pdfUrl = pdfPage.url();
+                            } catch (e) {
+                                pdfUrl = pdfPage.url();
+                            }
+                            if (pdfUrl && pdfUrl.includes('.pdf')) {
+                                console.log(`  ✓ PDF URL: ${pdfUrl}`);
+                                try { await pdfPage.waitForLoadState('load', { timeout: 15000 }); } catch (e) {}
+                                const response = await pdfPage.context().request.fetch(pdfUrl);
+                                const pdfBuffer = await response.body();
+                                console.log(`  ✓ Downloaded PDF (${pdfBuffer.length} bytes)`);
+                                const { extractDateOfAdmission } = await Promise.resolve().then(() => __importStar(require('./pdf-helper')));
+                                admissionDate = await extractDateOfAdmission(pdfBuffer);
+                                if (admissionDate) {
+                                    console.log(`  ✓ Admission Date: ${admissionDate}`);
+                                } else {
+                                    console.log(`  ⚠️  Could not extract admission date from PDF`);
+                                }
+                            } else {
+                                console.log(`  ⚠️  Could not get valid PDF URL: ${pdfUrl}`);
+                            }
+                            await pdfPage.close();
+                            console.log(`  ✓ Closed PDF tab`);
+                        } catch (pdfError) {
+                            console.log(`  ⚠️  Error getting PDF: ${pdfError.message}`);
+                        }
+                    } else {
+                        console.log(`  ⚠️  No print icon found`);
+                    }
+                    // Step 2: Click edit button
+                    console.log(`  Step 2: Clicking edit button...`);
+                    await page.click(`#${record.editButtonId}`);
+                    console.log(`  ✓ Clicked edit button`);
+                    // Step 3: Wait for worksheet page to load
+                    await page.waitForLoadState('domcontentloaded', { timeout: 30000 });
+                    await page.waitForTimeout(3000);
+                    console.log(`  ✓ Worksheet page loaded`);
+                    // Step 4: Handle modal
+                    console.log(`  Step 3: Handling modal...`);
+                    await page.waitForTimeout(2000);
+                    try {
+                        const modalVisible = await page.isVisible('#modal_go');
+                        if (modalVisible) {
+                            await page.click('#modal_go', { timeout: 3000 });
+                            console.log(`  ✓ Clicked OK on modal`);
+                        }
+                    } catch (e) {}
+                    try {
+                        await page.evaluate(() => { const btn = document.querySelector('#modal_go'); if (btn) btn.click(); });
+                    } catch (e) {}
+                    await page.waitForTimeout(2000);
+                    // Step 5: Expand Visits section
+                    console.log(`  Step 4: Expanding Visits section...`);
+                    try {
+                        await page.evaluate(() => {
+                            const links = Array.from(document.querySelectorAll('a.accordion-toggle'));
+                            const visitsLink = links.find(a => a.textContent.trim() === 'Visits');
+                            if (visitsLink) visitsLink.click();
+                        });
+                        console.log(`  ✓ Expanded Visits`);
+                        await page.waitForTimeout(2000);
+                    } catch (e) {
+                        console.log(`  ⚠️  Could not expand Visits section`);
+                    }
+                    // Step 6: Process SN visits - add UD modifier and check for multiples
+                    console.log(`  Step 5: Processing Skilled Nursing visits...`);
+                    let needsTOB327 = false;
+                    const visitResult = await page.evaluate((admDateStr) => {
+                        const rows = Array.from(document.querySelectorAll('table.table-striped tbody tr'));
+                        const snVisitsByDate = {};
+                        let udModifiersAdded = 0;
+                        let admDate = null;
+                        if (admDateStr && admDateStr.length === 8) {
+                            const month = parseInt(admDateStr.substring(0, 2)) - 1;
+                            const day = parseInt(admDateStr.substring(2, 4));
+                            const year = parseInt(admDateStr.substring(4, 8));
+                            admDate = new Date(year, month, day);
+                        }
+                        rows.forEach((row) => {
+                            const cells = row.querySelectorAll('td');
+                            if (cells.length >= 2) {
+                                const dateStr = cells[0].textContent.trim();
+                                const visitType = cells[1].textContent.trim();
+                                if (visitType === 'Skilled Nursing') {
+                                    if (!snVisitsByDate[dateStr]) snVisitsByDate[dateStr] = 0;
+                                    snVisitsByDate[dateStr]++;
+                                    if (admDate && dateStr) {
+                                        const parts = dateStr.split('/');
+                                        if (parts.length === 3) {
+                                            const visitDate = new Date(parseInt(parts[2]), parseInt(parts[0]) - 1, parseInt(parts[1]));
+                                            const diffDays = Math.floor((visitDate - admDate) / (1000 * 60 * 60 * 24));
+                                            if (diffDays > 30) {
+                                                const modifier1 = row.querySelector('input[ng-model="lineItem.modifier1"]');
+                                                if (modifier1 && !modifier1.value) {
+                                                    modifier1.value = 'UD';
+                                                    modifier1.dispatchEvent(new Event('input', { bubbles: true }));
+                                                    modifier1.dispatchEvent(new Event('change', { bubbles: true }));
+                                                    udModifiersAdded++;
+                                                } else if (modifier1 && modifier1.value && modifier1.value !== 'UD') {
+                                                    const modifier2 = row.querySelector('input[ng-model="lineItem.modifier2"]');
+                                                    if (modifier2 && !modifier2.value) {
+                                                        modifier2.value = 'UD';
+                                                        modifier2.dispatchEvent(new Event('input', { bubbles: true }));
+                                                        modifier2.dispatchEvent(new Event('change', { bubbles: true }));
+                                                        udModifiersAdded++;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        });
+                        let hasMultipleSNSameDate = false;
+                        const multipleDates = [];
+                        for (const [date, count] of Object.entries(snVisitsByDate)) {
+                            if (count > 1) { hasMultipleSNSameDate = true; multipleDates.push({ date, count }); }
+                        }
+                        return { udModifiersAdded, hasMultipleSNSameDate, multipleDates, snVisitsByDate };
+                    }, admissionDate);
+                    console.log(`  UD modifiers added: ${visitResult.udModifiersAdded}`);
+                    if (visitResult.hasMultipleSNSameDate) {
+                        console.log(`  ❌ Multiple SN visits on same date:`);
+                        visitResult.multipleDates.forEach(d => console.log(`    ${d.date}: ${d.count} visits`));
+                        needsTOB327 = true;
+                    }
+                    // Step 7: Change TOB to 327 if needed
+                    if (needsTOB327) {
+                        console.log(`  Step 6: Changing TOB to 327 (multiple SN on same date)...`);
+                        await page.evaluate(() => {
+                            const select = document.querySelector('#typeOfBill');
+                            if (select) {
+                                const option327 = Array.from(select.options).find(opt => opt.text.trim() === '327 - Adjustment Claim');
+                                if (option327) { select.value = option327.value; select.dispatchEvent(new Event('change', { bubbles: true })); }
+                            }
+                        });
+                        console.log(`  ✓ Changed TOB to 327`);
+                        recordsNeedingTOB327ForUHC.push(record.index);
+                    }
+                    // Step 8: Save and Close
+                    console.log(`  Step 7: Clicking Save and Close...`);
+                    await page.evaluate(() => { const btn = document.querySelector('#submitBtn'); if (btn) btn.scrollIntoView({ behavior: 'smooth', block: 'center' }); });
+                    await page.waitForTimeout(1000);
+                    await page.click('#submitBtn');
+                    console.log(`  ✓ Clicked Save and Close`);
+                    await page.waitForLoadState('domcontentloaded', { timeout: 30000 });
+                    await page.waitForTimeout(3000);
+                    // Wait for loading spinner to disappear
+                    try {
+                        await page.waitForSelector('.loading-message', { state: 'hidden', timeout: 30000 });
+                    } catch (e) {}
+                    await page.waitForTimeout(3000);
+                    // Wait for table to be ready
+                    try {
+                        await page.waitForSelector('table tbody tr', { timeout: 15000 });
+                    } catch (e) {}
+                    await page.waitForTimeout(2000);
+                    console.log(`  ✅ Successfully processed UHC MA record`);
+                } catch (error) {
+                    console.error(`  ✗ Error processing UHC MA record:`, error.message || error);
+                    try { await page.click('#returnBtn'); await page.waitForTimeout(3000); } catch (e) {
+                        try { await page.click('#pendingClaimsApproval'); await page.waitForTimeout(3000); } catch (e2) {}
+                    }
+                }
+            }
+            console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+            console.log(`UHC MA SUMMARY: ${uhcMARecords.length} processed, ${recordsNeedingTOB327ForUHC.length} changed to TOB 327`);
+            console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+        }
         // AUTOMATICALLY CHANGE TYPE OF BILL FROM 323 TO 327 for duplicate records
         if (recordsNeedingTOB327.length > 0) {
             console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
@@ -2599,235 +2803,6 @@ async function processPendingApprovalRecords(page, insuranceHelper) {
         console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
     } else {
         console.log("✓ No Senior whole Health (BID) records found");
-    }
-    // Check for UNITED HEALTH CARE MA records - needs UD modifier + SN visit check
-    console.log("\n=== CHECKING FOR UNITED HEALTH CARE MA RECORDS ===");
-    const uhcMARecords = records.filter(r => r.insurance.toLowerCase().trim() === 'united health care ma');
-    const recordsNeedingTOB327ForUHC = []; // Track records needing 327 due to multiple SN visits
-    if (uhcMARecords.length > 0) {
-        console.log(`\n⚠️  Found ${uhcMARecords.length} United health care MA record(s)`);
-        console.log("  These records require: admission date check, UD modifier for >30 days, multiple SN check");
-        for (const record of uhcMARecords) {
-            console.log(`\nProcessing United health care MA record:`);
-            console.log(`  MRN: ${record.mrn}`);
-            console.log(`  Insurance: ${record.insurance}`);
-            console.log(`  Billing Period: ${record.billingPeriodText}`);
-            if (!record.editButtonId) {
-                console.log(`  ⚠️  No edit button found - skipping`);
-                continue;
-            }
-            try {
-                // Step 1: Click print icon to get admission date from PDF
-                console.log(`  Step 1: Getting admission date from PDF...`);
-                let admissionDate = null;
-                const printIconId = await page.evaluate((rowIndex) => {
-                    const rows = Array.from(document.querySelectorAll('table tbody tr'));
-                    const row = rows[rowIndex];
-                    if (!row) return null;
-                    const printIcon = row.querySelector('label[id*="openClaimPrintView"]');
-                    return printIcon ? printIcon.id : null;
-                }, record.index);
-                if (printIconId) {
-                    try {
-                        const newPagePromise = page.context().waitForEvent('page', { timeout: 30000 });
-                        await page.click(`#${printIconId}`);
-                        console.log(`  ✓ Clicked print icon: ${printIconId}`);
-                        const pdfPage = await newPagePromise;
-                        // Wait for PDF URL
-                        let pdfUrl = '';
-                        try {
-                            await pdfPage.waitForURL(/\.pdf|SharedTemp/, { timeout: 30000 });
-                            pdfUrl = pdfPage.url();
-                        } catch (e) {
-                            pdfUrl = pdfPage.url();
-                        }
-                        if (pdfUrl && pdfUrl.includes('.pdf')) {
-                            console.log(`  ✓ PDF URL: ${pdfUrl}`);
-                            try {
-                                await pdfPage.waitForLoadState('load', { timeout: 15000 });
-                            } catch (e) {}
-                            const response = await pdfPage.context().request.fetch(pdfUrl);
-                            const pdfBuffer = await response.body();
-                            console.log(`  ✓ Downloaded PDF (${pdfBuffer.length} bytes)`);
-                            // Extract admission date using pdf-helper
-                            const { extractDateOfAdmission } = await Promise.resolve().then(() => __importStar(require('./pdf-helper')));
-                            admissionDate = await extractDateOfAdmission(pdfBuffer);
-                            if (admissionDate) {
-                                console.log(`  ✓ Admission Date: ${admissionDate}`);
-                            } else {
-                                console.log(`  ⚠️  Could not extract admission date from PDF`);
-                            }
-                        } else {
-                            console.log(`  ⚠️  Could not get valid PDF URL: ${pdfUrl}`);
-                        }
-                        await pdfPage.close();
-                        console.log(`  ✓ Closed PDF tab`);
-                    } catch (pdfError) {
-                        console.log(`  ⚠️  Error getting PDF: ${pdfError.message}`);
-                    }
-                } else {
-                    console.log(`  ⚠️  No print icon found for this record`);
-                }
-                // Step 2: Click edit button
-                console.log(`  Step 2: Clicking edit button...`);
-                await page.click(`#${record.editButtonId}`);
-                console.log(`  ✓ Clicked edit button`);
-                // Step 3: Wait for worksheet page to load
-                await page.waitForLoadState('domcontentloaded', { timeout: 30000 });
-                await page.waitForTimeout(3000);
-                console.log(`  ✓ Worksheet page loaded`);
-                // Step 4: Handle modal
-                console.log(`  Step 3: Handling modal...`);
-                await page.waitForTimeout(2000);
-                try {
-                    const modalVisible = await page.isVisible('#modal_go');
-                    if (modalVisible) {
-                        await page.click('#modal_go', { timeout: 3000 });
-                        console.log(`  ✓ Clicked OK on modal`);
-                    }
-                } catch (e) {}
-                try {
-                    await page.evaluate(() => {
-                        const btn = document.querySelector('#modal_go');
-                        if (btn) btn.click();
-                    });
-                } catch (e) {}
-                await page.waitForTimeout(2000);
-                // Step 5: Expand Visits section
-                console.log(`  Step 4: Expanding Visits section...`);
-                try {
-                    await page.evaluate(() => {
-                        const links = Array.from(document.querySelectorAll('a.accordion-toggle'));
-                        const visitsLink = links.find(a => a.textContent.trim() === 'Visits');
-                        if (visitsLink) visitsLink.click();
-                    });
-                    console.log(`  ✓ Expanded Visits`);
-                    await page.waitForTimeout(2000);
-                } catch (e) {
-                    console.log(`  ⚠️  Could not expand Visits section`);
-                }
-                // Step 6: Process SN visits - add UD modifier and check for multiples
-                console.log(`  Step 5: Processing Skilled Nursing visits...`);
-                let needsTOB327 = false;
-                const visitResult = await page.evaluate((admDateStr) => {
-                    const rows = Array.from(document.querySelectorAll('table.table-striped tbody tr'));
-                    const snVisitsByDate = {};
-                    let udModifiersAdded = 0;
-                    // Parse admission date (mmddyyyy)
-                    let admDate = null;
-                    if (admDateStr && admDateStr.length === 8) {
-                        const month = parseInt(admDateStr.substring(0, 2)) - 1;
-                        const day = parseInt(admDateStr.substring(2, 4));
-                        const year = parseInt(admDateStr.substring(4, 8));
-                        admDate = new Date(year, month, day);
-                    }
-                    rows.forEach((row, idx) => {
-                        const cells = row.querySelectorAll('td');
-                        if (cells.length >= 2) {
-                            const dateStr = cells[0].textContent.trim();
-                            const visitType = cells[1].textContent.trim();
-                            if (visitType === 'Skilled Nursing') {
-                                // Count SN visits per date
-                                if (!snVisitsByDate[dateStr]) snVisitsByDate[dateStr] = 0;
-                                snVisitsByDate[dateStr]++;
-                                // Check if > 30 days from admission and add UD modifier
-                                if (admDate && dateStr) {
-                                    const parts = dateStr.split('/');
-                                    if (parts.length === 3) {
-                                        const visitDate = new Date(parseInt(parts[2]), parseInt(parts[0]) - 1, parseInt(parts[1]));
-                                        const diffDays = Math.floor((visitDate - admDate) / (1000 * 60 * 60 * 24));
-                                        if (diffDays > 30) {
-                                            // Add UD to modifier1 if empty
-                                            const modifier1 = row.querySelector('input[ng-model="lineItem.modifier1"]');
-                                            if (modifier1 && !modifier1.value) {
-                                                modifier1.value = 'UD';
-                                                modifier1.dispatchEvent(new Event('input', { bubbles: true }));
-                                                modifier1.dispatchEvent(new Event('change', { bubbles: true }));
-                                                udModifiersAdded++;
-                                            } else if (modifier1 && modifier1.value && modifier1.value !== 'UD') {
-                                                // Try modifier2
-                                                const modifier2 = row.querySelector('input[ng-model="lineItem.modifier2"]');
-                                                if (modifier2 && !modifier2.value) {
-                                                    modifier2.value = 'UD';
-                                                    modifier2.dispatchEvent(new Event('input', { bubbles: true }));
-                                                    modifier2.dispatchEvent(new Event('change', { bubbles: true }));
-                                                    udModifiersAdded++;
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    });
-                    // Check for multiple SN visits on same date
-                    let hasMultipleSNSameDate = false;
-                    const multipleDates = [];
-                    for (const [date, count] of Object.entries(snVisitsByDate)) {
-                        if (count > 1) {
-                            hasMultipleSNSameDate = true;
-                            multipleDates.push({ date, count });
-                        }
-                    }
-                    return { udModifiersAdded, hasMultipleSNSameDate, multipleDates, snVisitsByDate };
-                }, admissionDate);
-                console.log(`  UD modifiers added: ${visitResult.udModifiersAdded}`);
-                console.log(`  SN visits by date:`, visitResult.snVisitsByDate);
-                if (visitResult.hasMultipleSNSameDate) {
-                    console.log(`  ❌ Multiple SN visits on same date detected:`);
-                    visitResult.multipleDates.forEach(d => console.log(`    ${d.date}: ${d.count} visits`));
-                    needsTOB327 = true;
-                }
-                // Step 7: Change TOB to 327 if needed (multiple SN visits on same date)
-                if (needsTOB327) {
-                    console.log(`  Step 6: Changing TOB to 327...`);
-                    await page.evaluate(() => {
-                        const select = document.querySelector('#typeOfBill');
-                        if (select) {
-                            const option327 = Array.from(select.options).find(opt => opt.text.trim() === '327 - Adjustment Claim');
-                            if (option327) {
-                                select.value = option327.value;
-                                select.dispatchEvent(new Event('change', { bubbles: true }));
-                                select.dispatchEvent(new Event('input', { bubbles: true }));
-                            }
-                        }
-                    });
-                    console.log(`  ✓ Changed TOB to 327`);
-                    recordsNeedingTOB327ForUHC.push(record.index);
-                }
-                // Step 8: Click Save and Close
-                console.log(`  Step 7: Clicking Save and Close...`);
-                await page.evaluate(() => {
-                    const btn = document.querySelector('#submitBtn');
-                    if (btn) btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                });
-                await page.waitForTimeout(1000);
-                await page.click('#submitBtn');
-                console.log(`  ✓ Clicked Save and Close`);
-                // Wait for return to Pending Approval
-                await page.waitForLoadState('domcontentloaded', { timeout: 30000 });
-                await page.waitForTimeout(3000);
-                console.log(`  ✅ Successfully processed United health care MA record`);
-            } catch (error) {
-                console.error(`  ✗ Error processing UHC MA record:`, error.message || error);
-                try {
-                    await page.click('#returnBtn');
-                    await page.waitForTimeout(3000);
-                } catch (navError) {
-                    try {
-                        await page.click('#pendingClaimsApproval');
-                        await page.waitForTimeout(3000);
-                    } catch (e) {}
-                }
-            }
-        }
-        console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-        console.log(`UNITED HEALTH CARE MA PROCESSING SUMMARY:`);
-        console.log(`  Total records processed: ${uhcMARecords.length}`);
-        console.log(`  Records changed to TOB 327 (multiple SN/day): ${recordsNeedingTOB327ForUHC.length}`);
-        console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-    } else {
-        console.log("✓ No United health care MA records found");
     }
     console.log("\n=== SELECTING ALL RECORDS FOR APPROVAL ===");
     // Try to find and click the "Select All" checkbox

@@ -3,7 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.extractDateOfAdmission = extractDateOfAdmission;
 exports.calculateSeverityPoint = calculateSeverityPoint;
 exports.formatSeverityPointRemark = formatSeverityPointRemark;
-const pdf = require("pdf-parse");
+const { PDFParse } = require("pdf-parse");
 /**
  * Extract date of admission from UB-04 claim form PDF
  * The date is in mmddyyyy format (e.g., 12052025 for December 5, 2025)
@@ -11,8 +11,9 @@ const pdf = require("pdf-parse");
  */
 async function extractDateOfAdmission(pdfBuffer) {
     try {
-        const data = await pdf(pdfBuffer);
-        const text = data.text;
+        const parser = new PDFParse({ data: pdfBuffer });
+        const result = await parser.getText();
+        const text = result.text;
         console.log("  DEBUG: PDF text length:", text.length);
         // Find all 8-digit dates in the PDF
         const allDatesPattern = /\b(\d{8})\b/g;
