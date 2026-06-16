@@ -2083,6 +2083,12 @@ async function processPendingApprovalRecords(page, insuranceHelper) {
                         try {
                             // Wait for print icon to be available on page (page might still be loading)
                             await page.waitForSelector(`#${printIconId}`, { timeout: 15000 });
+                            // Scroll the print icon into view before clicking
+                            await page.evaluate((id) => {
+                                const el = document.querySelector('#' + id);
+                                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            }, printIconId);
+                            await page.waitForTimeout(500);
                             const newPagePromise = page.context().waitForEvent('page', { timeout: 30000 });
                             await page.click(`#${printIconId}`);
                             console.log(`  ✓ Clicked print icon: ${printIconId}`);
