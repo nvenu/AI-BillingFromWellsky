@@ -506,12 +506,8 @@ ${all327Changes.map(change => `  Office: ${change.office}
     - MRN: ${change.mrn}, Billing Period: ${change.billingPeriod}
       Reason: ${change.reason}`).join('\n')}
 
-⚠️  IMPORTANT: These records were DESELECTED and remain in Pending Approval
-    They require manual change to Type of Bill 327 (Adjustment Claim) before approval
-
-Records needing TOB 327:
-  1. Duplicate MRN records with overlapping billing periods
-  2. Partnership Health Plan of California insurance (if not already 327)` : 'No duplicate records found - no Type of Bill changes needed'}
+✓ These records have been AUTOMATICALLY changed to Type of Bill 327 (Adjustment Claim)
+  No manual action required - records were processed and approved.` : 'No duplicate records found - no Type of Bill changes needed'}
 
 ${officesToProcess.some(o => o.stateCode === 'MA') && allSNFailures.length > 0 ? `
 SENIOR WHOLE HEALTH (BID) - SN VISIT VALIDATION:
