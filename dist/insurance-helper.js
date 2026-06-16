@@ -78,6 +78,11 @@ class InsuranceHelper {
                     this.noChangesInsurances.add(nameLower);
                     console.log(`  ℹ️  Added special handling insurance: ${instruction.Name}`);
                 }
+                // Special handling: United health care MA - needs UD modifier + SN visit check
+                else if (nameLower === "united health care ma") {
+                    this.noChangesInsurances.add(nameLower);
+                    console.log(`  ℹ️  Added special handling insurance: ${instruction.Name}`);
+                }
             }
         });
         console.log(`Loaded ${this.instructions.length} insurance instructions`);
@@ -169,7 +174,8 @@ class InsuranceHelper {
                 remarkLower === "paper" ||
                 (nameLower === "community health group" && remarkLower.includes("severity point")) ||
                 (nameLower === "partnership health plan of ca" && remarkLower.includes("taxonomy code")) ||
-                (nameLower === "senior whole health (bid)");
+                (nameLower === "senior whole health (bid)") ||
+                (nameLower === "united health care ma");
         })
             .map(instruction => instruction.Name)
             .sort();
@@ -205,7 +211,8 @@ class InsuranceHelper {
         const specialHandlingConfig = {
             "community health group": "paper", // Download PDF (not electronic)
             "partnership health plan of ca": "electronic", // Send electronically (Type of Bill 327)
-            "senior whole health (bid)": "electronic" // Send electronically (after SN visit validation)
+            "senior whole health (bid)": "electronic", // Send electronically (after SN visit validation)
+            "united health care ma": "electronic" // Send electronically (after UD modifier + SN check)
         };
         return specialHandlingConfig[nameLower] || null;
     }
