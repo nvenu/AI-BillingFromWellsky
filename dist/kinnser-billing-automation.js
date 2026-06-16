@@ -3247,6 +3247,7 @@ async function processReadyToSend(page, insuranceHelper, selectedInsurances = nu
         // Create comprehensive summary Excel with all records
         const timestamp = (0, date_fns_1.format)(new Date(), 'yyyy-MM-dd_HH-mm-ss');
         const summaryFilename = `ready-to-send-summary-${timestamp}.xlsx`;
+        const columnNames = ['#', 'Checkbox', 'Patient Name', 'MRN', 'Branch', 'Insurance', 'Billing Period', 'SOC Date', 'Claim #', 'Status', 'TOB', 'Amount', 'Col 13', 'Col 14', 'Col 15'];
         const allRecordsData = [
             ...noChangesRecords.map((record, idx) => ({
                 'Record #': idx + 1,
@@ -3254,7 +3255,7 @@ async function processReadyToSend(page, insuranceHelper, selectedInsurances = nu
                 'Processing Type': 'Electronic',
                 'Status': 'Send Electronically',
                 ...record.allCells.reduce((acc, cell, cellIdx) => {
-                    acc[`Column ${cellIdx + 1}`] = cell;
+                    acc[columnNames[cellIdx] || `Column ${cellIdx + 1}`] = cell;
                     return acc;
                 }, {})
             })),
@@ -3264,7 +3265,7 @@ async function processReadyToSend(page, insuranceHelper, selectedInsurances = nu
                 'Processing Type': 'Paper',
                 'Status': 'PDF Downloaded',
                 ...record.allCells.reduce((acc, cell, cellIdx) => {
-                    acc[`Column ${cellIdx + 1}`] = cell;
+                    acc[columnNames[cellIdx] || `Column ${cellIdx + 1}`] = cell;
                     return acc;
                 }, {})
             }))
@@ -3384,7 +3385,7 @@ async function processReadyToSend(page, insuranceHelper, selectedInsurances = nu
                 'Insurance': record.insurance,
                 'Status': 'Send Electronically',
                 ...record.allCells.reduce((acc, cell, cellIdx) => {
-                    acc[`Column ${cellIdx + 1}`] = cell;
+                    acc[columnNames[cellIdx] || `Column ${cellIdx + 1}`] = cell;
                     return acc;
                 }, {})
             }));
