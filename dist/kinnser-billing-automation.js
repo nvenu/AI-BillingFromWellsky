@@ -2217,9 +2217,26 @@ async function processPendingApprovalRecords(page, insuranceHelper) {
                         visitResult.multipleDates.forEach(d => console.log(`    ${d.date}: ${d.count} visits`));
                         needsTOB327 = true;
                     }
+                    // Check if billing period end date is > 30 days from admission
+                    if (!needsTOB327 && admissionDate && record.billingPeriodEnd) {
+                        const admMonth = parseInt(admissionDate.substring(0, 2)) - 1;
+                        const admDay = parseInt(admissionDate.substring(2, 4));
+                        const admYear = parseInt(admissionDate.substring(4, 8));
+                        const admDate = new Date(admYear, admMonth, admDay);
+                        const endParts = record.billingPeriodEnd.split('/');
+                        if (endParts.length === 3) {
+                            const endDate = new Date(parseInt(endParts[2]), parseInt(endParts[0]) - 1, parseInt(endParts[1]));
+                            const diffDays = Math.floor((endDate - admDate) / (1000 * 60 * 60 * 24));
+                            console.log(`  Billing Period End: ${record.billingPeriodEnd}, Admission: ${admissionDate}, Days diff: ${diffDays}`);
+                            if (diffDays > 30) {
+                                console.log(`  ❌ Billing period end date is ${diffDays} days from admission (> 30) → TOB 327`);
+                                needsTOB327 = true;
+                            }
+                        }
+                    }
                     // Step 7: Change TOB to 327 if needed
                     if (needsTOB327) {
-                        console.log(`  Step 6: Changing TOB to 327 (multiple SN on same date)...`);
+                        console.log(`  Step 6: Changing TOB to 327...`);
                         await page.evaluate(() => {
                             const select = document.querySelector('#typeOfBill');
                             if (select) {
