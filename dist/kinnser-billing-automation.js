@@ -3300,6 +3300,16 @@ async function processPendingApprovalRecords(page, insuranceHelper) {
     } else {
         console.log("✓ No Senior whole Health (BID) records found");
     }
+    // Also add CCA records that have > 2 SN visits per day to the skip list
+    const ccaSkipRecords = validRecords.filter(r => r.skipApproval && r.insurance.toLowerCase().trim() === 'commonwealth care alliance');
+    if (ccaSkipRecords.length > 0) {
+        console.log(`\n=== CCA RECORDS EXCLUDED FROM APPROVAL (>2 SN visits/day) ===`);
+        for (const record of ccaSkipRecords) {
+            recordsFailingSNCheck.push(record.index);
+            console.log(`  ⊘ Record [${record.index}] MRN: ${record.mrn}, Period: ${record.billingPeriodText} - will NOT be approved`);
+        }
+        console.log(`  Total CCA records excluded: ${ccaSkipRecords.length}`);
+    }
     console.log("\n=== SELECTING ALL RECORDS FOR APPROVAL ===");
     // Try to find and click the "Select All" checkbox
     console.log("Looking for 'Select All' checkbox...");
