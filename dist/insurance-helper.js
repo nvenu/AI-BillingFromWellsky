@@ -83,10 +83,20 @@ class InsuranceHelper {
                     this.noChangesInsurances.add(nameLower);
                     console.log(`  ℹ️  Added special handling insurance: ${instruction.Name}`);
                 }
+                // Special handling: Commonwealth Care Alliance - needs UD modifier + Occurrence Code 50
+                else if (nameLower === "commonwealth care alliance") {
+                    this.noChangesInsurances.add(nameLower);
+                    console.log(`  ℹ️  Added special handling insurance: ${instruction.Name}`);
+                }
             }
         });
         console.log(`Loaded ${this.instructions.length} insurance instructions`);
         console.log(`Found ${this.noChangesInsurances.size} insurances with 'no changes' or 'paper' remark`);
+        // Ensure Commonwealth Care Alliance is always in the processable list (case-insensitive)
+        if (!this.noChangesInsurances.has("commonwealth care alliance")) {
+            this.noChangesInsurances.add("commonwealth care alliance");
+            console.log(`  ℹ️  Added Commonwealth Care Alliance to processable list (hardcoded)`);
+        }
         console.log("Insurances to process:", Array.from(this.noChangesInsurances).sort());
     }
     /**
@@ -175,7 +185,8 @@ class InsuranceHelper {
                 (nameLower === "community health group" && remarkLower.includes("severity point")) ||
                 (nameLower === "partnership health plan of ca" && remarkLower.includes("taxonomy code")) ||
                 (nameLower === "senior whole health (bid)") ||
-                (nameLower === "united health care ma");
+                (nameLower === "united health care ma") ||
+                (nameLower === "commonwealth care alliance");
         })
             .map(instruction => instruction.Name)
             .sort();
@@ -212,7 +223,8 @@ class InsuranceHelper {
             "community health group": "paper", // Download PDF (not electronic)
             "partnership health plan of ca": "electronic", // Send electronically (Type of Bill 327)
             "senior whole health (bid)": "electronic", // Send electronically (after SN visit validation)
-            "united health care ma": "electronic" // Send electronically (after UD modifier + SN check)
+            "united health care ma": "electronic", // Send electronically (after UD modifier + SN check)
+            "commonwealth care alliance": "electronic" // Send electronically (after UD modifier + Occurrence Code 50)
         };
         return specialHandlingConfig[nameLower] || null;
     }
