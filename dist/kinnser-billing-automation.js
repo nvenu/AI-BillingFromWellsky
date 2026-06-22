@@ -169,7 +169,7 @@ async function processOffice(page, office, insuranceHelper, selectedInsurances =
             return { records: [], filename: null, readyToSendFiles, readyToSendCount: readyToSendFiles.length > 0 ? readyToSendFiles.filter(f => f.includes('electronic') || f.includes('paper-claim')).length : 0, changedTo327, snFailures };
         }
         // 5. Process records ONE BY ONE: select valid record → click create → repeat
-        const { selectedCount, selectedRecords, failedRecords } = await processRecordsOneByOne(page, insuranceHelper);
+        const { selectedCount, selectedRecords, failedRecords } = await processRecordsOneByOne(page, insuranceHelper, selectedInsurances);
         // 6. Save selected records to Excel for audit trail
         let filename = null;
         if (selectedRecords.length > 0) {
@@ -1124,7 +1124,7 @@ async function processAllPagesAndSelectValid(page, insuranceHelper) {
     return { selectedCount: totalSelectedCount, selectedRecords: allSelectedRecords };
 }
 // NEW FUNCTION: Process records one by one - select valid record, click create, repeat
-async function processRecordsOneByOne(page, insuranceHelper) {
+async function processRecordsOneByOne(page, insuranceHelper, selectedInsurances = null) {
     console.log("\n=== PROCESSING RECORDS ONE BY ONE ===");
     console.log("Flow: Find valid record → Select → Scroll → Click Create → Check for errors → Repeat (stays on Ready tab)");
     let allSelectedRecords = [];
@@ -1142,7 +1142,7 @@ async function processRecordsOneByOne(page, insuranceHelper) {
         // Wait for loading to complete
         await waitForLoadingToComplete(page);
         // Get all records on current page and identify the FIRST valid one (excluding failed ones)
-        const validRecords = await identifyValidRecordsOnPage(page, insuranceHelper);
+        const validRecords = await identifyValidRecordsOnPage(page, insuranceHelper, selectedInsurances);
         // Filter out records that have already failed
         const availableRecords = validRecords.filter(r => !failedRecordIds.has(r.id));
         if (availableRecords.length === 0) {
@@ -1300,7 +1300,7 @@ async function processRecordsOneByOne(page, insuranceHelper) {
     return { selectedCount: totalProcessed, selectedRecords: allSelectedRecords, failedRecords };
 }
 // Helper function to identify valid records without selecting them
-async function identifyValidRecordsOnPage(page, insuranceHelper) {
+async function identifyValidRecordsOnPage(page, insuranceHelper, selectedInsurances = null) {
     const records = await page.evaluate(() => {
         const tables = Array.from(document.querySelectorAll('table'));
         for (const table of tables) {
@@ -1370,6 +1370,15 @@ async function identifyValidRecordsOnPage(page, insuranceHelper) {
         if (!record.insurance) {
             console.log(`  ⊘ Skipped: No insurance name`);
             continue;
+        }
+        // If user selected specific insurances, ONLY process those
+        if (selectedInsurances && selectedInsurances.length > 0) {
+            const normalizedSelected = selectedInsurances.map(s => s.toLowerCase().trim());
+            const recordInsLower = record.insurance.toLowerCase().trim();
+            if (!normalizedSelected.includes(recordInsLower)) {
+                // Not in user's selection - skip silently (don't log each one to reduce noise)
+                continue;
+            }
         }
         // Check if insurance should be processed (has "no changes" or "paper" remark)
         const shouldProcess = insuranceHelper.shouldProcessInsurance(record.insurance);
@@ -1769,7 +1778,7 @@ async function processPendingApproval(page, insuranceHelper, selectedInsurances 
         }
         else {
             // Process Pending Approval records and capture 327 changes
-            const pendingResult = await processPendingApprovalRecords(page, insuranceHelper);
+            const pendingResult = await processPendingApprovalRecords(page, insuranceHelper, selectedInsurances);
             changedTo327 = pendingResult.changedRecords || pendingResult;
             snFailures = pendingResult.snFailures || [];
             console.log(`✓ Type of Bill changes: ${changedTo327.length} records changed to 327`);
@@ -1810,7 +1819,7 @@ async function processPendingApproval(page, insuranceHelper, selectedInsurances 
         throw error;
     }
 }
-async function processPendingApprovalRecords(page, insuranceHelper) {
+async function processPendingApprovalRecords(page, insuranceHelper, selectedInsurances = null) {
     // Get all records with MRN and billing period
     console.log("\nExtracting record details from table...");
     const changedRecords = [];
@@ -1947,6 +1956,18 @@ async function processPendingApprovalRecords(page, insuranceHelper) {
     });
     // IMPORTANT: Identify duplicates and records that need Type of Bill 327
     // Use validRecords instead of records
+    // If user selected specific insurances, create a normalized set for quick lookup
+    const normalizedSelectedInsurances = (selectedInsurances && selectedInsurances.length > 0)
+        ? selectedInsurances.map(s => s.toLowerCase().trim())
+        : null;
+    // Helper to check if an insurance matches the user's selection
+    function isInsuranceSelected(insuranceName) {
+        if (!normalizedSelectedInsurances) return true; // no filter = process all
+        return normalizedSelectedInsurances.includes(insuranceName.toLowerCase().trim());
+    }
+    if (normalizedSelectedInsurances) {
+        console.log(`\n=== FILTERING: Only processing selected insurances: ${selectedInsurances.join(', ')} ===`);
+    }
     console.log("\n=== IDENTIFYING RECORDS THAT NEED TYPE OF BILL 327 ===");
     const recordsNeedingTOB327 = [];
     // DEBUG: Show all extracted records with full details
@@ -2292,7 +2313,9 @@ async function processPendingApprovalRecords(page, insuranceHelper) {
     }
     // PROCESS UNITED HEALTH CARE MA RECORDS (UD modifier + SN visit check)
     // This runs ALWAYS for UHC MA records, regardless of whether duplicates exist
-    const uhcMARecords = validRecords.filter(r => r.insurance.toLowerCase().trim() === 'united health care ma');
+    const uhcMARecords = isInsuranceSelected('united health care ma')
+        ? validRecords.filter(r => r.insurance.toLowerCase().trim() === 'united health care ma')
+        : [];
     const recordsNeedingTOB327ForUHC = [];
     if (uhcMARecords.length > 0) {
         console.log(`\n=== PROCESSING UNITED HEALTH CARE MA RECORDS ===`);
@@ -2519,7 +2542,9 @@ async function processPendingApprovalRecords(page, insuranceHelper) {
     }
     // PROCESS COMMONWEALTH CARE ALLIANCE RECORDS (UD modifier + Occurrence Code 50)
     // This runs ALWAYS for CCA records, regardless of whether duplicates exist
-    const ccaRecords = validRecords.filter(r => r.insurance.toLowerCase().trim() === 'commonwealth care alliance');
+    const ccaRecords = isInsuranceSelected('commonwealth care alliance')
+        ? validRecords.filter(r => r.insurance.toLowerCase().trim() === 'commonwealth care alliance')
+        : [];
     if (ccaRecords.length > 0) {
         console.log(`\n=== PROCESSING COMMONWEALTH CARE ALLIANCE RECORDS ===`);
         console.log(`Found ${ccaRecords.length} Commonwealth Care Alliance record(s)`);
@@ -2990,9 +3015,597 @@ async function processPendingApprovalRecords(page, insuranceHelper) {
         console.log(`CCA SUMMARY: ${ccaRecords.length} processed`);
         console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
     }
+    // PROCESS UCSD / UCSD COMMERCIAL RECORDS (Occurrence Code 50 + Value Codes 61/85)
+    // This runs ALWAYS for UCSD records, regardless of whether duplicates exist
+    const ucsdRecords = (isInsuranceSelected('ucsd') || isInsuranceSelected('ucsd commercial'))
+        ? validRecords.filter(r => {
+            const ins = r.insurance.toLowerCase().trim();
+            return ins === 'ucsd' || ins === 'ucsd commercial';
+        })
+        : [];
+    if (ucsdRecords.length > 0) {
+        console.log(`\n=== PROCESSING UCSD / UCSD COMMERCIAL RECORDS ===`);
+        console.log(`Found ${ucsdRecords.length} UCSD record(s)`);
+        console.log("  Requires: Occurrence Code 50, Value Code 61 (CBSA), Value Code 85 (FIPS)");
+        // Load Value Codes Information spreadsheet for ZIP lookup
+        let valueCodesData = null;
+        try {
+            const valueCodesPath = path.join(__dirname, '..', 'Value Codes Information.xlsx');
+            const vcWorkbook = XLSX.readFile(valueCodesPath);
+            // Use 'All States' sheet which has all ZIPs
+            const vcSheet = vcWorkbook.Sheets['All States'];
+            valueCodesData = XLSX.utils.sheet_to_json(vcSheet);
+            console.log(`  ✓ Loaded Value Codes Information: ${valueCodesData.length} ZIP entries`);
+        } catch (vcError) {
+            console.log(`  ⚠️  Could not load Value Codes Information.xlsx: ${vcError.message}`);
+            console.log(`  ⚠️  UCSD records cannot be processed without Value Codes data`);
+        }
+        if (valueCodesData) {
+            for (const record of ucsdRecords) {
+                console.log(`\nProcessing UCSD record:`);
+                console.log(`  MRN: ${record.mrn}`);
+                console.log(`  Insurance: ${record.insurance}`);
+                console.log(`  Billing Period: ${record.billingPeriodText}`);
+                if (!record.editButtonId) {
+                    console.log(`  ⚠️  No edit button found - skipping`);
+                    continue;
+                }
+                try {
+                    // STEP 1: Click PDF icon to get admission date
+                    console.log(`  Step 1: Getting admission date from PDF...`);
+                    let admissionDate = null;
+                    const claimNumber = record.editButtonId.replace('openWorksheet', '');
+                    const printIconId = `openClaimPrintView${claimNumber}`;
+                    try {
+                        await page.waitForSelector(`#${printIconId}`, { timeout: 15000 });
+                        await page.evaluate((id) => {
+                            const el = document.querySelector('#' + id);
+                            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        }, printIconId);
+                        await page.waitForTimeout(500);
+                        const newPagePromise = page.context().waitForEvent('page', { timeout: 30000 });
+                        await page.click(`#${printIconId}`);
+                        console.log(`  ✓ Clicked print icon: ${printIconId}`);
+                        const pdfPage = await newPagePromise;
+                        let pdfUrl = '';
+                        try {
+                            await pdfPage.waitForURL(/\.pdf|SharedTemp/, { timeout: 30000 });
+                            pdfUrl = pdfPage.url();
+                        } catch (e) {
+                            pdfUrl = pdfPage.url();
+                        }
+                        if (pdfUrl && pdfUrl.includes('.pdf')) {
+                            console.log(`  ✓ PDF URL: ${pdfUrl}`);
+                            try { await pdfPage.waitForLoadState('load', { timeout: 15000 }); } catch (e) {}
+                            const response = await pdfPage.context().request.fetch(pdfUrl);
+                            const pdfBuffer = await response.body();
+                            console.log(`  ✓ Downloaded PDF (${pdfBuffer.length} bytes)`);
+                            const { extractDateOfAdmission } = await Promise.resolve().then(() => __importStar(require('./pdf-helper')));
+                            admissionDate = await extractDateOfAdmission(pdfBuffer);
+                            if (admissionDate) {
+                                console.log(`  ✓ Admission Date: ${admissionDate}`);
+                            } else {
+                                console.log(`  ⚠️  Could not extract admission date from PDF`);
+                            }
+                        } else {
+                            console.log(`  ⚠️  Could not get valid PDF URL: ${pdfUrl}`);
+                        }
+                        await pdfPage.close();
+                        console.log(`  ✓ Closed PDF tab`);
+                    } catch (pdfError) {
+                        console.log(`  ⚠️  Error getting PDF: ${pdfError.message}`);
+                    }
+                    // STEP 2: Determine Occurrence Code 50 date
+                    console.log(`  Step 2: Determining Occurrence Code 50...`);
+                    let occurrenceCode50Date = null;
+                    if (admissionDate && record.billingPeriodEnd) {
+                        // Parse admission date (mmddyyyy format)
+                        const admMonth = parseInt(admissionDate.substring(0, 2)) - 1;
+                        const admDay = parseInt(admissionDate.substring(2, 4));
+                        const admYear = parseInt(admissionDate.substring(4, 8));
+                        const admDate = new Date(admYear, admMonth, admDay);
+                        // Parse billing period END date (MM/DD/YYYY format)
+                        const endParts = record.billingPeriodEnd.split('/');
+                        if (endParts.length === 3) {
+                            const billingEndDate = new Date(parseInt(endParts[2]), parseInt(endParts[0]) - 1, parseInt(endParts[1]));
+                            const diffDays = Math.floor((billingEndDate - admDate) / (1000 * 60 * 60 * 24));
+                            console.log(`  Billing Period End: ${record.billingPeriodEnd}, Admission: ${admissionDate}, Days diff: ${diffDays}`);
+                            if (diffDays <= 60) {
+                                // SCENARIO A: Within 60 days - OC50 = Admission Date
+                                const admFormatted = `${admissionDate.substring(0, 2)}/${admissionDate.substring(2, 4)}/${admissionDate.substring(4, 8)}`;
+                                occurrenceCode50Date = admFormatted;
+                                console.log(`  ✓ Scenario A: Within 60 days → OC50 = Admission Date: ${occurrenceCode50Date}`);
+                            } else {
+                                // SCENARIO B: More than 60 days - find Recertification visit date
+                                console.log(`  Scenario B: More than 60 days (${diffDays}) → Need Recertification visit date`);
+                                console.log(`  Episode URL from table: ${record.billingPeriodHref || 'NOT FOUND'}`);
+                                if (record.billingPeriodHref) {
+                                    // Navigate to episode page
+                                    console.log(`  Navigating to episode: ${record.billingPeriodHref}`);
+                                    await page.goto(record.billingPeriodHref, { waitUntil: 'domcontentloaded' });
+                                    await page.waitForTimeout(3000);
+                                    // Click "Previous Episode" link
+                                    const prevEpisodeExists = await page.isVisible('#previouscert');
+                                    if (prevEpisodeExists) {
+                                        console.log(`  ✓ Clicking Previous Episode link...`);
+                                        await page.click('#previouscert');
+                                        await page.waitForLoadState('domcontentloaded', { timeout: 30000 });
+                                        await page.waitForTimeout(3000);
+                                        // Search for Recertification visit on Nursing tab
+                                        let recertDate = await page.evaluate(() => {
+                                            const rows = Array.from(document.querySelectorAll('#scheduled-task tr'));
+                                            let latestRecertDate = null;
+                                            for (const row of rows) {
+                                                if (row.style.display === 'none' || row.classList.contains('trred')) continue;
+                                                if (row.classList.contains('hRowBgImage')) continue;
+                                                const cells = row.querySelectorAll('td');
+                                                if (cells.length < 2) continue;
+                                                const taskCell = cells[1];
+                                                const taskText = taskCell ? taskCell.textContent.trim() : '';
+                                                if (taskText.toLowerCase().includes('recertification')) {
+                                                    const statusDiv = row.querySelector('div[id^="Status"]');
+                                                    const status = statusDiv ? statusDiv.textContent.trim() : '';
+                                                    if (status.includes('Missed Visit') || status.includes('(MV)') || status.includes('Deleted')) {
+                                                        continue;
+                                                    }
+                                                    const visitDateDiv = row.querySelector('div[id^="VisitDate"]');
+                                                    const visitDate = visitDateDiv ? visitDateDiv.textContent.trim() : '';
+                                                    if (visitDate && visitDate.includes('/')) {
+                                                        latestRecertDate = visitDate;
+                                                    }
+                                                }
+                                            }
+                                            return latestRecertDate;
+                                        });
+                                        // If not found on Nursing, check Therapy tab
+                                        if (!recertDate) {
+                                            console.log(`  ⚠️  No Recertification on Nursing tab, checking Therapy...`);
+                                            const therapyLink = await page.$('#LinkTherapy');
+                                            if (therapyLink) {
+                                                await therapyLink.click();
+                                                await page.waitForLoadState('domcontentloaded', { timeout: 30000 });
+                                                await page.waitForTimeout(3000);
+                                                recertDate = await page.evaluate(() => {
+                                                    const rows = Array.from(document.querySelectorAll('#scheduled-task tr'));
+                                                    let latestRecertDate = null;
+                                                    for (const row of rows) {
+                                                        if (row.style.display === 'none' || row.classList.contains('trred')) continue;
+                                                        if (row.classList.contains('hRowBgImage')) continue;
+                                                        const cells = row.querySelectorAll('td');
+                                                        if (cells.length < 2) continue;
+                                                        const taskCell = cells[1];
+                                                        const taskText = taskCell ? taskCell.textContent.trim() : '';
+                                                        if (taskText.toLowerCase().includes('recertification')) {
+                                                            const statusDiv = row.querySelector('div[id^="Status"]');
+                                                            const status = statusDiv ? statusDiv.textContent.trim() : '';
+                                                            if (status.includes('Missed Visit') || status.includes('(MV)') || status.includes('Deleted')) {
+                                                                continue;
+                                                            }
+                                                            const visitDateDiv = row.querySelector('div[id^="VisitDate"]');
+                                                            const visitDate = visitDateDiv ? visitDateDiv.textContent.trim() : '';
+                                                            if (visitDate && visitDate.includes('/')) {
+                                                                latestRecertDate = visitDate;
+                                                            }
+                                                        }
+                                                    }
+                                                    return latestRecertDate;
+                                                });
+                                            }
+                                        }
+                                        if (recertDate) {
+                                            occurrenceCode50Date = recertDate;
+                                            console.log(`  ✓ Scenario B: Found Recertification visit date → OC50 = ${occurrenceCode50Date}`);
+                                        } else {
+                                            console.log(`  ⚠️  No Recertification visit found in previous episode`);
+                                            const admFormatted = `${admissionDate.substring(0, 2)}/${admissionDate.substring(2, 4)}/${admissionDate.substring(4, 8)}`;
+                                            occurrenceCode50Date = admFormatted;
+                                            console.log(`  ⚠️  Falling back to Admission Date: ${occurrenceCode50Date}`);
+                                        }
+                                    } else {
+                                        console.log(`  ⚠️  No Previous Episode link found`);
+                                        const admFormatted = `${admissionDate.substring(0, 2)}/${admissionDate.substring(2, 4)}/${admissionDate.substring(4, 8)}`;
+                                        occurrenceCode50Date = admFormatted;
+                                        console.log(`  ⚠️  Falling back to Admission Date: ${occurrenceCode50Date}`);
+                                    }
+                                    // Navigate back to Pending Approval
+                                    console.log(`  Navigating back to Pending Approval...`);
+                                    await page.goto(page.url().split('/AM/Patient')[0] + '/EHR/#/AM/billing/claims-manager/managed-care/approve-claims', { waitUntil: 'domcontentloaded' });
+                                    await page.waitForTimeout(3000);
+                                    // Re-select insurance
+                                    try {
+                                        await page.waitForSelector('select[ng-model="insuranceKey"]', { timeout: 10000 });
+                                        await page.selectOption('select[ng-model="insuranceKey"]', '12');
+                                        await page.waitForTimeout(3000);
+                                    } catch (e) { console.log(`  ⚠️  Could not re-select insurance after navigation`); }
+                                } else {
+                                    // No billing period link - fall back to admission date
+                                    const admFormatted = `${admissionDate.substring(0, 2)}/${admissionDate.substring(2, 4)}/${admissionDate.substring(4, 8)}`;
+                                    occurrenceCode50Date = admFormatted;
+                                    console.log(`  ⚠️  No billing period link available, using Admission Date: ${occurrenceCode50Date}`);
+                                }
+                            }
+                        }
+                    } else {
+                        console.log(`  ⚠️  Missing admission date or billing period end - cannot determine OC50`);
+                    }
+                    // STEP 3: Open claim edit screen
+                    console.log(`  Step 3: Opening claim edit screen...`);
+                    await page.waitForSelector(`#${record.editButtonId}`, { timeout: 15000 });
+                    await page.click(`#${record.editButtonId}`);
+                    console.log(`  ✓ Clicked edit button`);
+                    await page.waitForLoadState('domcontentloaded', { timeout: 30000 });
+                    await page.waitForTimeout(3000);
+                    // Handle Helpful Suggestion modal
+                    try {
+                        const modalVisible = await page.isVisible('#modal_go');
+                        if (modalVisible) {
+                            await page.click('#modal_go', { timeout: 3000 });
+                            console.log(`  ✓ Clicked OK on modal`);
+                        }
+                    } catch (e) {}
+                    try {
+                        await page.evaluate(() => { const btn = document.querySelector('#modal_go'); if (btn) btn.click(); });
+                    } catch (e) {}
+                    await page.waitForTimeout(2000);
+                    console.log(`  ✓ Worksheet loaded`);
+                    // STEP 4: Extract patient ZIP code from the worksheet
+                    console.log(`  Step 4: Extracting patient ZIP code...`);
+                    const patientZip = await page.evaluate(() => {
+                        // Try common selectors for patient ZIP on Kinnser worksheet
+                        const zipSelectors = [
+                            '#patientZip',
+                            '#patZip',
+                            'input[ng-model*="zip"]',
+                            'input[ng-model*="Zip"]',
+                            'input[name*="zip"]',
+                            'input[name*="Zip"]',
+                            '#zip',
+                            '#zipCode'
+                        ];
+                        for (const sel of zipSelectors) {
+                            const el = document.querySelector(sel);
+                            if (el && el.value) return el.value.trim();
+                        }
+                        // Try to find ZIP in any visible text that matches ZIP pattern
+                        // Look in patient info section
+                        const allInputs = document.querySelectorAll('input[type="text"]');
+                        for (const input of allInputs) {
+                            const val = input.value.trim();
+                            if (/^\d{5}(-\d{4})?$/.test(val)) {
+                                return val;
+                            }
+                        }
+                        // Try reading from span/div elements with ZIP pattern
+                        const textElements = document.querySelectorAll('span.ng-binding, div.ng-binding');
+                        for (const el of textElements) {
+                            const text = el.textContent.trim();
+                            if (/^\d{5}(-\d{4})?$/.test(text)) {
+                                return text;
+                            }
+                        }
+                        return null;
+                    });
+                    let zipCode5 = null;
+                    if (patientZip) {
+                        zipCode5 = patientZip.substring(0, 5);
+                        console.log(`  ✓ Patient ZIP: ${patientZip} → Using: ${zipCode5}`);
+                    } else {
+                        console.log(`  ⚠️  Could not find patient ZIP on worksheet`);
+                        console.log(`  ⚠️  Cannot process Value Codes without ZIP - skipping record`);
+                        // Click Return/Cancel to go back
+                        try { await page.click('#returnBtn'); } catch (e) {
+                            try { await page.click('#cancelBtn'); } catch (e2) {}
+                        }
+                        await page.waitForTimeout(3000);
+                        continue;
+                    }
+                    // STEP 4b: Lookup ZIP in Value Codes spreadsheet
+                    console.log(`  Step 4b: Looking up ZIP ${zipCode5} in Value Codes...`);
+                    const vcMatch = valueCodesData.find(row => String(row['ZIP Code']).trim() === zipCode5);
+                    let valueCode61 = null;
+                    let valueCode85 = null;
+                    if (vcMatch) {
+                        valueCode61 = String(vcMatch['Value Code 61 (CBSA)'] || '').trim();
+                        valueCode85 = String(vcMatch['Value Code 85 (FIPS)'] || '').trim();
+                        console.log(`  ✓ Found ZIP ${zipCode5}:`);
+                        console.log(`    Value Code 61 (CBSA): ${valueCode61}`);
+                        console.log(`    Value Code 85 (FIPS): ${valueCode85}`);
+                    } else {
+                        console.log(`  ⚠️  ZIP ${zipCode5} NOT FOUND in Value Codes Information`);
+                        console.log(`  ⚠️  Cannot process this record - skipping`);
+                        // Click Return/Cancel to go back
+                        try { await page.click('#returnBtn'); } catch (e) {
+                            try { await page.click('#cancelBtn'); } catch (e2) {}
+                        }
+                        await page.waitForTimeout(3000);
+                        continue;
+                    }
+                    // STEP 5: Set Occurrence Code 50
+                    let oc50Success = false;
+                    if (occurrenceCode50Date) {
+                        console.log(`  Step 5: Setting Occurrence Code 50 = ${occurrenceCode50Date}...`);
+                        const occResult = await page.evaluate((args) => {
+                            const dateVal = args.dateVal;
+                            const results = { success: false, slot: 0, methods: [] };
+                            // Find first empty occurrence code slot
+                            let targetSlot = 0;
+                            for (let i = 1; i <= 8; i++) {
+                                const codeInput = document.querySelector(`#occurenceCode${i}`);
+                                if (codeInput) {
+                                    const val = codeInput.value;
+                                    if (!val || val.trim() === '') {
+                                        targetSlot = i;
+                                        break;
+                                    }
+                                    if (val === '50') {
+                                        targetSlot = i;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (!targetSlot) { results.methods.push('no-empty-slot'); return results; }
+                            results.slot = targetSlot;
+                            const codeInput = document.querySelector(`#occurenceCode${targetSlot}`);
+                            const dateInput = document.querySelector(`#occurenceDate${targetSlot}`);
+                            // Set code value
+                            if (codeInput) {
+                                codeInput.value = '50';
+                                codeInput.dispatchEvent(new Event('input', { bubbles: true }));
+                                codeInput.dispatchEvent(new Event('change', { bubbles: true }));
+                                results.methods.push('code-input-direct');
+                            }
+                            // Set date value
+                            if (dateInput) {
+                                dateInput.value = dateVal;
+                                dateInput.dispatchEvent(new Event('input', { bubbles: true }));
+                                dateInput.dispatchEvent(new Event('change', { bubbles: true }));
+                                dateInput.dispatchEvent(new Event('blur', { bubbles: true }));
+                                results.methods.push('date-input-direct');
+                            }
+                            // Update Angular scope
+                            try {
+                                if (window.angular && codeInput) {
+                                    const scope = window.angular.element(codeInput).scope();
+                                    if (scope && scope.claim) {
+                                        scope.$apply(() => {
+                                            scope.claim[`occurenceCode${targetSlot}Select2`] = { id: '50', text: '50' };
+                                        });
+                                        results.methods.push('angular-scope');
+                                    }
+                                }
+                            } catch (e) { results.methods.push('angular-err: ' + e.message); }
+                            // jQuery Select2 API
+                            try {
+                                const $ = window.jQuery;
+                                if ($ && $.fn.select2) {
+                                    $(`#occurenceCode${targetSlot}`).select2('data', { id: '50', text: '50' });
+                                    $(`#occurenceCode${targetSlot}`).trigger('change');
+                                    results.methods.push('jquery-select2');
+                                }
+                            } catch (e) { results.methods.push('jquery-err: ' + e.message); }
+                            // Angular scope for date
+                            try {
+                                if (window.angular && dateInput) {
+                                    const scope = window.angular.element(dateInput).scope();
+                                    if (scope && scope.claim) {
+                                        scope.$apply(() => {
+                                            scope.claim[`occurenceDate${targetSlot}`] = dateVal;
+                                        });
+                                        results.methods.push('date-angular-scope');
+                                    }
+                                }
+                            } catch (e) { results.methods.push('date-angular-err: ' + e.message); }
+                            results.success = true;
+                            return results;
+                        }, { dateVal: occurrenceCode50Date });
+                        console.log(`  OC50 Slot: ${occResult.slot}, Methods: ${occResult.methods.join(', ')}`);
+                        oc50Success = occResult.success;
+                        if (occResult.success) {
+                            console.log(`  ✓ Occurrence Code 50 = ${occurrenceCode50Date} set in slot ${occResult.slot}`);
+                        } else {
+                            console.log(`  ⚠️  Could not set Occurrence Code 50`);
+                        }
+                    } else {
+                        console.log(`  ⚠️  No OC50 date determined - skipping OC50`);
+                    }
+                    // STEP 6: Set Value Code 61 (CBSA)
+                    console.log(`  Step 6: Setting Value Code 61 (CBSA) = ${valueCode61}...`);
+                    const vc61Result = await page.evaluate((args) => {
+                        const vcValue = args.vcValue;
+                        const results = { success: false, slot: 0, methods: [] };
+                        // Find first empty value code slot
+                        let targetSlot = 0;
+                        for (let i = 1; i <= 12; i++) {
+                            const codeInput = document.querySelector(`#valueCode${i}`);
+                            if (codeInput) {
+                                const val = codeInput.value;
+                                if (!val || val.trim() === '') {
+                                    targetSlot = i;
+                                    break;
+                                }
+                                if (val === '61') {
+                                    targetSlot = i;
+                                    break;
+                                }
+                            }
+                        }
+                        if (!targetSlot) { results.methods.push('no-empty-slot'); return results; }
+                        results.slot = targetSlot;
+                        const codeInput = document.querySelector(`#valueCode${targetSlot}`);
+                        const amountInput = document.querySelector(`#valueAmount${targetSlot}`);
+                        // Set code = 61
+                        if (codeInput) {
+                            codeInput.value = '61';
+                            codeInput.dispatchEvent(new Event('input', { bubbles: true }));
+                            codeInput.dispatchEvent(new Event('change', { bubbles: true }));
+                            results.methods.push('code-input');
+                        }
+                        // Set amount = CBSA value
+                        if (amountInput) {
+                            amountInput.value = vcValue;
+                            amountInput.dispatchEvent(new Event('input', { bubbles: true }));
+                            amountInput.dispatchEvent(new Event('change', { bubbles: true }));
+                            amountInput.dispatchEvent(new Event('blur', { bubbles: true }));
+                            results.methods.push('amount-input');
+                        }
+                        // Angular scope update for Value Code 61
+                        try {
+                            if (window.angular && codeInput) {
+                                const scope = window.angular.element(codeInput).scope();
+                                if (scope && scope.claim) {
+                                    scope.$apply(() => {
+                                        scope.claim[`valueCode${targetSlot}Select2`] = { id: '61', text: '61 - Location Where Service is Furnished' };
+                                        scope.claim[`valueAmount${targetSlot}`] = vcValue;
+                                    });
+                                    results.methods.push('angular-scope');
+                                }
+                            }
+                        } catch (e) { results.methods.push('angular-err: ' + e.message); }
+                        // jQuery Select2 API
+                        try {
+                            const $ = window.jQuery;
+                            if ($ && $.fn.select2) {
+                                $(`#valueCode${targetSlot}`).select2('data', { id: '61', text: '61 - Location Where Service is Furnished' });
+                                $(`#valueCode${targetSlot}`).trigger('change');
+                                results.methods.push('jquery-select2');
+                            }
+                        } catch (e) { results.methods.push('jquery-err: ' + e.message); }
+                        results.success = true;
+                        return results;
+                    }, { vcValue: valueCode61 });
+                    console.log(`  VC61 Slot: ${vc61Result.slot}, Methods: ${vc61Result.methods.join(', ')}`);
+                    if (vc61Result.success) {
+                        console.log(`  ✓ Value Code 61 = ${valueCode61} set in slot ${vc61Result.slot}`);
+                    } else {
+                        console.log(`  ⚠️  Could not set Value Code 61`);
+                    }
+                    // STEP 7: Set Value Code 85 (FIPS)
+                    console.log(`  Step 7: Setting Value Code 85 (FIPS) = ${valueCode85}...`);
+                    const vc85Result = await page.evaluate((args) => {
+                        const vcValue = args.vcValue;
+                        const prevSlot = args.prevSlot;
+                        const results = { success: false, slot: 0, methods: [] };
+                        // Find next empty value code slot (after the one used for VC61)
+                        let targetSlot = 0;
+                        for (let i = prevSlot + 1; i <= 12; i++) {
+                            const codeInput = document.querySelector(`#valueCode${i}`);
+                            if (codeInput) {
+                                const val = codeInput.value;
+                                if (!val || val.trim() === '') {
+                                    targetSlot = i;
+                                    break;
+                                }
+                                if (val === '85') {
+                                    targetSlot = i;
+                                    break;
+                                }
+                            }
+                        }
+                        if (!targetSlot) { results.methods.push('no-empty-slot'); return results; }
+                        results.slot = targetSlot;
+                        const codeInput = document.querySelector(`#valueCode${targetSlot}`);
+                        const amountInput = document.querySelector(`#valueAmount${targetSlot}`);
+                        // Set code = 85
+                        if (codeInput) {
+                            codeInput.value = '85';
+                            codeInput.dispatchEvent(new Event('input', { bubbles: true }));
+                            codeInput.dispatchEvent(new Event('change', { bubbles: true }));
+                            results.methods.push('code-input');
+                        }
+                        // Set amount = FIPS value
+                        if (amountInput) {
+                            amountInput.value = vcValue;
+                            amountInput.dispatchEvent(new Event('input', { bubbles: true }));
+                            amountInput.dispatchEvent(new Event('change', { bubbles: true }));
+                            amountInput.dispatchEvent(new Event('blur', { bubbles: true }));
+                            results.methods.push('amount-input');
+                        }
+                        // Angular scope update for Value Code 85
+                        try {
+                            if (window.angular && codeInput) {
+                                const scope = window.angular.element(codeInput).scope();
+                                if (scope && scope.claim) {
+                                    scope.$apply(() => {
+                                        scope.claim[`valueCode${targetSlot}Select2`] = { id: '85', text: '85 - County FIPS Code' };
+                                        scope.claim[`valueAmount${targetSlot}`] = vcValue;
+                                    });
+                                    results.methods.push('angular-scope');
+                                }
+                            }
+                        } catch (e) { results.methods.push('angular-err: ' + e.message); }
+                        // jQuery Select2 API
+                        try {
+                            const $ = window.jQuery;
+                            if ($ && $.fn.select2) {
+                                $(`#valueCode${targetSlot}`).select2('data', { id: '85', text: '85 - County FIPS Code' });
+                                $(`#valueCode${targetSlot}`).trigger('change');
+                                results.methods.push('jquery-select2');
+                            }
+                        } catch (e) { results.methods.push('jquery-err: ' + e.message); }
+                        results.success = true;
+                        return results;
+                    }, { vcValue: valueCode85, prevSlot: vc61Result.slot || 0 });
+                    console.log(`  VC85 Slot: ${vc85Result.slot}, Methods: ${vc85Result.methods.join(', ')}`);
+                    if (vc85Result.success) {
+                        console.log(`  ✓ Value Code 85 = ${valueCode85} set in slot ${vc85Result.slot}`);
+                    } else {
+                        console.log(`  ⚠️  Could not set Value Code 85`);
+                    }
+                    // STEP 8: Validation before save
+                    console.log(`  Step 8: Validating before save...`);
+                    const validationPassed = oc50Success && vc61Result.success && vc85Result.success;
+                    if (!validationPassed) {
+                        console.log(`  ⚠️  VALIDATION FAILED:`);
+                        if (!oc50Success) console.log(`    - Occurrence Code 50 NOT set`);
+                        if (!vc61Result.success) console.log(`    - Value Code 61 NOT set`);
+                        if (!vc85Result.success) console.log(`    - Value Code 85 NOT set`);
+                        console.log(`  ⚠️  Will NOT save claim - returning to Pending Approval`);
+                        try { await page.click('#returnBtn'); } catch (e) {
+                            try { await page.click('#cancelBtn'); } catch (e2) {}
+                        }
+                        await page.waitForTimeout(3000);
+                        continue;
+                    }
+                    console.log(`  ✓ Validation passed: OC50 ✓, VC61 ✓, VC85 ✓`);
+                    // STEP 9: Save and Close
+                    console.log(`  Step 9: Clicking Save and Close...`);
+                    await page.evaluate(() => {
+                        const btn = document.querySelector('#submitBtn');
+                        if (btn) btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    });
+                    await page.waitForTimeout(1000);
+                    await page.click('#submitBtn');
+                    console.log(`  ✓ Clicked Save and Close`);
+                    await page.waitForLoadState('domcontentloaded', { timeout: 30000 });
+                    await page.waitForTimeout(3000);
+                    // Wait for loading spinner to disappear
+                    try {
+                        await page.waitForSelector('.loading-message', { state: 'hidden', timeout: 30000 });
+                    } catch (e) {}
+                    await page.waitForTimeout(3000);
+                    // Wait for table to be ready
+                    try {
+                        await page.waitForSelector('table tbody tr', { timeout: 15000 });
+                    } catch (e) {}
+                    await page.waitForTimeout(2000);
+                    console.log(`  ✅ Successfully processed UCSD record`);
+                } catch (error) {
+                    console.error(`  ✗ Error processing UCSD record:`, error.message || error);
+                    try { await page.click('#returnBtn'); await page.waitForTimeout(3000); } catch (e) {
+                        try { await page.click('#pendingClaimsApproval'); await page.waitForTimeout(3000); } catch (e2) {}
+                    }
+                }
+            }
+        }
+        console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+        console.log(`UCSD SUMMARY: ${ucsdRecords.length} processed`);
+        console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+    }
     // Check for PARTNERSHIP HEALTH PLAN OF CA records (always need 327)
     console.log("\n=== CHECKING FOR PARTNERSHIP HEALTH PLAN OF CA RECORDS ===");
-    const partnershipRecords = records.filter(r => r.insurance.toUpperCase().includes('PARTNERSHIP HEALTH PLAN'));
+    const partnershipRecords = isInsuranceSelected('partnership health plan of ca')
+        ? records.filter(r => r.insurance.toUpperCase().includes('PARTNERSHIP HEALTH PLAN'))
+        : [];
     if (partnershipRecords.length > 0) {
         console.log(`\n⚠️  Found ${partnershipRecords.length} PARTNERSHIP HEALTH PLAN OF CA record(s)`);
         // Filter to only those that don't already have Type of Bill 327
@@ -3026,7 +3639,9 @@ async function processPendingApprovalRecords(page, insuranceHelper) {
     }
     // Check for Community health Group records (add severity point to remarks)
     console.log("\n=== CHECKING FOR COMMUNITY HEALTH GROUP RECORDS ===");
-    const communityHealthRecords = records.filter(r => r.insurance.toLowerCase().includes('community health group'));
+    const communityHealthRecords = isInsuranceSelected('community health group')
+        ? records.filter(r => r.insurance.toLowerCase().includes('community health group'))
+        : [];
     if (communityHealthRecords.length > 0) {
         console.log(`\n⚠️  Found ${communityHealthRecords.length} Community health Group record(s)`);
         console.log("  These records require Severity Point calculation based on Date of Admission");
@@ -3159,7 +3774,9 @@ async function processPendingApprovalRecords(page, insuranceHelper) {
     }
     // Check for SENIOR WHOLE HEALTH (BID) records - need SN visit validation
     console.log("\n=== CHECKING FOR SENIOR WHOLE HEALTH (BID) RECORDS ===");
-    const seniorWholeHealthRecords = records.filter(r => r.insurance.toLowerCase().includes('senior whole health') && r.insurance.toLowerCase().includes('bid'));
+    const seniorWholeHealthRecords = isInsuranceSelected('senior whole health (bid)')
+        ? records.filter(r => r.insurance.toLowerCase().includes('senior whole health') && r.insurance.toLowerCase().includes('bid'))
+        : [];
     const recordsFailingSNCheck = []; // Track records that have > 2 SN visits per day
     if (seniorWholeHealthRecords.length > 0) {
         console.log(`\n⚠️  Found ${seniorWholeHealthRecords.length} Senior whole Health (BID) record(s)`);

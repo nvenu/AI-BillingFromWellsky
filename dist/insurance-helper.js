@@ -88,6 +88,16 @@ class InsuranceHelper {
                     this.noChangesInsurances.add(nameLower);
                     console.log(`  ℹ️  Added special handling insurance: ${instruction.Name}`);
                 }
+                // Special handling: UCSD - needs Occurrence Code 50 + Value Codes 61/85
+                else if (nameLower === "ucsd") {
+                    this.noChangesInsurances.add(nameLower);
+                    console.log(`  ℹ️  Added special handling insurance: ${instruction.Name}`);
+                }
+                // Special handling: UCSD Commercial - needs Occurrence Code 50 + Value Codes 61/85
+                else if (nameLower === "ucsd commercial") {
+                    this.noChangesInsurances.add(nameLower);
+                    console.log(`  ℹ️  Added special handling insurance: ${instruction.Name}`);
+                }
             }
         });
         console.log(`Loaded ${this.instructions.length} insurance instructions`);
@@ -96,6 +106,16 @@ class InsuranceHelper {
         if (!this.noChangesInsurances.has("commonwealth care alliance")) {
             this.noChangesInsurances.add("commonwealth care alliance");
             console.log(`  ℹ️  Added Commonwealth Care Alliance to processable list (hardcoded)`);
+        }
+        // Ensure UCSD is always in the processable list
+        if (!this.noChangesInsurances.has("ucsd")) {
+            this.noChangesInsurances.add("ucsd");
+            console.log(`  ℹ️  Added UCSD to processable list (hardcoded)`);
+        }
+        // Ensure UCSD Commercial is always in the processable list
+        if (!this.noChangesInsurances.has("ucsd commercial")) {
+            this.noChangesInsurances.add("ucsd commercial");
+            console.log(`  ℹ️  Added UCSD Commercial to processable list (hardcoded)`);
         }
         console.log("Insurances to process:", Array.from(this.noChangesInsurances).sort());
     }
@@ -186,7 +206,9 @@ class InsuranceHelper {
                 (nameLower === "partnership health plan of ca" && remarkLower.includes("taxonomy code")) ||
                 (nameLower === "senior whole health (bid)") ||
                 (nameLower === "united health care ma") ||
-                (nameLower === "commonwealth care alliance");
+                (nameLower === "commonwealth care alliance") ||
+                (nameLower === "ucsd") ||
+                (nameLower === "ucsd commercial");
         })
             .map(instruction => instruction.Name)
             .sort();
@@ -224,7 +246,9 @@ class InsuranceHelper {
             "partnership health plan of ca": "electronic", // Send electronically (Type of Bill 327)
             "senior whole health (bid)": "electronic", // Send electronically (after SN visit validation)
             "united health care ma": "electronic", // Send electronically (after UD modifier + SN check)
-            "commonwealth care alliance": "electronic" // Send electronically (after UD modifier + Occurrence Code 50)
+            "commonwealth care alliance": "electronic", // Send electronically (after UD modifier + Occurrence Code 50)
+            "ucsd": "electronic", // Send electronically (after OC50 + Value Codes 61/85)
+            "ucsd commercial": "electronic" // Send electronically (after OC50 + Value Codes 61/85)
         };
         return specialHandlingConfig[nameLower] || null;
     }
