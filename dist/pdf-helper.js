@@ -3,6 +3,32 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.extractDateOfAdmission = extractDateOfAdmission;
 exports.calculateSeverityPoint = calculateSeverityPoint;
 exports.formatSeverityPointRemark = formatSeverityPointRemark;
+// Polyfill DOMMatrix for pdf-parse in Node.js (no DOM environment)
+if (typeof globalThis.DOMMatrix === 'undefined') {
+    globalThis.DOMMatrix = class DOMMatrix {
+        constructor(init) {
+            this.a = 1; this.b = 0; this.c = 0; this.d = 1; this.e = 0; this.f = 0;
+            this.m11 = 1; this.m12 = 0; this.m13 = 0; this.m14 = 0;
+            this.m21 = 0; this.m22 = 1; this.m23 = 0; this.m24 = 0;
+            this.m31 = 0; this.m32 = 0; this.m33 = 1; this.m34 = 0;
+            this.m41 = 0; this.m42 = 0; this.m43 = 0; this.m44 = 1;
+            this.is2D = true; this.isIdentity = true;
+            if (typeof init === 'string') {
+                // Parse transform string - not needed for our use case
+            } else if (Array.isArray(init)) {
+                if (init.length === 6) {
+                    this.a = init[0]; this.b = init[1]; this.c = init[2];
+                    this.d = init[3]; this.e = init[4]; this.f = init[5];
+                }
+            }
+        }
+        inverse() { return new DOMMatrix(); }
+        multiply() { return new DOMMatrix(); }
+        translate() { return new DOMMatrix(); }
+        scale() { return new DOMMatrix(); }
+        rotate() { return new DOMMatrix(); }
+    };
+}
 const { PDFParse } = require("pdf-parse");
 /**
  * Extract date of admission from UB-04 claim form PDF

@@ -87,7 +87,15 @@ async function extractPdfFromPrintIcon(page, printIconId) {
         await page.click(`#${printIconId}`);
         console.log(`  ✓ Clicked print icon: ${printIconId}`);
         // Wait a moment for the Angular function to execute and call window.open
-        await page.waitForTimeout(3000);
+        // The function makes an API call first, so it can take a while
+        let waitTime = 0;
+        const maxWait = 40000; // 40 seconds max
+        while (waitTime < maxWait) {
+            await page.waitForTimeout(2000);
+            waitTime += 2000;
+            const captured = await page.evaluate(() => window.__capturedOpenUrl);
+            if (captured) break;
+        }
         // Check if we captured a URL
         let pdfUrl = await page.evaluate(() => {
             const url = window.__capturedOpenUrl;
