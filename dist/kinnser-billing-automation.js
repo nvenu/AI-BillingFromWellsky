@@ -2395,6 +2395,34 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                             const pdfPage = await newPagePromise;
                             if (pdfPage) await pdfPage.close();
                         }
+                        // If still no PDF, try direct URL construction and fetch
+                        if (!pdfBuffer || pdfBuffer.length <= 1000) {
+                            console.log(`  ⚠️  Trying direct PDF URL fetch...`);
+                            try {
+                                const directUrl = await page.evaluate((id) => {
+                                    const el = document.querySelector('#' + id);
+                                    if (!el) return null;
+                                    const ngClick = el.getAttribute('ng-click') || '';
+                                    const onclick = el.getAttribute('onclick') || '';
+                                    const combined = ngClick + ' ' + onclick;
+                                    const urlMatch = combined.match(/['"]([^'"]*(?:print|pdf|claim|SharedTemp)[^'"]*)['"]/i);
+                                    if (urlMatch) return urlMatch[1];
+                                    const href = el.getAttribute('href') || (el.closest && el.closest('a') ? el.closest('a').getAttribute('href') : null);
+                                    if (href && href !== '#') return href;
+                                    return null;
+                                }, printIconId);
+                                if (directUrl) {
+                                    console.log(`  Found direct URL: ${directUrl}`);
+                                    const baseUrl = page.url().split('/EHR/')[0];
+                                    const fullUrl = directUrl.startsWith('http') ? directUrl : baseUrl + directUrl;
+                                    const resp = await page.context().request.fetch(fullUrl);
+                                    pdfBuffer = await resp.body();
+                                    if (pdfBuffer && pdfBuffer.length > 1000) {
+                                        console.log(`  ✓ Got PDF via direct fetch (${pdfBuffer.length} bytes)`);
+                                    } else { pdfBuffer = null; }
+                                }
+                            } catch (e) { console.log(`  ⚠️  Direct URL fetch failed: ${e.message}`); }
+                        }
                         if (pdfBuffer && pdfBuffer.length > 1000) {
                             console.log(`  ✓ Downloaded PDF (${pdfBuffer.length} bytes)`);
                             const { extractDateOfAdmission } = await Promise.resolve().then(() => __importStar(require('./pdf-helper')));
@@ -2653,6 +2681,45 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                             // Close the new tab if it opened
                             const pdfPage = await newPagePromise;
                             if (pdfPage) await pdfPage.close();
+                        }
+                        // If still no PDF, try direct URL construction and fetch
+                        if (!pdfBuffer) {
+                            console.log(`  ⚠️  Trying direct PDF URL fetch...`);
+                            try {
+                                // Extract the PDF URL from the element's ng-click or onclick attribute
+                                const directUrl = await page.evaluate((id) => {
+                                    const el = document.querySelector('#' + id);
+                                    if (!el) return null;
+                                    // Check ng-click attribute for URL pattern
+                                    const ngClick = el.getAttribute('ng-click') || '';
+                                    const onclick = el.getAttribute('onclick') || '';
+                                    const combined = ngClick + ' ' + onclick;
+                                    // Look for URL patterns in click handlers
+                                    const urlMatch = combined.match(/['"]([^'"]*(?:print|pdf|claim|SharedTemp)[^'"]*)['"]/i);
+                                    if (urlMatch) return urlMatch[1];
+                                    // Check href
+                                    const href = el.getAttribute('href') || el.closest('a')?.getAttribute('href');
+                                    if (href && href !== '#') return href;
+                                    return null;
+                                }, printIconId);
+                                if (directUrl) {
+                                    console.log(`  Found direct URL: ${directUrl}`);
+                                    const baseUrl = page.url().split('/EHR/')[0];
+                                    const fullUrl = directUrl.startsWith('http') ? directUrl : baseUrl + directUrl;
+                                    const resp = await page.context().request.fetch(fullUrl);
+                                    const contentType = resp.headers()['content-type'] || '';
+                                    if (contentType.includes('pdf') || resp.status() === 200) {
+                                        pdfBuffer = await resp.body();
+                                        if (pdfBuffer && pdfBuffer.length > 1000) {
+                                            console.log(`  ✓ Got PDF via direct fetch (${pdfBuffer.length} bytes)`);
+                                        } else {
+                                            pdfBuffer = null;
+                                        }
+                                    }
+                                }
+                            } catch (e) {
+                                console.log(`  ⚠️  Direct URL fetch failed: ${e.message}`);
+                            }
                         }
                         if (pdfBuffer && pdfBuffer.length > 1000) {
                             console.log(`  ✓ Downloaded PDF (${pdfBuffer.length} bytes)`);
@@ -3174,6 +3241,34 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                         } else {
                             const pdfPage = await newPagePromise;
                             if (pdfPage) await pdfPage.close();
+                        }
+                        // If still no PDF, try direct URL construction and fetch
+                        if (!pdfBuffer || pdfBuffer.length <= 1000) {
+                            console.log(`  ⚠️  Trying direct PDF URL fetch...`);
+                            try {
+                                const directUrl = await page.evaluate((id) => {
+                                    const el = document.querySelector('#' + id);
+                                    if (!el) return null;
+                                    const ngClick = el.getAttribute('ng-click') || '';
+                                    const onclick = el.getAttribute('onclick') || '';
+                                    const combined = ngClick + ' ' + onclick;
+                                    const urlMatch = combined.match(/['"]([^'"]*(?:print|pdf|claim|SharedTemp)[^'"]*)['"]/i);
+                                    if (urlMatch) return urlMatch[1];
+                                    const href = el.getAttribute('href') || (el.closest && el.closest('a') ? el.closest('a').getAttribute('href') : null);
+                                    if (href && href !== '#') return href;
+                                    return null;
+                                }, printIconId);
+                                if (directUrl) {
+                                    console.log(`  Found direct URL: ${directUrl}`);
+                                    const baseUrl = page.url().split('/EHR/')[0];
+                                    const fullUrl = directUrl.startsWith('http') ? directUrl : baseUrl + directUrl;
+                                    const resp = await page.context().request.fetch(fullUrl);
+                                    pdfBuffer = await resp.body();
+                                    if (pdfBuffer && pdfBuffer.length > 1000) {
+                                        console.log(`  ✓ Got PDF via direct fetch (${pdfBuffer.length} bytes)`);
+                                    } else { pdfBuffer = null; }
+                                }
+                            } catch (e) { console.log(`  ⚠️  Direct URL fetch failed: ${e.message}`); }
                         }
                         if (pdfBuffer && pdfBuffer.length > 1000) {
                             console.log(`  ✓ Downloaded PDF (${pdfBuffer.length} bytes)`);
