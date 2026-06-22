@@ -61,6 +61,92 @@ function setStopCheckFunction(checkFn) {
 function isStopRequested() {
     return stopCheckFunction ? stopCheckFunction() : false;
 }
+// Helper: Extract PDF from claim print view
+// Overrides window.open to capture the URL, then fetches the PDF directly
+async function extractPdfFromPrintIcon(page, printIconId) {
+    try {
+        await page.waitForSelector(`#${printIconId}`, { timeout: 15000 });
+        await page.evaluate((id) => {
+            const el = document.querySelector('#' + id);
+            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, printIconId);
+        await page.waitForTimeout(500);
+        // Override window.open to capture the URL before clicking
+        await page.evaluate(() => {
+            window.__capturedOpenUrl = null;
+            window.__originalOpen = window.open;
+            window.open = function(url) {
+                window.__capturedOpenUrl = url;
+                // Return a mock window object so Angular doesn't error
+                return { document: { write: function(){}, close: function(){} }, close: function(){}, focus: function(){} };
+            };
+        });
+        // Also listen for popup in case override doesn't work
+        const newPagePromise = page.context().waitForEvent('page', { timeout: 15000 }).catch(() => null);
+        // Click the print icon
+        await page.click(`#${printIconId}`);
+        console.log(`  ✓ Clicked print icon: ${printIconId}`);
+        // Wait a moment for the Angular function to execute and call window.open
+        await page.waitForTimeout(3000);
+        // Check if we captured a URL
+        let pdfUrl = await page.evaluate(() => {
+            const url = window.__capturedOpenUrl;
+            // Restore original window.open
+            if (window.__originalOpen) {
+                window.open = window.__originalOpen;
+                delete window.__originalOpen;
+            }
+            delete window.__capturedOpenUrl;
+            return url;
+        });
+        console.log(`  Captured PDF URL: ${pdfUrl || 'none'}`);
+        if (pdfUrl && pdfUrl.length > 5) {
+            // Make it absolute if relative
+            if (!pdfUrl.startsWith('http')) {
+                const baseUrl = page.url().split('/EHR/')[0];
+                pdfUrl = baseUrl + (pdfUrl.startsWith('/') ? '' : '/') + pdfUrl;
+            }
+            console.log(`  Fetching PDF from: ${pdfUrl}`);
+            const resp = await page.context().request.fetch(pdfUrl);
+            const pdfBuffer = await resp.body();
+            if (pdfBuffer && pdfBuffer.length > 500) {
+                console.log(`  ✓ Downloaded PDF (${pdfBuffer.length} bytes)`);
+                // Close any popup that may have opened
+                const pdfPage = await newPagePromise;
+                if (pdfPage) await pdfPage.close();
+                return pdfBuffer;
+            }
+        }
+        // Fallback: try the new tab approach
+        console.log(`  ⚠️  No captured URL, trying new tab...`);
+        const pdfPage = await newPagePromise;
+        if (pdfPage) {
+            try {
+                await pdfPage.waitForLoadState('load', { timeout: 30000 });
+                const tabUrl = pdfPage.url();
+                console.log(`  New tab URL: ${tabUrl}`);
+                if (tabUrl && tabUrl.length > 10 && tabUrl !== 'about:blank') {
+                    const resp = await pdfPage.context().request.fetch(tabUrl);
+                    const pdfBuffer = await resp.body();
+                    await pdfPage.close();
+                    if (pdfBuffer && pdfBuffer.length > 500) {
+                        console.log(`  ✓ Downloaded PDF from tab (${pdfBuffer.length} bytes)`);
+                        return pdfBuffer;
+                    }
+                }
+            } catch (e) {
+                console.log(`  ⚠️  Tab approach failed: ${e.message}`);
+            }
+            await pdfPage.close();
+        }
+        return null;
+    } catch (error) {
+        console.log(`  ⚠️  Error in PDF extraction: ${error.message}`);
+        // Restore window.open just in case
+        try { await page.evaluate(() => { if (window.__originalOpen) { window.open = window.__originalOpen; } }); } catch(e) {}
+        return null;
+    }
+}
 // Override console.log to broadcast to web interface
 const originalConsoleLog = console.log;
 console.log = function (...args) {
@@ -2334,112 +2420,23 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                 // Step 1: Click print icon to get admission date from PDF
                 console.log(`  Step 1: Getting admission date from PDF...`);
                 let admissionDate = null;
-                // Derive print icon ID from edit button ID (same claim number)
-                // editButtonId: openWorksheet64335176 → printIconId: openClaimPrintView64335176
                 const claimNumber = record.editButtonId.replace('openWorksheet', '');
                 const printIconId = `openClaimPrintView${claimNumber}`;
-                if (printIconId) {
-                    try {
-                        // Wait for print icon to be available on page (page might still be loading)
-                        await page.waitForSelector(`#${printIconId}`, { timeout: 15000 });
-                        // Scroll the print icon into view before clicking
-                        await page.evaluate((id) => {
-                            const el = document.querySelector('#' + id);
-                            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                        }, printIconId);
-                        await page.waitForTimeout(500);
-                        // Set up PDF response interception BEFORE clicking
-                        let pdfBuffer = null;
-                        const pdfResponsePromise = new Promise((resolve) => {
-                            const handler = async (response) => {
-                                const url = response.url();
-                                const contentType = response.headers()['content-type'] || '';
-                                if (contentType.includes('pdf') || url.includes('.pdf') || url.includes('SharedTemp') || url.includes('printClaim') || url.includes('ClaimPrintView')) {
-                                    try {
-                                        const body = await response.body();
-                                        if (body && body.length > 1000) {
-                                            resolve(body);
-                                        }
-                                    } catch (e) {}
-                                }
-                            };
-                            page.context().on('response', handler);
-                            setTimeout(() => { page.context().off('response', handler); resolve(null); }, 45000);
-                        });
-                        const newPagePromise = page.context().waitForEvent('page', { timeout: 45000 }).catch(() => null);
-                        await page.click(`#${printIconId}`);
-                        console.log(`  ✓ Clicked print icon: ${printIconId}`);
-                        pdfBuffer = await pdfResponsePromise;
-                        if (!pdfBuffer) {
-                            console.log(`  ⚠️  No PDF from network interception, trying new tab...`);
-                            const pdfPage = await newPagePromise;
-                            if (pdfPage) {
-                                try {
-                                    await pdfPage.waitForFunction(() => {
-                                        const url = window.location.href;
-                                        return url && url !== 'about:blank' && url !== ':' && url.length > 10;
-                                    }, { timeout: 10000 });
-                                    const pdfUrl = pdfPage.url();
-                                    console.log(`  PDF tab URL: ${pdfUrl}`);
-                                    if (pdfUrl && (pdfUrl.includes('.pdf') || pdfUrl.includes('SharedTemp') || pdfUrl.includes('.cfm') || pdfUrl.includes('printClaim'))) {
-                                        try { await pdfPage.waitForLoadState('load', { timeout: 15000 }); } catch (e) {}
-                                        const resp = await pdfPage.context().request.fetch(pdfUrl);
-                                        pdfBuffer = await resp.body();
-                                    }
-                                } catch (e) {
-                                    console.log(`  ⚠️  New tab URL not available: ${pdfPage.url()}`);
-                                }
-                                await pdfPage.close();
-                            }
+                try {
+                    const pdfBuffer = await extractPdfFromPrintIcon(page, printIconId);
+                    if (pdfBuffer) {
+                        const { extractDateOfAdmission } = await Promise.resolve().then(() => __importStar(require('./pdf-helper')));
+                        admissionDate = await extractDateOfAdmission(pdfBuffer);
+                        if (admissionDate) {
+                            console.log(`  \u2713 Admission Date: ${admissionDate}`);
                         } else {
-                            const pdfPage = await newPagePromise;
-                            if (pdfPage) await pdfPage.close();
+                            console.log(`  \u26a0\ufe0f  Could not extract admission date from PDF`);
                         }
-                        // If still no PDF, try direct URL construction and fetch
-                        if (!pdfBuffer || pdfBuffer.length <= 1000) {
-                            console.log(`  ⚠️  Trying direct PDF URL fetch...`);
-                            try {
-                                const directUrl = await page.evaluate((id) => {
-                                    const el = document.querySelector('#' + id);
-                                    if (!el) return null;
-                                    const ngClick = el.getAttribute('ng-click') || '';
-                                    const onclick = el.getAttribute('onclick') || '';
-                                    const combined = ngClick + ' ' + onclick;
-                                    const urlMatch = combined.match(/['"]([^'"]*(?:print|pdf|claim|SharedTemp)[^'"]*)['"]/i);
-                                    if (urlMatch) return urlMatch[1];
-                                    const href = el.getAttribute('href') || (el.closest && el.closest('a') ? el.closest('a').getAttribute('href') : null);
-                                    if (href && href !== '#') return href;
-                                    return null;
-                                }, printIconId);
-                                if (directUrl) {
-                                    console.log(`  Found direct URL: ${directUrl}`);
-                                    const baseUrl = page.url().split('/EHR/')[0];
-                                    const fullUrl = directUrl.startsWith('http') ? directUrl : baseUrl + directUrl;
-                                    const resp = await page.context().request.fetch(fullUrl);
-                                    pdfBuffer = await resp.body();
-                                    if (pdfBuffer && pdfBuffer.length > 1000) {
-                                        console.log(`  ✓ Got PDF via direct fetch (${pdfBuffer.length} bytes)`);
-                                    } else { pdfBuffer = null; }
-                                }
-                            } catch (e) { console.log(`  ⚠️  Direct URL fetch failed: ${e.message}`); }
-                        }
-                        if (pdfBuffer && pdfBuffer.length > 1000) {
-                            console.log(`  ✓ Downloaded PDF (${pdfBuffer.length} bytes)`);
-                            const { extractDateOfAdmission } = await Promise.resolve().then(() => __importStar(require('./pdf-helper')));
-                            admissionDate = await extractDateOfAdmission(pdfBuffer);
-                            if (admissionDate) {
-                                console.log(`  ✓ Admission Date: ${admissionDate}`);
-                            } else {
-                                console.log(`  ⚠️  Could not extract admission date from PDF`);
-                            }
-                        } else {
-                            console.log(`  ⚠️  Could not get PDF content`);
-                        }
-                    } catch (pdfError) {
-                        console.log(`  ⚠️  Error getting PDF: ${pdfError.message}`);
+                    } else {
+                        console.log(`  \u26a0\ufe0f  Could not get PDF content`);
                     }
-                } else {
-                    console.log(`  ⚠️  No print icon found`);
+                } catch (pdfError) {
+                    console.log(`  \u26a0\ufe0f  Error getting PDF: ${pdfError.message}`);
                 }
                 // Step 2: Click edit button
                 console.log(`  Step 2: Clicking edit button...`);
@@ -2622,124 +2619,22 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                 let admissionDate = null;
                 const claimNumber = record.editButtonId.replace('openWorksheet', '');
                 const printIconId = `openClaimPrintView${claimNumber}`;
-                if (printIconId) {
-                    try {
-                        await page.waitForSelector(`#${printIconId}`, { timeout: 15000 });
-                        await page.evaluate((id) => {
-                            const el = document.querySelector('#' + id);
-                            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                        }, printIconId);
-                        await page.waitForTimeout(500);
-                        // Set up PDF response interception BEFORE clicking
-                        let pdfBuffer = null;
-                        const pdfResponsePromise = new Promise((resolve) => {
-                            const handler = async (response) => {
-                                const url = response.url();
-                                const contentType = response.headers()['content-type'] || '';
-                                if (contentType.includes('pdf') || url.includes('.pdf') || url.includes('SharedTemp') || url.includes('printClaim') || url.includes('ClaimPrintView')) {
-                                    try {
-                                        const body = await response.body();
-                                        if (body && body.length > 1000) { // PDF should be > 1KB
-                                            resolve(body);
-                                        }
-                                    } catch (e) {}
-                                }
-                            };
-                            page.context().on('response', handler);
-                            // Timeout after 45s
-                            setTimeout(() => { page.context().off('response', handler); resolve(null); }, 45000);
-                        });
-                        // Also listen for new page in case it opens a tab
-                        const newPagePromise = page.context().waitForEvent('page', { timeout: 45000 }).catch(() => null);
-                        await page.click(`#${printIconId}`);
-                        console.log(`  ✓ Clicked print icon: ${printIconId}`);
-                        // Wait for PDF response from network interception
-                        pdfBuffer = await pdfResponsePromise;
-                        // If network interception didn't work, try the new tab approach
-                        if (!pdfBuffer) {
-                            console.log(`  ⚠️  No PDF from network interception, trying new tab...`);
-                            const pdfPage = await newPagePromise;
-                            if (pdfPage) {
-                                try {
-                                    await pdfPage.waitForFunction(() => {
-                                        const url = window.location.href;
-                                        return url && url !== 'about:blank' && url !== ':' && url.length > 10;
-                                    }, { timeout: 10000 });
-                                    const pdfUrl = pdfPage.url();
-                                    console.log(`  PDF tab URL: ${pdfUrl}`);
-                                    if (pdfUrl && (pdfUrl.includes('.pdf') || pdfUrl.includes('SharedTemp') || pdfUrl.includes('.cfm') || pdfUrl.includes('printClaim'))) {
-                                        try { await pdfPage.waitForLoadState('load', { timeout: 15000 }); } catch (e) {}
-                                        const resp = await pdfPage.context().request.fetch(pdfUrl);
-                                        pdfBuffer = await resp.body();
-                                    }
-                                } catch (e) {
-                                    console.log(`  ⚠️  New tab URL not available: ${pdfPage.url()}`);
-                                }
-                                await pdfPage.close();
-                            }
+                try {
+                    const pdfBuffer = await extractPdfFromPrintIcon(page, printIconId);
+                    if (pdfBuffer) {
+                        const { extractDateOfAdmission } = await Promise.resolve().then(() => __importStar(require('./pdf-helper')));
+                        admissionDate = await extractDateOfAdmission(pdfBuffer);
+                        if (admissionDate) {
+                            console.log(`  \u2713 Admission Date: ${admissionDate}`);
                         } else {
-                            // Close the new tab if it opened
-                            const pdfPage = await newPagePromise;
-                            if (pdfPage) await pdfPage.close();
+                            console.log(`  \u26a0\ufe0f  Could not extract admission date from PDF`);
                         }
-                        // If still no PDF, try direct URL construction and fetch
-                        if (!pdfBuffer) {
-                            console.log(`  ⚠️  Trying direct PDF URL fetch...`);
-                            try {
-                                // Extract the PDF URL from the element's ng-click or onclick attribute
-                                const directUrl = await page.evaluate((id) => {
-                                    const el = document.querySelector('#' + id);
-                                    if (!el) return null;
-                                    // Check ng-click attribute for URL pattern
-                                    const ngClick = el.getAttribute('ng-click') || '';
-                                    const onclick = el.getAttribute('onclick') || '';
-                                    const combined = ngClick + ' ' + onclick;
-                                    // Look for URL patterns in click handlers
-                                    const urlMatch = combined.match(/['"]([^'"]*(?:print|pdf|claim|SharedTemp)[^'"]*)['"]/i);
-                                    if (urlMatch) return urlMatch[1];
-                                    // Check href
-                                    const href = el.getAttribute('href') || el.closest('a')?.getAttribute('href');
-                                    if (href && href !== '#') return href;
-                                    return null;
-                                }, printIconId);
-                                if (directUrl) {
-                                    console.log(`  Found direct URL: ${directUrl}`);
-                                    const baseUrl = page.url().split('/EHR/')[0];
-                                    const fullUrl = directUrl.startsWith('http') ? directUrl : baseUrl + directUrl;
-                                    const resp = await page.context().request.fetch(fullUrl);
-                                    const contentType = resp.headers()['content-type'] || '';
-                                    if (contentType.includes('pdf') || resp.status() === 200) {
-                                        pdfBuffer = await resp.body();
-                                        if (pdfBuffer && pdfBuffer.length > 1000) {
-                                            console.log(`  ✓ Got PDF via direct fetch (${pdfBuffer.length} bytes)`);
-                                        } else {
-                                            pdfBuffer = null;
-                                        }
-                                    }
-                                }
-                            } catch (e) {
-                                console.log(`  ⚠️  Direct URL fetch failed: ${e.message}`);
-                            }
-                        }
-                        if (pdfBuffer && pdfBuffer.length > 1000) {
-                            console.log(`  ✓ Downloaded PDF (${pdfBuffer.length} bytes)`);
-                            const { extractDateOfAdmission } = await Promise.resolve().then(() => __importStar(require('./pdf-helper')));
-                            admissionDate = await extractDateOfAdmission(pdfBuffer);
-                            if (admissionDate) {
-                                console.log(`  ✓ Admission Date: ${admissionDate}`);
-                            } else {
-                                console.log(`  ⚠️  Could not extract admission date from PDF`);
-                            }
-                        } else {
-                            console.log(`  ⚠️  Could not get PDF content`);
-                        }
-                    } catch (pdfError) {
-                        console.log(`  ⚠️  Error getting PDF: ${pdfError.message}`);
+                    } else {
+                        console.log(`  \u26a0\ufe0f  Could not get PDF content`);
                     }
-                } else {
-                    console.log(`  ⚠️  No print icon found`);
+                } catch (pdfError) {
+                    console.log(`  \u26a0\ufe0f  Error getting PDF: ${pdfError.message}`);
                 }
-                // Step 2: Click edit button to open claim worksheet
                 console.log(`  Step 2: Clicking edit button...`);
                 await page.click(`#${record.editButtonId}`);
                 console.log(`  ✓ Clicked edit button`);
@@ -3183,109 +3078,27 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                     continue;
                 }
                 try {
-                    // STEP 1: Click PDF icon to get admission date
+                    // Step 1: Click print icon to get admission date from PDF
                     console.log(`  Step 1: Getting admission date from PDF...`);
                     let admissionDate = null;
                     const claimNumber = record.editButtonId.replace('openWorksheet', '');
                     const printIconId = `openClaimPrintView${claimNumber}`;
                     try {
-                        await page.waitForSelector(`#${printIconId}`, { timeout: 15000 });
-                        await page.evaluate((id) => {
-                            const el = document.querySelector('#' + id);
-                            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                        }, printIconId);
-                        await page.waitForTimeout(500);
-                        // Set up PDF response interception BEFORE clicking
-                        let pdfBuffer = null;
-                        const pdfResponsePromise = new Promise((resolve) => {
-                            const handler = async (response) => {
-                                const url = response.url();
-                                const contentType = response.headers()['content-type'] || '';
-                                if (contentType.includes('pdf') || url.includes('.pdf') || url.includes('SharedTemp') || url.includes('printClaim') || url.includes('ClaimPrintView')) {
-                                    try {
-                                        const body = await response.body();
-                                        if (body && body.length > 1000) {
-                                            resolve(body);
-                                        }
-                                    } catch (e) {}
-                                }
-                            };
-                            page.context().on('response', handler);
-                            setTimeout(() => { page.context().off('response', handler); resolve(null); }, 45000);
-                        });
-                        const newPagePromise = page.context().waitForEvent('page', { timeout: 45000 }).catch(() => null);
-                        await page.click(`#${printIconId}`);
-                        console.log(`  ✓ Clicked print icon: ${printIconId}`);
-                        pdfBuffer = await pdfResponsePromise;
-                        if (!pdfBuffer) {
-                            console.log(`  ⚠️  No PDF from network interception, trying new tab...`);
-                            const pdfPage = await newPagePromise;
-                            if (pdfPage) {
-                                try {
-                                    await pdfPage.waitForFunction(() => {
-                                        const url = window.location.href;
-                                        return url && url !== 'about:blank' && url !== ':' && url.length > 10;
-                                    }, { timeout: 10000 });
-                                    const pdfUrl = pdfPage.url();
-                                    console.log(`  PDF tab URL: ${pdfUrl}`);
-                                    if (pdfUrl && (pdfUrl.includes('.pdf') || pdfUrl.includes('SharedTemp') || pdfUrl.includes('.cfm') || pdfUrl.includes('printClaim'))) {
-                                        try { await pdfPage.waitForLoadState('load', { timeout: 15000 }); } catch (e) {}
-                                        const resp = await pdfPage.context().request.fetch(pdfUrl);
-                                        pdfBuffer = await resp.body();
-                                    }
-                                } catch (e) {
-                                    console.log(`  ⚠️  New tab URL not available: ${pdfPage.url()}`);
-                                }
-                                await pdfPage.close();
-                            }
-                        } else {
-                            const pdfPage = await newPagePromise;
-                            if (pdfPage) await pdfPage.close();
-                        }
-                        // If still no PDF, try direct URL construction and fetch
-                        if (!pdfBuffer || pdfBuffer.length <= 1000) {
-                            console.log(`  ⚠️  Trying direct PDF URL fetch...`);
-                            try {
-                                const directUrl = await page.evaluate((id) => {
-                                    const el = document.querySelector('#' + id);
-                                    if (!el) return null;
-                                    const ngClick = el.getAttribute('ng-click') || '';
-                                    const onclick = el.getAttribute('onclick') || '';
-                                    const combined = ngClick + ' ' + onclick;
-                                    const urlMatch = combined.match(/['"]([^'"]*(?:print|pdf|claim|SharedTemp)[^'"]*)['"]/i);
-                                    if (urlMatch) return urlMatch[1];
-                                    const href = el.getAttribute('href') || (el.closest && el.closest('a') ? el.closest('a').getAttribute('href') : null);
-                                    if (href && href !== '#') return href;
-                                    return null;
-                                }, printIconId);
-                                if (directUrl) {
-                                    console.log(`  Found direct URL: ${directUrl}`);
-                                    const baseUrl = page.url().split('/EHR/')[0];
-                                    const fullUrl = directUrl.startsWith('http') ? directUrl : baseUrl + directUrl;
-                                    const resp = await page.context().request.fetch(fullUrl);
-                                    pdfBuffer = await resp.body();
-                                    if (pdfBuffer && pdfBuffer.length > 1000) {
-                                        console.log(`  ✓ Got PDF via direct fetch (${pdfBuffer.length} bytes)`);
-                                    } else { pdfBuffer = null; }
-                                }
-                            } catch (e) { console.log(`  ⚠️  Direct URL fetch failed: ${e.message}`); }
-                        }
-                        if (pdfBuffer && pdfBuffer.length > 1000) {
-                            console.log(`  ✓ Downloaded PDF (${pdfBuffer.length} bytes)`);
-                            const { extractDateOfAdmission } = await Promise.resolve().then(() => __importStar(require('./pdf-helper')));
+                            const pdfBuffer = await extractPdfFromPrintIcon(page, printIconId);
+                        if (pdfBuffer) {
+                                const { extractDateOfAdmission } = await Promise.resolve().then(() => __importStar(require('./pdf-helper')));
                             admissionDate = await extractDateOfAdmission(pdfBuffer);
                             if (admissionDate) {
-                                console.log(`  ✓ Admission Date: ${admissionDate}`);
-                            } else {
-                                console.log(`  ⚠️  Could not extract admission date from PDF`);
-                            }
-                        } else {
-                            console.log(`  ⚠️  Could not get PDF content`);
+                                    console.log(`  \u2713 Admission Date: ${admissionDate}`);
+                                } else {
+                                    console.log(`  \u26a0\ufe0f  Could not extract admission date from PDF`);
                         }
-                    } catch (pdfError) {
-                        console.log(`  ⚠️  Error getting PDF: ${pdfError.message}`);
+                        } else {
+                                    console.log(`  \u26a0\ufe0f  Could not get PDF content`);
                     }
-                    // STEP 2: Determine Occurrence Code 50 date
+                    } catch (pdfError) {
+                            console.log(`  \u26a0\ufe0f  Error getting PDF: ${pdfError.message}`);
+                }
                     console.log(`  Step 2: Determining Occurrence Code 50...`);
                     let occurrenceCode50Date = null;
                     if (admissionDate && record.billingPeriodEnd) {
