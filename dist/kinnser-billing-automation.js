@@ -2348,29 +2348,54 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                             if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
                         }, printIconId);
                         await page.waitForTimeout(500);
-                        const newPagePromise = page.context().waitForEvent('page', { timeout: 30000 });
+                        // Set up PDF response interception BEFORE clicking
+                        let pdfBuffer = null;
+                        const pdfResponsePromise = new Promise((resolve) => {
+                            const handler = async (response) => {
+                                const url = response.url();
+                                const contentType = response.headers()['content-type'] || '';
+                                if (contentType.includes('pdf') || url.includes('.pdf') || url.includes('SharedTemp') || url.includes('printClaim') || url.includes('ClaimPrintView')) {
+                                    try {
+                                        const body = await response.body();
+                                        if (body && body.length > 1000) {
+                                            resolve(body);
+                                        }
+                                    } catch (e) {}
+                                }
+                            };
+                            page.context().on('response', handler);
+                            setTimeout(() => { page.context().off('response', handler); resolve(null); }, 45000);
+                        });
+                        const newPagePromise = page.context().waitForEvent('page', { timeout: 45000 }).catch(() => null);
                         await page.click(`#${printIconId}`);
                         console.log(`  ✓ Clicked print icon: ${printIconId}`);
-                        const pdfPage = await newPagePromise;
-                        let pdfUrl = '';
-                        try {
-                            await pdfPage.waitForFunction(() => {
-                                const url = window.location.href;
-                                return url && url !== 'about:blank' && url !== ':' && url.length > 10;
-                            }, { timeout: 45000 });
-                            pdfUrl = pdfPage.url();
-                            console.log(`  PDF page URL after wait: ${pdfUrl}`);
-                        } catch (e) {
-                            await pdfPage.waitForTimeout(5000);
-                            pdfUrl = pdfPage.url();
-                            console.log(`  PDF page URL (fallback): ${pdfUrl}`);
+                        pdfBuffer = await pdfResponsePromise;
+                        if (!pdfBuffer) {
+                            console.log(`  ⚠️  No PDF from network interception, trying new tab...`);
+                            const pdfPage = await newPagePromise;
+                            if (pdfPage) {
+                                try {
+                                    await pdfPage.waitForFunction(() => {
+                                        const url = window.location.href;
+                                        return url && url !== 'about:blank' && url !== ':' && url.length > 10;
+                                    }, { timeout: 10000 });
+                                    const pdfUrl = pdfPage.url();
+                                    console.log(`  PDF tab URL: ${pdfUrl}`);
+                                    if (pdfUrl && (pdfUrl.includes('.pdf') || pdfUrl.includes('SharedTemp') || pdfUrl.includes('.cfm') || pdfUrl.includes('printClaim'))) {
+                                        try { await pdfPage.waitForLoadState('load', { timeout: 15000 }); } catch (e) {}
+                                        const resp = await pdfPage.context().request.fetch(pdfUrl);
+                                        pdfBuffer = await resp.body();
+                                    }
+                                } catch (e) {
+                                    console.log(`  ⚠️  New tab URL not available: ${pdfPage.url()}`);
+                                }
+                                await pdfPage.close();
+                            }
+                        } else {
+                            const pdfPage = await newPagePromise;
+                            if (pdfPage) await pdfPage.close();
                         }
-                        const isPdfUrl = pdfUrl && (pdfUrl.includes('.pdf') || pdfUrl.includes('SharedTemp') || pdfUrl.includes('.cfm') || pdfUrl.includes('printClaim'));
-                        if (isPdfUrl) {
-                            console.log(`  ✓ PDF URL: ${pdfUrl}`);
-                            try { await pdfPage.waitForLoadState('load', { timeout: 15000 }); } catch (e) {}
-                            const response = await pdfPage.context().request.fetch(pdfUrl);
-                            const pdfBuffer = await response.body();
+                        if (pdfBuffer && pdfBuffer.length > 1000) {
                             console.log(`  ✓ Downloaded PDF (${pdfBuffer.length} bytes)`);
                             const { extractDateOfAdmission } = await Promise.resolve().then(() => __importStar(require('./pdf-helper')));
                             admissionDate = await extractDateOfAdmission(pdfBuffer);
@@ -2380,10 +2405,8 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                                 console.log(`  ⚠️  Could not extract admission date from PDF`);
                             }
                         } else {
-                            console.log(`  ⚠️  Could not get valid PDF URL: ${pdfUrl}`);
+                            console.log(`  ⚠️  Could not get PDF content`);
                         }
-                        await pdfPage.close();
-                        console.log(`  ✓ Closed PDF tab`);
                     } catch (pdfError) {
                         console.log(`  ⚠️  Error getting PDF: ${pdfError.message}`);
                     }
@@ -2579,32 +2602,59 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                             if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
                         }, printIconId);
                         await page.waitForTimeout(500);
-                        const newPagePromise = page.context().waitForEvent('page', { timeout: 30000 });
+                        // Set up PDF response interception BEFORE clicking
+                        let pdfBuffer = null;
+                        const pdfResponsePromise = new Promise((resolve) => {
+                            const handler = async (response) => {
+                                const url = response.url();
+                                const contentType = response.headers()['content-type'] || '';
+                                if (contentType.includes('pdf') || url.includes('.pdf') || url.includes('SharedTemp') || url.includes('printClaim') || url.includes('ClaimPrintView')) {
+                                    try {
+                                        const body = await response.body();
+                                        if (body && body.length > 1000) { // PDF should be > 1KB
+                                            resolve(body);
+                                        }
+                                    } catch (e) {}
+                                }
+                            };
+                            page.context().on('response', handler);
+                            // Timeout after 45s
+                            setTimeout(() => { page.context().off('response', handler); resolve(null); }, 45000);
+                        });
+                        // Also listen for new page in case it opens a tab
+                        const newPagePromise = page.context().waitForEvent('page', { timeout: 45000 }).catch(() => null);
                         await page.click(`#${printIconId}`);
                         console.log(`  ✓ Clicked print icon: ${printIconId}`);
-                        const pdfPage = await newPagePromise;
-                        let pdfUrl = '';
-                        try {
-                            // Wait for PDF page to have a real URL (not about:blank)
-                            await pdfPage.waitForFunction(() => {
-                                const url = window.location.href;
-                                return url && url !== 'about:blank' && url !== ':' && url.length > 10;
-                            }, { timeout: 45000 });
-                            pdfUrl = pdfPage.url();
-                            console.log(`  PDF page URL after wait: ${pdfUrl}`);
-                        } catch (e) {
-                            // Fallback: wait a bit more and grab whatever URL we have
-                            await pdfPage.waitForTimeout(5000);
-                            pdfUrl = pdfPage.url();
-                            console.log(`  PDF page URL (fallback): ${pdfUrl}`);
+                        // Wait for PDF response from network interception
+                        pdfBuffer = await pdfResponsePromise;
+                        // If network interception didn't work, try the new tab approach
+                        if (!pdfBuffer) {
+                            console.log(`  ⚠️  No PDF from network interception, trying new tab...`);
+                            const pdfPage = await newPagePromise;
+                            if (pdfPage) {
+                                try {
+                                    await pdfPage.waitForFunction(() => {
+                                        const url = window.location.href;
+                                        return url && url !== 'about:blank' && url !== ':' && url.length > 10;
+                                    }, { timeout: 10000 });
+                                    const pdfUrl = pdfPage.url();
+                                    console.log(`  PDF tab URL: ${pdfUrl}`);
+                                    if (pdfUrl && (pdfUrl.includes('.pdf') || pdfUrl.includes('SharedTemp') || pdfUrl.includes('.cfm') || pdfUrl.includes('printClaim'))) {
+                                        try { await pdfPage.waitForLoadState('load', { timeout: 15000 }); } catch (e) {}
+                                        const resp = await pdfPage.context().request.fetch(pdfUrl);
+                                        pdfBuffer = await resp.body();
+                                    }
+                                } catch (e) {
+                                    console.log(`  ⚠️  New tab URL not available: ${pdfPage.url()}`);
+                                }
+                                await pdfPage.close();
+                            }
+                        } else {
+                            // Close the new tab if it opened
+                            const pdfPage = await newPagePromise;
+                            if (pdfPage) await pdfPage.close();
                         }
-                        // Check for PDF URL - could be .pdf extension or contain SharedTemp or cfm (Kinnser report)
-                        const isPdfUrl = pdfUrl && (pdfUrl.includes('.pdf') || pdfUrl.includes('SharedTemp') || pdfUrl.includes('.cfm') || pdfUrl.includes('printClaim'));
-                        if (isPdfUrl) {
-                            console.log(`  ✓ PDF URL: ${pdfUrl}`);
-                            try { await pdfPage.waitForLoadState('load', { timeout: 15000 }); } catch (e) {}
-                            const response = await pdfPage.context().request.fetch(pdfUrl);
-                            const pdfBuffer = await response.body();
+                        if (pdfBuffer && pdfBuffer.length > 1000) {
                             console.log(`  ✓ Downloaded PDF (${pdfBuffer.length} bytes)`);
                             const { extractDateOfAdmission } = await Promise.resolve().then(() => __importStar(require('./pdf-helper')));
                             admissionDate = await extractDateOfAdmission(pdfBuffer);
@@ -2614,10 +2664,8 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                                 console.log(`  ⚠️  Could not extract admission date from PDF`);
                             }
                         } else {
-                            console.log(`  ⚠️  Could not get valid PDF URL: ${pdfUrl}`);
+                            console.log(`  ⚠️  Could not get PDF content`);
                         }
-                        await pdfPage.close();
-                        console.log(`  ✓ Closed PDF tab`);
                     } catch (pdfError) {
                         console.log(`  ⚠️  Error getting PDF: ${pdfError.message}`);
                     }
@@ -3080,29 +3128,54 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                             if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
                         }, printIconId);
                         await page.waitForTimeout(500);
-                        const newPagePromise = page.context().waitForEvent('page', { timeout: 30000 });
+                        // Set up PDF response interception BEFORE clicking
+                        let pdfBuffer = null;
+                        const pdfResponsePromise = new Promise((resolve) => {
+                            const handler = async (response) => {
+                                const url = response.url();
+                                const contentType = response.headers()['content-type'] || '';
+                                if (contentType.includes('pdf') || url.includes('.pdf') || url.includes('SharedTemp') || url.includes('printClaim') || url.includes('ClaimPrintView')) {
+                                    try {
+                                        const body = await response.body();
+                                        if (body && body.length > 1000) {
+                                            resolve(body);
+                                        }
+                                    } catch (e) {}
+                                }
+                            };
+                            page.context().on('response', handler);
+                            setTimeout(() => { page.context().off('response', handler); resolve(null); }, 45000);
+                        });
+                        const newPagePromise = page.context().waitForEvent('page', { timeout: 45000 }).catch(() => null);
                         await page.click(`#${printIconId}`);
                         console.log(`  ✓ Clicked print icon: ${printIconId}`);
-                        const pdfPage = await newPagePromise;
-                        let pdfUrl = '';
-                        try {
-                            await pdfPage.waitForFunction(() => {
-                                const url = window.location.href;
-                                return url && url !== 'about:blank' && url !== ':' && url.length > 10;
-                            }, { timeout: 45000 });
-                            pdfUrl = pdfPage.url();
-                            console.log(`  PDF page URL after wait: ${pdfUrl}`);
-                        } catch (e) {
-                            await pdfPage.waitForTimeout(5000);
-                            pdfUrl = pdfPage.url();
-                            console.log(`  PDF page URL (fallback): ${pdfUrl}`);
+                        pdfBuffer = await pdfResponsePromise;
+                        if (!pdfBuffer) {
+                            console.log(`  ⚠️  No PDF from network interception, trying new tab...`);
+                            const pdfPage = await newPagePromise;
+                            if (pdfPage) {
+                                try {
+                                    await pdfPage.waitForFunction(() => {
+                                        const url = window.location.href;
+                                        return url && url !== 'about:blank' && url !== ':' && url.length > 10;
+                                    }, { timeout: 10000 });
+                                    const pdfUrl = pdfPage.url();
+                                    console.log(`  PDF tab URL: ${pdfUrl}`);
+                                    if (pdfUrl && (pdfUrl.includes('.pdf') || pdfUrl.includes('SharedTemp') || pdfUrl.includes('.cfm') || pdfUrl.includes('printClaim'))) {
+                                        try { await pdfPage.waitForLoadState('load', { timeout: 15000 }); } catch (e) {}
+                                        const resp = await pdfPage.context().request.fetch(pdfUrl);
+                                        pdfBuffer = await resp.body();
+                                    }
+                                } catch (e) {
+                                    console.log(`  ⚠️  New tab URL not available: ${pdfPage.url()}`);
+                                }
+                                await pdfPage.close();
+                            }
+                        } else {
+                            const pdfPage = await newPagePromise;
+                            if (pdfPage) await pdfPage.close();
                         }
-                        const isPdfUrl = pdfUrl && (pdfUrl.includes('.pdf') || pdfUrl.includes('SharedTemp') || pdfUrl.includes('.cfm') || pdfUrl.includes('printClaim'));
-                        if (isPdfUrl) {
-                            console.log(`  ✓ PDF URL: ${pdfUrl}`);
-                            try { await pdfPage.waitForLoadState('load', { timeout: 15000 }); } catch (e) {}
-                            const response = await pdfPage.context().request.fetch(pdfUrl);
-                            const pdfBuffer = await response.body();
+                        if (pdfBuffer && pdfBuffer.length > 1000) {
                             console.log(`  ✓ Downloaded PDF (${pdfBuffer.length} bytes)`);
                             const { extractDateOfAdmission } = await Promise.resolve().then(() => __importStar(require('./pdf-helper')));
                             admissionDate = await extractDateOfAdmission(pdfBuffer);
@@ -3112,10 +3185,8 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                                 console.log(`  ⚠️  Could not extract admission date from PDF`);
                             }
                         } else {
-                            console.log(`  ⚠️  Could not get valid PDF URL: ${pdfUrl}`);
+                            console.log(`  ⚠️  Could not get PDF content`);
                         }
-                        await pdfPage.close();
-                        console.log(`  ✓ Closed PDF tab`);
                     } catch (pdfError) {
                         console.log(`  ⚠️  Error getting PDF: ${pdfError.message}`);
                     }
