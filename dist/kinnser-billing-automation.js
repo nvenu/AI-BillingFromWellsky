@@ -2354,12 +2354,19 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                         const pdfPage = await newPagePromise;
                         let pdfUrl = '';
                         try {
-                            await pdfPage.waitForURL(/\.pdf|SharedTemp/, { timeout: 30000 });
+                            await pdfPage.waitForFunction(() => {
+                                const url = window.location.href;
+                                return url && url !== 'about:blank' && url !== ':' && url.length > 10;
+                            }, { timeout: 45000 });
                             pdfUrl = pdfPage.url();
+                            console.log(`  PDF page URL after wait: ${pdfUrl}`);
                         } catch (e) {
+                            await pdfPage.waitForTimeout(5000);
                             pdfUrl = pdfPage.url();
+                            console.log(`  PDF page URL (fallback): ${pdfUrl}`);
                         }
-                        if (pdfUrl && pdfUrl.includes('.pdf')) {
+                        const isPdfUrl = pdfUrl && (pdfUrl.includes('.pdf') || pdfUrl.includes('SharedTemp') || pdfUrl.includes('.cfm') || pdfUrl.includes('printClaim'));
+                        if (isPdfUrl) {
                             console.log(`  ✓ PDF URL: ${pdfUrl}`);
                             try { await pdfPage.waitForLoadState('load', { timeout: 15000 }); } catch (e) {}
                             const response = await pdfPage.context().request.fetch(pdfUrl);
@@ -2578,12 +2585,22 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                         const pdfPage = await newPagePromise;
                         let pdfUrl = '';
                         try {
-                            await pdfPage.waitForURL(/\.pdf|SharedTemp/, { timeout: 30000 });
+                            // Wait for PDF page to have a real URL (not about:blank)
+                            await pdfPage.waitForFunction(() => {
+                                const url = window.location.href;
+                                return url && url !== 'about:blank' && url !== ':' && url.length > 10;
+                            }, { timeout: 45000 });
                             pdfUrl = pdfPage.url();
+                            console.log(`  PDF page URL after wait: ${pdfUrl}`);
                         } catch (e) {
+                            // Fallback: wait a bit more and grab whatever URL we have
+                            await pdfPage.waitForTimeout(5000);
                             pdfUrl = pdfPage.url();
+                            console.log(`  PDF page URL (fallback): ${pdfUrl}`);
                         }
-                        if (pdfUrl && pdfUrl.includes('.pdf')) {
+                        // Check for PDF URL - could be .pdf extension or contain SharedTemp or cfm (Kinnser report)
+                        const isPdfUrl = pdfUrl && (pdfUrl.includes('.pdf') || pdfUrl.includes('SharedTemp') || pdfUrl.includes('.cfm') || pdfUrl.includes('printClaim'));
+                        if (isPdfUrl) {
                             console.log(`  ✓ PDF URL: ${pdfUrl}`);
                             try { await pdfPage.waitForLoadState('load', { timeout: 15000 }); } catch (e) {}
                             const response = await pdfPage.context().request.fetch(pdfUrl);
@@ -3069,12 +3086,19 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                         const pdfPage = await newPagePromise;
                         let pdfUrl = '';
                         try {
-                            await pdfPage.waitForURL(/\.pdf|SharedTemp/, { timeout: 30000 });
+                            await pdfPage.waitForFunction(() => {
+                                const url = window.location.href;
+                                return url && url !== 'about:blank' && url !== ':' && url.length > 10;
+                            }, { timeout: 45000 });
                             pdfUrl = pdfPage.url();
+                            console.log(`  PDF page URL after wait: ${pdfUrl}`);
                         } catch (e) {
+                            await pdfPage.waitForTimeout(5000);
                             pdfUrl = pdfPage.url();
+                            console.log(`  PDF page URL (fallback): ${pdfUrl}`);
                         }
-                        if (pdfUrl && pdfUrl.includes('.pdf')) {
+                        const isPdfUrl = pdfUrl && (pdfUrl.includes('.pdf') || pdfUrl.includes('SharedTemp') || pdfUrl.includes('.cfm') || pdfUrl.includes('printClaim'));
+                        if (isPdfUrl) {
                             console.log(`  ✓ PDF URL: ${pdfUrl}`);
                             try { await pdfPage.waitForLoadState('load', { timeout: 15000 }); } catch (e) {}
                             const response = await pdfPage.context().request.fetch(pdfUrl);
