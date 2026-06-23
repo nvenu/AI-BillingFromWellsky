@@ -98,6 +98,16 @@ class InsuranceHelper {
                     this.noChangesInsurances.add(nameLower);
                     console.log(`  ℹ️  Added special handling insurance: ${instruction.Name}`);
                 }
+                // Special handling: Fallon Community Health Plan - auth code TOB 327 + SN visit check
+                else if (nameLower === "fallon community health plan") {
+                    this.noChangesInsurances.add(nameLower);
+                    console.log(`  ℹ️  Added special handling insurance: ${instruction.Name}`);
+                }
+                // Special handling: Fallon Community Health Plan MAV - auth code TOB 327 + SN visit check
+                else if (nameLower === "fallon community health plan mav") {
+                    this.noChangesInsurances.add(nameLower);
+                    console.log(`  ℹ️  Added special handling insurance: ${instruction.Name}`);
+                }
             }
         });
         console.log(`Loaded ${this.instructions.length} insurance instructions`);
@@ -116,6 +126,11 @@ class InsuranceHelper {
         if (!this.noChangesInsurances.has("ucsd commercial")) {
             this.noChangesInsurances.add("ucsd commercial");
             console.log(`  ℹ️  Added UCSD Commercial to processable list (hardcoded)`);
+        }
+        // Ensure Fallon Community Health Plan MAV is always in the processable list
+        if (!this.noChangesInsurances.has("fallon community health plan mav")) {
+            this.noChangesInsurances.add("fallon community health plan mav");
+            console.log(`  ℹ️  Added Fallon Community Health Plan MAV to processable list (hardcoded)`);
         }
         console.log("Insurances to process:", Array.from(this.noChangesInsurances).sort());
     }
@@ -208,7 +223,9 @@ class InsuranceHelper {
                 (nameLower === "united health care ma") ||
                 (nameLower === "commonwealth care alliance") ||
                 (nameLower === "ucsd") ||
-                (nameLower === "ucsd commercial");
+                (nameLower === "ucsd commercial") ||
+                (nameLower === "fallon community health plan") ||
+                (nameLower === "fallon community health plan mav");
         })
             .map(instruction => instruction.Name)
             .sort();
@@ -248,7 +265,9 @@ class InsuranceHelper {
             "united health care ma": "electronic", // Send electronically (after UD modifier + SN check)
             "commonwealth care alliance": "electronic", // Send electronically (after UD modifier + Occurrence Code 50)
             "ucsd": "electronic", // Send electronically (after OC50 + Value Codes 61/85)
-            "ucsd commercial": "electronic" // Send electronically (after OC50 + Value Codes 61/85)
+            "ucsd commercial": "electronic", // Send electronically (after OC50 + Value Codes 61/85)
+            "fallon community health plan": "electronic", // Send electronically (after auth code check + SN validation)
+            "fallon community health plan mav": "electronic" // Send electronically (after auth code check + SN validation)
         };
         return specialHandlingConfig[nameLower] || null;
     }

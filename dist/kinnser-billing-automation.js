@@ -3671,6 +3671,201 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
         console.log(`UCSD SUMMARY: ${ucsdRecords.length} processed`);
         console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
     }
+    // PROCESS FALLON COMMUNITY HEALTH PLAN / FALLON COMMUNITY HEALTH PLAN MAV RECORDS
+    // Auth code starting with T → TOB 327, SN visit validation (max 2 per day)
+    const fallonRecords = (isInsuranceSelected('fallon community health plan') || isInsuranceSelected('fallon community health plan mav'))
+        ? validRecords.filter(r => {
+            const ins = r.insurance.toLowerCase().trim();
+            return ins === 'fallon community health plan' || ins === 'fallon community health plan mav';
+        })
+        : [];
+    if (fallonRecords.length > 0) {
+        console.log(`\n=== PROCESSING FALLON COMMUNITY HEALTH PLAN RECORDS ===`);
+        console.log(`Found ${fallonRecords.length} Fallon record(s)`);
+        console.log("  Requires: Auth code extraction, TOB 327 for T-codes, SN visit validation (max 2/day)");
+        for (const record of fallonRecords) {
+            console.log(`\nProcessing Fallon record:`);
+            console.log(`  MRN: ${record.mrn}`);
+            console.log(`  Insurance: ${record.insurance}`);
+            console.log(`  Billing Period: ${record.billingPeriodText}`);
+            if (!record.editButtonId) {
+                console.log(`  \u26a0\ufe0f  No edit button found - skipping`);
+                continue;
+            }
+            try {
+                // STEP 1: Extract Authorization Code from PDF
+                console.log(`  Step 1: Extracting Authorization Code from PDF...`);
+                let authorizationCode = null;
+                const claimNumber = record.editButtonId.replace('openWorksheet', '');
+                const printIconId = `openClaimPrintView${claimNumber}`;
+                try {
+                    const pdfBuffer = await extractPdfFromPrintIcon(page, printIconId);
+                    if (pdfBuffer) {
+                        // Parse PDF to find authorization code
+                        const { PDFParse } = require('pdf-parse');
+                        const parser = new PDFParse({ data: pdfBuffer });
+                        const result = await parser.getText();
+                        const text = result.text;
+                        console.log(`  PDF text length: ${text.length}`);
+                        // Look for authorization code pattern (e.g., H-202606182235, T-12345, T12345)
+                        // Authorization codes typically appear near "Auth" or "Authorization" text
+                        // or are alphanumeric codes with hyphens
+                        const authPatterns = [
+                            /(?:auth(?:orization)?[:\s]*)?([A-Za-z]-?\d{6,})/gi,
+                            /\b([A-Za-z]-\d{6,})\b/g,
+                            /\b([Tt]-?(?:code)?\d+)\b/g,
+                            /\b([Hh]-\d{8,})\b/g
+                        ];
+                        for (const pattern of authPatterns) {
+                            const matches = text.match(pattern);
+                            if (matches && matches.length > 0) {
+                                // Take the first match that looks like an auth code
+                                authorizationCode = matches[0].trim();
+                                break;
+                            }
+                        }
+                        if (authorizationCode) {
+                            console.log(`  \u2713 Authorization Code: ${authorizationCode}`);
+                        } else {
+                            console.log(`  \u26a0\ufe0f  Could not extract Authorization Code from PDF`);
+                        }
+                    } else {
+                        console.log(`  \u26a0\ufe0f  Could not get PDF content`);
+                    }
+                } catch (pdfError) {
+                    console.log(`  \u26a0\ufe0f  Error getting PDF: ${pdfError.message}`);
+                }
+                // STEP 2: Open Claim Edit Screen
+                console.log(`  Step 2: Opening claim edit screen...`);
+                await page.waitForSelector(`#${record.editButtonId}`, { timeout: 15000 });
+                await page.click(`#${record.editButtonId}`);
+                console.log(`  \u2713 Clicked edit button`);
+                await page.waitForLoadState('domcontentloaded', { timeout: 30000 });
+                await page.waitForTimeout(3000);
+                // Handle Helpful Suggestion modal
+                try {
+                    const modalVisible = await page.isVisible('#modal_go');
+                    if (modalVisible) {
+                        await page.click('#modal_go', { timeout: 3000 });
+                        console.log(`  \u2713 Clicked OK on modal`);
+                    }
+                } catch (e) {}
+                try {
+                    await page.evaluate(() => { const btn = document.querySelector('#modal_go'); if (btn) btn.click(); });
+                } catch (e) {}
+                await page.waitForTimeout(2000);
+                console.log(`  \u2713 Worksheet loaded`);
+                // STEP 3: Type of Bill validation - check if auth code starts with T
+                let needsTOB327 = false;
+                if (authorizationCode) {
+                    const authTrimmed = authorizationCode.trim();
+                    // Case-insensitive check: starts with T, T-, or t-code
+                    if (/^[Tt][-]?/.test(authTrimmed)) {
+                        needsTOB327 = true;
+                        console.log(`  Step 3: Auth code "${authorizationCode}" starts with T \u2192 Setting TOB to 327`);
+                        await page.evaluate(() => {
+                            const select = document.querySelector('#typeOfBill');
+                            if (select) {
+                                const option327 = Array.from(select.options).find(opt => opt.text.trim() === '327 - Adjustment Claim');
+                                if (option327) {
+                                    select.value = option327.value;
+                                    select.dispatchEvent(new Event('change', { bubbles: true }));
+                                    select.dispatchEvent(new Event('input', { bubbles: true }));
+                                }
+                            }
+                        });
+                        console.log(`  \u2713 Changed TOB to 327`);
+                    } else {
+                        console.log(`  Step 3: Auth code "${authorizationCode}" does NOT start with T \u2192 TOB unchanged`);
+                    }
+                } else {
+                    console.log(`  Step 3: No auth code extracted \u2192 TOB unchanged`);
+                }
+                // STEP 4: Visit Validation - check SN visits per day
+                console.log(`  Step 4: Validating Skilled Nursing visits...`);
+                // Expand Visits section
+                try {
+                    await page.evaluate(() => {
+                        const links = Array.from(document.querySelectorAll('a.accordion-toggle'));
+                        const visitsLink = links.find(a => a.textContent.trim() === 'Visits');
+                        if (visitsLink) visitsLink.click();
+                    });
+                    console.log(`  \u2713 Expanded Visits`);
+                    await page.waitForTimeout(2000);
+                } catch (e) {
+                    console.log(`  \u26a0\ufe0f  Could not expand Visits section`);
+                }
+                const snCheck = await page.evaluate(() => {
+                    const rows = Array.from(document.querySelectorAll('table.table-striped tbody tr'));
+                    const snVisitsByDate = {};
+                    rows.forEach(row => {
+                        const cells = row.querySelectorAll('td');
+                        if (cells.length >= 2) {
+                            const dateStr = cells[0].textContent.trim();
+                            const visitType = cells[1].textContent.trim();
+                            if (visitType.toLowerCase().includes('skilled nursing')) {
+                                if (dateStr) {
+                                    if (!snVisitsByDate[dateStr]) snVisitsByDate[dateStr] = 0;
+                                    snVisitsByDate[dateStr]++;
+                                }
+                            }
+                        }
+                    });
+                    let hasExceeded = false;
+                    const details = [];
+                    for (const [date, count] of Object.entries(snVisitsByDate)) {
+                        details.push({ date, count });
+                        if (count > 2) { hasExceeded = true; }
+                    }
+                    return { hasExceeded, details, snVisitsByDate };
+                });
+                console.log(`  SN visits by date: ${JSON.stringify(snCheck.snVisitsByDate)}`);
+                if (snCheck.hasExceeded) {
+                    console.log(`  \u274c FAILED: More than 2 SN visits on same date - claim will NOT be billed`);
+                    snCheck.details.filter(d => d.count > 2).forEach(d => console.log(`    ${d.date}: ${d.count} visits (exceeds limit of 2)`));
+                    console.log(`  Reason: "More than two Skilled Nursing visits found on the same date of service."`);
+                    record.skipApproval = true;
+                    // Return without saving - click Cancel/Return
+                    try { await page.click('#returnBtn'); } catch (e) {
+                        try { await page.click('#cancelBtn'); } catch (e2) {}
+                    }
+                    await page.waitForTimeout(3000);
+                    continue;
+                } else {
+                    snCheck.details.forEach(d => console.log(`    ${d.date}: ${d.count} SN visit(s) \u2713 OK`));
+                    console.log(`  \u2713 All dates have \u2264 2 SN visits`);
+                }
+                // STEP 5: Save Claim
+                console.log(`  Step 5: Clicking Save and Close...`);
+                await page.evaluate(() => {
+                    const btn = document.querySelector('#submitBtn');
+                    if (btn) btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                });
+                await page.waitForTimeout(1000);
+                await page.click('#submitBtn');
+                console.log(`  \u2713 Clicked Save and Close`);
+                await page.waitForLoadState('domcontentloaded', { timeout: 30000 });
+                await page.waitForTimeout(3000);
+                try {
+                    await page.waitForSelector('.loading-message', { state: 'hidden', timeout: 30000 });
+                } catch (e) {}
+                await page.waitForTimeout(3000);
+                try {
+                    await page.waitForSelector('table tbody tr', { timeout: 15000 });
+                } catch (e) {}
+                await page.waitForTimeout(2000);
+                console.log(`  \u2705 Successfully processed Fallon record`);
+            } catch (error) {
+                console.error(`  \u274c Error processing Fallon record:`, error.message || error);
+                try { await page.click('#returnBtn'); await page.waitForTimeout(3000); } catch (e) {
+                    try { await page.click('#pendingClaimsApproval'); await page.waitForTimeout(3000); } catch (e2) {}
+                }
+            }
+        }
+        console.log(`\n\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501`);
+        console.log(`FALLON SUMMARY: ${fallonRecords.length} processed`);
+        console.log(`\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501`);
+    }
     // Check for PARTNERSHIP HEALTH PLAN OF CA records (always need 327)
     console.log("\n=== CHECKING FOR PARTNERSHIP HEALTH PLAN OF CA RECORDS ===");
     const partnershipRecords = isInsuranceSelected('partnership health plan of ca')
@@ -3997,6 +4192,17 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
             console.log(`  ⊘ Record [${record.index}] MRN: ${record.mrn}, Period: ${record.billingPeriodText} - will NOT be approved`);
         }
         console.log(`  Total CCA records excluded: ${ccaSkipRecords.length}`);
+    }
+    // Also add Fallon records that have > 2 SN visits per day to the skip list
+    const fallonSkipRecords = validRecords.filter(r => r.skipApproval && 
+        (r.insurance.toLowerCase().trim() === 'fallon community health plan' || r.insurance.toLowerCase().trim() === 'fallon community health plan mav'));
+    if (fallonSkipRecords.length > 0) {
+        console.log(`\n=== FALLON RECORDS EXCLUDED FROM APPROVAL (>2 SN visits/day) ===`);
+        for (const record of fallonSkipRecords) {
+            recordsFailingSNCheck.push(record.index);
+            console.log(`  ⊘ Record [${record.index}] MRN: ${record.mrn}, Period: ${record.billingPeriodText} - will NOT be approved`);
+        }
+        console.log(`  Total Fallon records excluded: ${fallonSkipRecords.length}`);
     }
     console.log("\n=== SELECTING ALL RECORDS FOR APPROVAL ===");
     // Try to find and click the "Select All" checkbox
