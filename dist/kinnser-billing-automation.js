@@ -2578,8 +2578,8 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                     visitResult.multipleDates.forEach(d => console.log(`    ${d.date}: ${d.count} visits`));
                     needsTOB327 = true;
                 }
-                // Log billing period vs admission info (for reference only - NOT a TOB 327 trigger)
-                if (admissionDate && record.billingPeriodEnd) {
+                // Check if billing period is more than 30 days from admission → TOB 327
+                if (!needsTOB327 && admissionDate && record.billingPeriodEnd) {
                     const admMonth = parseInt(admissionDate.substring(0, 2)) - 1;
                     const admDay = parseInt(admissionDate.substring(2, 4));
                     const admYear = parseInt(admissionDate.substring(4, 8));
@@ -2590,7 +2590,8 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                         const diffDays = Math.floor((endDate - admDate) / (1000 * 60 * 60 * 24));
                         console.log(`  Billing Period End: ${record.billingPeriodEnd}, Admission: ${admissionDate}, Days diff: ${diffDays}`);
                         if (diffDays > 30) {
-                            console.log(`  ℹ️  Billing period is ${diffDays} days from admission → UD modifiers applied to qualifying SN visits`);
+                            console.log(`  ❌ Claim dates are ${diffDays} days from admission (> 30) → TOB 327`);
+                            needsTOB327 = true;
                         }
                     }
                 }
