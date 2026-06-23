@@ -104,7 +104,7 @@ class InsuranceHelper {
                     console.log(`  ℹ️  Added special handling insurance: ${instruction.Name}`);
                 }
                 // Special handling: Fallon Community Health Plan MAV - auth code TOB 327 + SN visit check
-                else if (nameLower === "fallon community health plan mav") {
+                else if (nameLower === "fallon community health plan mav" || nameLower === "fallon commnity health plan mav") {
                     this.noChangesInsurances.add(nameLower);
                     console.log(`  ℹ️  Added special handling insurance: ${instruction.Name}`);
                 }
@@ -131,6 +131,11 @@ class InsuranceHelper {
         if (!this.noChangesInsurances.has("fallon community health plan mav")) {
             this.noChangesInsurances.add("fallon community health plan mav");
             console.log(`  ℹ️  Added Fallon Community Health Plan MAV to processable list (hardcoded)`);
+        }
+        // Also handle the spreadsheet typo variant
+        if (!this.noChangesInsurances.has("fallon commnity health plan mav")) {
+            this.noChangesInsurances.add("fallon commnity health plan mav");
+            console.log(`  ℹ️  Added Fallon Commnity Health Plan MAV to processable list (typo variant)`);
         }
         console.log("Insurances to process:", Array.from(this.noChangesInsurances).sort());
     }
@@ -225,7 +230,8 @@ class InsuranceHelper {
                 (nameLower === "ucsd") ||
                 (nameLower === "ucsd commercial") ||
                 (nameLower === "fallon community health plan") ||
-                (nameLower === "fallon community health plan mav");
+                (nameLower === "fallon community health plan mav") ||
+                (nameLower === "fallon commnity health plan mav");
         })
             .map(instruction => instruction.Name)
             .sort();
@@ -267,7 +273,8 @@ class InsuranceHelper {
             "ucsd": "electronic", // Send electronically (after OC50 + Value Codes 61/85)
             "ucsd commercial": "electronic", // Send electronically (after OC50 + Value Codes 61/85)
             "fallon community health plan": "electronic", // Send electronically (after auth code check + SN validation)
-            "fallon community health plan mav": "electronic" // Send electronically (after auth code check + SN validation)
+            "fallon community health plan mav": "electronic", // Send electronically (after auth code check + SN validation)
+            "fallon commnity health plan mav": "electronic" // Typo variant from spreadsheet
         };
         return specialHandlingConfig[nameLower] || null;
     }

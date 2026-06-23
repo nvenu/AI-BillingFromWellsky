@@ -3673,10 +3673,10 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
     }
     // PROCESS FALLON COMMUNITY HEALTH PLAN / FALLON COMMUNITY HEALTH PLAN MAV RECORDS
     // Auth code starting with T → TOB 327, SN visit validation (max 2 per day)
-    const fallonRecords = (isInsuranceSelected('fallon community health plan') || isInsuranceSelected('fallon community health plan mav'))
+    const fallonRecords = (isInsuranceSelected('fallon community health plan') || isInsuranceSelected('fallon community health plan mav') || isInsuranceSelected('fallon commnity health plan mav'))
         ? validRecords.filter(r => {
             const ins = r.insurance.toLowerCase().trim();
-            return ins === 'fallon community health plan' || ins === 'fallon community health plan mav';
+            return ins === 'fallon community health plan' || ins === 'fallon community health plan mav' || ins === 'fallon commnity health plan mav';
         })
         : [];
     if (fallonRecords.length > 0) {
@@ -4195,7 +4195,7 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
     }
     // Also add Fallon records that have > 2 SN visits per day to the skip list
     const fallonSkipRecords = validRecords.filter(r => r.skipApproval && 
-        (r.insurance.toLowerCase().trim() === 'fallon community health plan' || r.insurance.toLowerCase().trim() === 'fallon community health plan mav'));
+        (r.insurance.toLowerCase().trim() === 'fallon community health plan' || r.insurance.toLowerCase().trim() === 'fallon community health plan mav' || r.insurance.toLowerCase().trim() === 'fallon commnity health plan mav'));
     if (fallonSkipRecords.length > 0) {
         console.log(`\n=== FALLON RECORDS EXCLUDED FROM APPROVAL (>2 SN visits/day) ===`);
         for (const record of fallonSkipRecords) {
