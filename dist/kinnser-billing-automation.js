@@ -2574,7 +2574,7 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                 console.log(`  Total rows in visits table: ${visitResult.totalRows}`);
                 // Check if multiple SN visits on same date → TOB 327
                 if (visitResult.hasMultipleSNSameDate) {
-                    console.log(`  ❌ Multiple SN visits on same date → TOB 327:`);
+                    console.log(`  ❌ More than 1 SN visit on same date → TOB 327:`);
                     visitResult.multipleDates.forEach(d => console.log(`    ${d.date}: ${d.count} visits`));
                     needsTOB327 = true;
                 }
@@ -2919,15 +2919,13 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                                         console.log(`  ✓ Scenario B: Found Recertification visit date → Occurrence Code 50 = ${occurrenceCode50Date}`);
                                     } else {
                                         console.log(`  ⚠️  No Recertification visit found in previous episode`);
-                                        const admFormatted = `${admissionDate.substring(0, 2)}/${admissionDate.substring(2, 4)}/${admissionDate.substring(4, 8)}`;
-                                        occurrenceCode50Date = admFormatted;
-                                        console.log(`  ⚠️  Falling back to Admission Date: ${occurrenceCode50Date}`);
+                                        console.log(`  ⚠️  Record will NOT be processed - staying in Pending Approval`);
+                                        record.skipApproval = true;
                                     }
                                 } else {
                                     console.log(`  ⚠️  No Previous Episode link found on episode page`);
-                                    const admFormatted = `${admissionDate.substring(0, 2)}/${admissionDate.substring(2, 4)}/${admissionDate.substring(4, 8)}`;
-                                    occurrenceCode50Date = admFormatted;
-                                    console.log(`  ⚠️  Falling back to Admission Date: ${occurrenceCode50Date}`);
+                                    console.log(`  ⚠️  Record will NOT be processed - staying in Pending Approval`);
+                                    record.skipApproval = true;
                                 }
                                 // Step B6: Navigate back to Pending Approval
                                 console.log(`  Navigating back to Pending Approval...`);
@@ -3267,15 +3265,13 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                                             console.log(`  ✓ Scenario B: Found Recertification visit date → OC50 = ${occurrenceCode50Date}`);
                                         } else {
                                             console.log(`  ⚠️  No Recertification visit found in previous episode`);
-                                            const admFormatted = `${admissionDate.substring(0, 2)}/${admissionDate.substring(2, 4)}/${admissionDate.substring(4, 8)}`;
-                                            occurrenceCode50Date = admFormatted;
-                                            console.log(`  ⚠️  Falling back to Admission Date: ${occurrenceCode50Date}`);
+                                            console.log(`  ⚠️  Record will NOT be processed - staying in Pending Approval`);
+                                            record.skipApproval = true;
                                         }
                                     } else {
                                         console.log(`  ⚠️  No Previous Episode link found`);
-                                        const admFormatted = `${admissionDate.substring(0, 2)}/${admissionDate.substring(2, 4)}/${admissionDate.substring(4, 8)}`;
-                                        occurrenceCode50Date = admFormatted;
-                                        console.log(`  ⚠️  Falling back to Admission Date: ${occurrenceCode50Date}`);
+                                        console.log(`  ⚠️  Record will NOT be processed - staying in Pending Approval`);
+                                        record.skipApproval = true;
                                     }
                                     // Navigate back to Pending Approval
                                     console.log(`  Navigating back to Pending Approval...`);
