@@ -2719,19 +2719,24 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                     let udModifiersAdded = 0;
                     const snVisitsByDate = {};
                     let admDate = null;
+                    const debugInfo = [];
                     if (admDateStr && admDateStr.length === 8) {
                         const month = parseInt(admDateStr.substring(0, 2)) - 1;
                         const day = parseInt(admDateStr.substring(2, 4));
                         const year = parseInt(admDateStr.substring(4, 8));
                         admDate = new Date(year, month, day);
                     }
-                    rows.forEach((row) => {
+                    rows.forEach((row, idx) => {
                         const cells = row.querySelectorAll('td');
                         if (cells.length >= 2) {
                             const dateStr = cells[0].textContent.trim();
                             const visitType = cells[1].textContent.trim();
-                            // Only process Skilled Nursing visits
-                            if (visitType === 'Skilled Nursing') {
+                            // Match Skilled Nursing (case-insensitive)
+                            const isSN = visitType.toLowerCase().includes('skilled nursing');
+                            if (idx < 3) {
+                                debugInfo.push(`Row ${idx}: date="${dateStr}" type="${visitType}" isSN=${isSN}`);
+                            }
+                            if (isSN) {
                                 // Count SN visits by date
                                 if (dateStr) {
                                     if (!snVisitsByDate[dateStr]) snVisitsByDate[dateStr] = 0;
@@ -2745,18 +2750,34 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                                         const diffDays = Math.floor((visitDate - admDate) / (1000 * 60 * 60 * 24));
                                         if (diffDays > 30) {
                                             const modifier1 = row.querySelector('input[ng-model="lineItem.modifier1"]');
-                                            if (modifier1 && !modifier1.value) {
-                                                modifier1.value = 'UD';
-                                                modifier1.dispatchEvent(new Event('input', { bubbles: true }));
-                                                modifier1.dispatchEvent(new Event('change', { bubbles: true }));
-                                                udModifiersAdded++;
-                                            } else if (modifier1 && modifier1.value && modifier1.value !== 'UD') {
-                                                const modifier2 = row.querySelector('input[ng-model="lineItem.modifier2"]');
-                                                if (modifier2 && !modifier2.value) {
-                                                    modifier2.value = 'UD';
-                                                    modifier2.dispatchEvent(new Event('input', { bubbles: true }));
-                                                    modifier2.dispatchEvent(new Event('change', { bubbles: true }));
+                                            if (modifier1) {
+                                                const m1Val = modifier1.value.trim();
+                                                if (!m1Val || m1Val === '') {
+                                                    modifier1.value = 'UD';
+                                                    modifier1.dispatchEvent(new Event('input', { bubbles: true }));
+                                                    modifier1.dispatchEvent(new Event('change', { bubbles: true }));
                                                     udModifiersAdded++;
+                                                } else if (m1Val !== 'UD') {
+                                                    const modifier2 = row.querySelector('input[ng-model="lineItem.modifier2"]');
+                                                    if (modifier2 && (!modifier2.value.trim() || modifier2.value.trim() === '')) {
+                                                        modifier2.value = 'UD';
+                                                        modifier2.dispatchEvent(new Event('input', { bubbles: true }));
+                                                        modifier2.dispatchEvent(new Event('change', { bubbles: true }));
+                                                        udModifiersAdded++;
+                                                    }
+                                                }
+                                            } else {
+                                                // Fallback: find modifier inputs by maxlength
+                                                const allInputs = row.querySelectorAll('input[type="text"]');
+                                                for (const inp of allInputs) {
+                                                    const maxLen = inp.getAttribute('maxlength');
+                                                    if (maxLen && parseInt(maxLen) <= 4 && !inp.value.trim()) {
+                                                        inp.value = 'UD';
+                                                        inp.dispatchEvent(new Event('input', { bubbles: true }));
+                                                        inp.dispatchEvent(new Event('change', { bubbles: true }));
+                                                        udModifiersAdded++;
+                                                        break;
+                                                    }
                                                 }
                                             }
                                         }
@@ -2774,10 +2795,14 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                             excessiveDates.push({ date, count });
                         }
                     }
-                    return { udModifiersAdded, snVisitsByDate, hasExcessiveSNVisits, excessiveDates };
+                    return { udModifiersAdded, snVisitsByDate, hasExcessiveSNVisits, excessiveDates, debugInfo, totalRows: rows.length };
                 }, admissionDate);
                 console.log(`  UD modifiers added: ${visitResult.udModifiersAdded}`);
                 console.log(`  SN visits by date: ${JSON.stringify(visitResult.snVisitsByDate)}`);
+                if (visitResult.debugInfo && visitResult.debugInfo.length > 0) {
+                    visitResult.debugInfo.forEach(d => console.log(`    ${d}`));
+                }
+                console.log(`  Total rows in visits table: ${visitResult.totalRows}`);
                 // Track if this claim has excessive SN visits (will be excluded from approval later)
                 if (visitResult.hasExcessiveSNVisits) {
                     console.log(`  ⚠️  More than 2 SN visits on same date - claim will NOT be approved`);
@@ -3899,7 +3924,8 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                         if (cells.length >= 2) {
                             const date = cells[0].textContent.trim();
                             const visitType = cells[1].textContent.trim();
-                            if (visitType === 'Skilled Nursing') {
+                            // Case-insensitive match for Skilled Nursing
+                            if (visitType.toLowerCase().includes('skilled nursing')) {
                                 if (!snVisitsByDate[date]) {
                                     snVisitsByDate[date] = 0;
                                 }
