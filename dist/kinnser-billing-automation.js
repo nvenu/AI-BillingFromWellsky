@@ -2489,39 +2489,68 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                     const snVisitsByDate = {};
                     let udModifiersAdded = 0;
                     let admDate = null;
+                    const debugInfo = [];
                     if (admDateStr && admDateStr.length === 8) {
                         const month = parseInt(admDateStr.substring(0, 2)) - 1;
                         const day = parseInt(admDateStr.substring(2, 4));
                         const year = parseInt(admDateStr.substring(4, 8));
                         admDate = new Date(year, month, day);
                     }
-                    rows.forEach((row) => {
+                    rows.forEach((row, idx) => {
                         const cells = row.querySelectorAll('td');
                         if (cells.length >= 2) {
                             const dateStr = cells[0].textContent.trim();
                             const visitType = cells[1].textContent.trim();
-                            if (visitType === 'Skilled Nursing') {
-                                if (!snVisitsByDate[dateStr]) snVisitsByDate[dateStr] = 0;
-                                snVisitsByDate[dateStr]++;
+                            // Match Skilled Nursing (case-insensitive, partial match)
+                            const isSN = visitType.toLowerCase().includes('skilled nursing');
+                            if (idx < 3) {
+                                debugInfo.push(`Row ${idx}: date="${dateStr}" type="${visitType}" isSN=${isSN}`);
+                            }
+                            if (isSN) {
+                                if (dateStr) {
+                                    if (!snVisitsByDate[dateStr]) snVisitsByDate[dateStr] = 0;
+                                    snVisitsByDate[dateStr]++;
+                                }
                                 if (admDate && dateStr) {
                                     const parts = dateStr.split('/');
                                     if (parts.length === 3) {
                                         const visitDate = new Date(parseInt(parts[2]), parseInt(parts[0]) - 1, parseInt(parts[1]));
                                         const diffDays = Math.floor((visitDate - admDate) / (1000 * 60 * 60 * 24));
                                         if (diffDays > 30) {
+                                            // Try modifier1 first
                                             const modifier1 = row.querySelector('input[ng-model="lineItem.modifier1"]');
-                                            if (modifier1 && !modifier1.value) {
-                                                modifier1.value = 'UD';
-                                                modifier1.dispatchEvent(new Event('input', { bubbles: true }));
-                                                modifier1.dispatchEvent(new Event('change', { bubbles: true }));
-                                                udModifiersAdded++;
-                                            } else if (modifier1 && modifier1.value && modifier1.value !== 'UD') {
-                                                const modifier2 = row.querySelector('input[ng-model="lineItem.modifier2"]');
-                                                if (modifier2 && !modifier2.value) {
-                                                    modifier2.value = 'UD';
-                                                    modifier2.dispatchEvent(new Event('input', { bubbles: true }));
-                                                    modifier2.dispatchEvent(new Event('change', { bubbles: true }));
+                                            if (modifier1) {
+                                                const m1Val = modifier1.value.trim();
+                                                if (!m1Val || m1Val === '') {
+                                                    modifier1.value = 'UD';
+                                                    modifier1.dispatchEvent(new Event('input', { bubbles: true }));
+                                                    modifier1.dispatchEvent(new Event('change', { bubbles: true }));
                                                     udModifiersAdded++;
+                                                } else if (m1Val !== 'UD') {
+                                                    // modifier1 occupied, try modifier2
+                                                    const modifier2 = row.querySelector('input[ng-model="lineItem.modifier2"]');
+                                                    if (modifier2 && (!modifier2.value.trim() || modifier2.value.trim() === '')) {
+                                                        modifier2.value = 'UD';
+                                                        modifier2.dispatchEvent(new Event('input', { bubbles: true }));
+                                                        modifier2.dispatchEvent(new Event('change', { bubbles: true }));
+                                                        udModifiersAdded++;
+                                                    }
+                                                }
+                                                // If modifier1 already has UD, skip (already done)
+                                            } else {
+                                                // Try alternative selectors
+                                                const allInputs = row.querySelectorAll('input[type="text"]');
+                                                // Typically modifier inputs are after HCPCS/Revenue code inputs
+                                                // Look for inputs with short maxlength (modifiers are 2 chars)
+                                                for (const inp of allInputs) {
+                                                    const maxLen = inp.getAttribute('maxlength');
+                                                    if (maxLen && parseInt(maxLen) <= 4 && !inp.value.trim()) {
+                                                        inp.value = 'UD';
+                                                        inp.dispatchEvent(new Event('input', { bubbles: true }));
+                                                        inp.dispatchEvent(new Event('change', { bubbles: true }));
+                                                        udModifiersAdded++;
+                                                        break;
+                                                    }
                                                 }
                                             }
                                         }
@@ -2535,16 +2564,22 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                     for (const [date, count] of Object.entries(snVisitsByDate)) {
                         if (count > 1) { hasMultipleSNSameDate = true; multipleDates.push({ date, count }); }
                     }
-                    return { udModifiersAdded, hasMultipleSNSameDate, multipleDates, snVisitsByDate };
+                    return { udModifiersAdded, hasMultipleSNSameDate, multipleDates, snVisitsByDate, debugInfo, totalRows: rows.length };
                 }, admissionDate);
                 console.log(`  UD modifiers added: ${visitResult.udModifiersAdded}`);
+                console.log(`  SN visits by date: ${JSON.stringify(visitResult.snVisitsByDate)}`);
+                if (visitResult.debugInfo && visitResult.debugInfo.length > 0) {
+                    visitResult.debugInfo.forEach(d => console.log(`    ${d}`));
+                }
+                console.log(`  Total rows in visits table: ${visitResult.totalRows}`);
+                // Check if multiple SN visits on same date → TOB 327
                 if (visitResult.hasMultipleSNSameDate) {
-                    console.log(`  ❌ Multiple SN visits on same date:`);
+                    console.log(`  ❌ Multiple SN visits on same date → TOB 327:`);
                     visitResult.multipleDates.forEach(d => console.log(`    ${d.date}: ${d.count} visits`));
                     needsTOB327 = true;
                 }
-                // Check if billing period end date is > 30 days from admission
-                if (!needsTOB327 && admissionDate && record.billingPeriodEnd) {
+                // Log billing period vs admission info (for reference only - NOT a TOB 327 trigger)
+                if (admissionDate && record.billingPeriodEnd) {
                     const admMonth = parseInt(admissionDate.substring(0, 2)) - 1;
                     const admDay = parseInt(admissionDate.substring(2, 4));
                     const admYear = parseInt(admissionDate.substring(4, 8));
@@ -2555,8 +2590,7 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                         const diffDays = Math.floor((endDate - admDate) / (1000 * 60 * 60 * 24));
                         console.log(`  Billing Period End: ${record.billingPeriodEnd}, Admission: ${admissionDate}, Days diff: ${diffDays}`);
                         if (diffDays > 30) {
-                            console.log(`  ❌ Billing period end date is ${diffDays} days from admission (> 30) → TOB 327`);
-                            needsTOB327 = true;
+                            console.log(`  ℹ️  Billing period is ${diffDays} days from admission → UD modifiers applied to qualifying SN visits`);
                         }
                     }
                 }
