@@ -251,7 +251,7 @@ async function processOffice(page, office, insuranceHelper, selectedInsurances =
             let changedTo327 = [];
             let snFailures = [];
             try {
-                const result = await processPendingApproval(page, insuranceHelper, selectedInsurances);
+                const result = await processPendingApproval(page, insuranceHelper, selectedInsurances, selectedRecords);
                 readyToSendFiles = result.files;
                 changedTo327 = result.changedTo327;
                 snFailures = result.snFailures || [];
@@ -290,7 +290,7 @@ async function processOffice(page, office, insuranceHelper, selectedInsurances =
         let changedTo327 = [];
         let snFailures = [];
         try {
-            const result = await processPendingApproval(page, insuranceHelper, selectedInsurances);
+            const result = await processPendingApproval(page, insuranceHelper, selectedInsurances, selectedRecords);
             readyToSendFiles = result.files;
             changedTo327 = result.changedTo327;
             snFailures = result.snFailures || [];
@@ -1777,7 +1777,7 @@ async function clickCreateButton(page) {
         throw error;
     }
 }
-async function processPendingApproval(page, insuranceHelper, selectedInsurances = null) {
+async function processPendingApproval(page, insuranceHelper, selectedInsurances = null, readyTabRecords = []) {
     console.log("\n=== PROCESSING PENDING APPROVAL ===");
     // Check if stop was requested before starting
     if (isStopRequested()) {
@@ -1872,7 +1872,7 @@ async function processPendingApproval(page, insuranceHelper, selectedInsurances 
         }
         else {
             // Process Pending Approval records and capture 327 changes
-            const pendingResult = await processPendingApprovalRecords(page, insuranceHelper, selectedInsurances);
+            const pendingResult = await processPendingApprovalRecords(page, insuranceHelper, selectedInsurances, readyTabRecords);
             changedTo327 = pendingResult.changedRecords || pendingResult;
             snFailures = pendingResult.snFailures || [];
             console.log(`✓ Type of Bill changes: ${changedTo327.length} records changed to 327`);
@@ -1913,7 +1913,7 @@ async function processPendingApproval(page, insuranceHelper, selectedInsurances 
         throw error;
     }
 }
-async function processPendingApprovalRecords(page, insuranceHelper, selectedInsurances = null) {
+async function processPendingApprovalRecords(page, insuranceHelper, selectedInsurances = null, readyTabRecords = []) {
     // Get all records with MRN and billing period
     console.log("\nExtracting record details from table...");
     const changedRecords = [];
@@ -3694,25 +3694,35 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                 continue;
             }
             try {
-                // STEP 1: Get Authorization Code from Pending Approval table
-                console.log(`  Step 1: Getting Authorization Code from table...`);
-                let authorizationCode = record.authorization || null;
-                if (authorizationCode) {
-                    console.log(`  ✓ Authorization Code: ${authorizationCode}`);
-                } else {
-                    // Fallback: check allCells for auth-like pattern
-                    if (record.allCells) {
-                        for (const cell of record.allCells) {
-                            if (cell && /^[A-Za-z]-?\d{4,}/.test(cell.trim())) {
-                                authorizationCode = cell.trim();
-                                console.log(`  ✓ Authorization Code (from cells): ${authorizationCode}`);
-                                break;
-                            }
+                // STEP 1: Get Authorization Code from Ready tab records (matched by MRN)
+                console.log(`  Step 1: Getting Authorization Code...`);
+                let authorizationCode = null;
+                // Look up auth code from Ready tab records by matching MRN
+                if (readyTabRecords && readyTabRecords.length > 0) {
+                    const matchingRecord = readyTabRecords.find(r => {
+                        // Match by checking if allColumns contains the MRN
+                        if (r.allColumns) {
+                            return r.allColumns.some(col => col && col.includes(record.mrn));
+                        }
+                        return false;
+                    });
+                    if (matchingRecord && matchingRecord.authorization) {
+                        authorizationCode = matchingRecord.authorization.trim();
+                        console.log(`  ✓ Authorization Code (from Ready tab): ${authorizationCode}`);
+                    }
+                }
+                // Fallback: check allCells in Pending Approval table for auth-like pattern
+                if (!authorizationCode && record.allCells) {
+                    for (const cell of record.allCells) {
+                        if (cell && /^[A-Za-z]-?\d{4,}/.test(cell.trim())) {
+                            authorizationCode = cell.trim();
+                            console.log(`  ✓ Authorization Code (from table cells): ${authorizationCode}`);
+                            break;
                         }
                     }
-                    if (!authorizationCode) {
-                        console.log(`  ⚠️  No Authorization Code found in table`);
-                    }
+                }
+                if (!authorizationCode) {
+                    console.log(`  ⚠️  No Authorization Code found`);
                 }
                 // STEP 2: Open Claim Edit Screen
                 console.log(`  Step 2: Opening claim edit screen...`);
