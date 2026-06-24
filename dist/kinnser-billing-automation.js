@@ -1926,11 +1926,13 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
         const billingPeriodIndex = headers.findIndex(h => h.includes('billing period'));
         const insuranceIndex = headers.findIndex(h => h.includes('insurance') || h.includes('payer'));
         const typeOfBillIndex = headers.findIndex(h => h.includes('type of bill') || h.includes('tob'));
+        const authorizationIndex = headers.findIndex(h => h.includes('authorization') || h.includes('auth'));
         console.log('Header columns:', headers);
         console.log('MRN column index:', mrnIndex);
         console.log('Billing Period column index:', billingPeriodIndex);
         console.log('Insurance column index:', insuranceIndex);
         console.log('Type of Bill column index:', typeOfBillIndex);
+        console.log('Authorization column index:', authorizationIndex);
         const rows = Array.from(document.querySelectorAll('table tbody tr'));
         console.log(`Found ${rows.length} rows in Pending Approval table`);
         // Debug: Check first row for button structure
@@ -2020,6 +2022,8 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                 billingPeriodStart,
                 billingPeriodEnd,
                 typeOfBill,
+                authorization: authorizationIndex >= 0 && authorizationIndex < cells.length
+                    ? (cells[authorizationIndex].textContent || '').trim() : '',
                 editButtonId,
                 worksheetLinkId,
                 billingPeriodHref,
@@ -3690,47 +3694,25 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                 continue;
             }
             try {
-                // STEP 1: Extract Authorization Code from PDF
-                console.log(`  Step 1: Extracting Authorization Code from PDF...`);
-                let authorizationCode = null;
-                const claimNumber = record.editButtonId.replace('openWorksheet', '');
-                const printIconId = `openClaimPrintView${claimNumber}`;
-                try {
-                    const pdfBuffer = await extractPdfFromPrintIcon(page, printIconId);
-                    if (pdfBuffer) {
-                        // Parse PDF to find authorization code
-                        const { PDFParse } = require('pdf-parse');
-                        const parser = new PDFParse({ data: pdfBuffer });
-                        const result = await parser.getText();
-                        const text = result.text;
-                        console.log(`  PDF text length: ${text.length}`);
-                        // Look for authorization code pattern (e.g., H-202606182235, T-12345, T12345)
-                        // Authorization codes typically appear near "Auth" or "Authorization" text
-                        // or are alphanumeric codes with hyphens
-                        const authPatterns = [
-                            /(?:auth(?:orization)?[:\s]*)?([A-Za-z]-?\d{6,})/gi,
-                            /\b([A-Za-z]-\d{6,})\b/g,
-                            /\b([Tt]-?(?:code)?\d+)\b/g,
-                            /\b([Hh]-\d{8,})\b/g
-                        ];
-                        for (const pattern of authPatterns) {
-                            const matches = text.match(pattern);
-                            if (matches && matches.length > 0) {
-                                // Take the first match that looks like an auth code
-                                authorizationCode = matches[0].trim();
+                // STEP 1: Get Authorization Code from Pending Approval table
+                console.log(`  Step 1: Getting Authorization Code from table...`);
+                let authorizationCode = record.authorization || null;
+                if (authorizationCode) {
+                    console.log(`  ✓ Authorization Code: ${authorizationCode}`);
+                } else {
+                    // Fallback: check allCells for auth-like pattern
+                    if (record.allCells) {
+                        for (const cell of record.allCells) {
+                            if (cell && /^[A-Za-z]-?\d{4,}/.test(cell.trim())) {
+                                authorizationCode = cell.trim();
+                                console.log(`  ✓ Authorization Code (from cells): ${authorizationCode}`);
                                 break;
                             }
                         }
-                        if (authorizationCode) {
-                            console.log(`  \u2713 Authorization Code: ${authorizationCode}`);
-                        } else {
-                            console.log(`  \u26a0\ufe0f  Could not extract Authorization Code from PDF`);
-                        }
-                    } else {
-                        console.log(`  \u26a0\ufe0f  Could not get PDF content`);
                     }
-                } catch (pdfError) {
-                    console.log(`  \u26a0\ufe0f  Error getting PDF: ${pdfError.message}`);
+                    if (!authorizationCode) {
+                        console.log(`  ⚠️  No Authorization Code found in table`);
+                    }
                 }
                 // STEP 2: Open Claim Edit Screen
                 console.log(`  Step 2: Opening claim edit screen...`);
