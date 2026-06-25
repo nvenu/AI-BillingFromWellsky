@@ -191,8 +191,8 @@ class InsuranceHelper {
         if (this.shouldDiscardAuthorization(authorization)) {
             return false;
         }
-        // Valid: numeric, alphanumeric (with hyphens allowed), blank, or "na"
-        return auth === "na" || auth === "" || /^[a-z0-9\-]+$/i.test(auth);
+        // Valid: numeric, alphanumeric (with hyphens and spaces allowed), blank, or "na"
+        return auth === "na" || auth === "" || /^[a-z0-9\-\s]+$/i.test(auth);
     }
     getInstructionsByLocation(location) {
         return this.instructions.filter(i => i.Location === location);
