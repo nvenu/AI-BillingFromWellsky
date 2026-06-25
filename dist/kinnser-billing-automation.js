@@ -4212,18 +4212,22 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
         await page.waitForSelector('.loading-message', { state: 'hidden', timeout: 30000 });
     } catch (e) {}
     await page.waitForTimeout(2000);
-    // Ensure All Insurances is selected in dropdown
+    // Ensure correct insurance selection in dropdown (maintain user's choice)
     try {
         await page.waitForSelector('select[ng-model="insuranceKey"]', { timeout: 10000 });
-        await page.selectOption('select[ng-model="insuranceKey"]', '1');
-        console.log("  ✓ Selected 'All Insurances' in dropdown");
+        if (!selectedInsurances || selectedInsurances.length === 0) {
+            await page.selectOption('select[ng-model="insuranceKey"]', '1');
+            console.log("  ✓ Selected 'All Insurances' in dropdown");
+        } else {
+            console.log(`  ✓ Keeping user-selected insurance(s) in dropdown`);
+        }
         await page.waitForTimeout(3000);
         try {
             await page.waitForSelector('.loading-message', { state: 'hidden', timeout: 30000 });
         } catch (e) {}
         await page.waitForTimeout(2000);
     } catch (e) {
-        console.log(`  ⚠️  Could not select All Insurances: ${e.message}`);
+        console.log(`  ⚠️  Could not verify insurance dropdown: ${e.message}`);
     }
     // Count records available for approval
     const totalRecordsInTable = await page.evaluate(() => {
