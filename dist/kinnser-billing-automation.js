@@ -62,8 +62,8 @@ function isStopRequested() {
     return stopCheckFunction ? stopCheckFunction() : false;
 }
 // Helper: Extract PDF from claim print view
-// Overrides window.open to capture the URL, then fetches the PDF directly
-async function extractPdfFromPrintIcon(page, printIconId) {
+// Uses multiple strategies: window.open override, response interception, new tab
+async function extractPdfFromPrintIcon(page, printIconId, retryCount = 0) {
     try {
         await page.waitForSelector(`#${printIconId}`, { timeout: 15000 });
         await page.evaluate((id) => {
@@ -71,69 +71,108 @@ async function extractPdfFromPrintIcon(page, printIconId) {
             if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }, printIconId);
         await page.waitForTimeout(500);
-        // Override window.open to capture the URL before clicking
+        // Strategy 1: Override window.open to capture URL
         await page.evaluate(() => {
             window.__capturedOpenUrl = null;
             window.__originalOpen = window.open;
             window.open = function(url) {
                 window.__capturedOpenUrl = url;
-                // Return a mock window object so Angular doesn't error
                 return { document: { write: function(){}, close: function(){} }, close: function(){}, focus: function(){} };
             };
         });
-        // Also listen for popup in case override doesn't work
-        const newPagePromise = page.context().waitForEvent('page', { timeout: 15000 }).catch(() => null);
+        // Strategy 2: Listen for response with PDF content-type
+        let responseBuffer = null;
+        const responsePromise = new Promise((resolve) => {
+            const handler = async (response) => {
+                try {
+                    const url = response.url();
+                    const contentType = response.headers()['content-type'] || '';
+                    if (contentType.includes('pdf') || url.includes('.pdf') || url.includes('SharedTemp')) {
+                        const body = await response.body();
+                        if (body && body.length > 1000) {
+                            page.context().off('response', handler);
+                            resolve(body);
+                        }
+                    }
+                } catch (e) {}
+            };
+            page.context().on('response', handler);
+            setTimeout(() => { page.context().off('response', handler); resolve(null); }, 50000);
+        });
+        // Strategy 3: Listen for new page/popup
+        const newPagePromise = page.context().waitForEvent('page', { timeout: 50000 }).catch(() => null);
         // Click the print icon
         await page.click(`#${printIconId}`);
         console.log(`  ✓ Clicked print icon: ${printIconId}`);
-        // Wait a moment for the Angular function to execute and call window.open
-        // The function makes an API call first, so it can take a while
+        // Poll for window.open capture (up to 45 seconds)
+        let pdfUrl = null;
         let waitTime = 0;
-        const maxWait = 40000; // 40 seconds max
+        const maxWait = 45000;
         while (waitTime < maxWait) {
             await page.waitForTimeout(2000);
             waitTime += 2000;
             const captured = await page.evaluate(() => window.__capturedOpenUrl);
-            if (captured) break;
+            if (captured) {
+                pdfUrl = captured;
+                break;
+            }
         }
-        // Check if we captured a URL
-        let pdfUrl = await page.evaluate(() => {
-            const url = window.__capturedOpenUrl;
-            // Restore original window.open
+        // Restore window.open
+        await page.evaluate(() => {
             if (window.__originalOpen) {
                 window.open = window.__originalOpen;
                 delete window.__originalOpen;
             }
             delete window.__capturedOpenUrl;
-            return url;
         });
-        console.log(`  Captured PDF URL: ${pdfUrl || 'none'}`);
+        // Try Strategy 1: Use captured URL
         if (pdfUrl && pdfUrl.length > 5) {
-            // Make it absolute if relative
+            console.log(`  Captured PDF URL: ${pdfUrl}`);
             if (!pdfUrl.startsWith('http')) {
                 const baseUrl = page.url().split('/EHR/')[0];
                 pdfUrl = baseUrl + (pdfUrl.startsWith('/') ? '' : '/') + pdfUrl;
             }
             console.log(`  Fetching PDF from: ${pdfUrl}`);
-            const resp = await page.context().request.fetch(pdfUrl);
-            const pdfBuffer = await resp.body();
-            if (pdfBuffer && pdfBuffer.length > 500) {
-                console.log(`  ✓ Downloaded PDF (${pdfBuffer.length} bytes)`);
-                // Close any popup that may have opened
-                const pdfPage = await newPagePromise;
-                if (pdfPage) await pdfPage.close();
-                return pdfBuffer;
+            try {
+                const resp = await page.context().request.fetch(pdfUrl);
+                const pdfBuffer = await resp.body();
+                if (pdfBuffer && pdfBuffer.length > 500) {
+                    console.log(`  ✓ Downloaded PDF (${pdfBuffer.length} bytes)`);
+                    // Close popup if opened
+                    const pdfPage = await newPagePromise;
+                    if (pdfPage) try { await pdfPage.close(); } catch(e) {}
+                    return pdfBuffer;
+                }
+            } catch (fetchErr) {
+                console.log(`  ⚠️  Fetch failed: ${fetchErr.message}`);
             }
+        } else {
+            console.log(`  Captured PDF URL: none`);
         }
-        // Fallback: try the new tab approach
-        console.log(`  ⚠️  No captured URL, trying new tab...`);
+        // Try Strategy 2: Check response interception
+        responseBuffer = await responsePromise;
+        if (responseBuffer && responseBuffer.length > 500) {
+            console.log(`  ✓ Got PDF from response interception (${responseBuffer.length} bytes)`);
+            const pdfPage = await newPagePromise;
+            if (pdfPage) try { await pdfPage.close(); } catch(e) {}
+            return responseBuffer;
+        }
+        // Try Strategy 3: New tab approach
+        console.log(`  ⚠️  Trying new tab approach...`);
         const pdfPage = await newPagePromise;
         if (pdfPage) {
             try {
-                await pdfPage.waitForLoadState('load', { timeout: 30000 });
-                const tabUrl = pdfPage.url();
+                // Wait for the page to get a real URL (longer wait)
+                let tabWait = 0;
+                let tabUrl = '';
+                while (tabWait < 30000) {
+                    await pdfPage.waitForTimeout(2000);
+                    tabWait += 2000;
+                    tabUrl = pdfPage.url();
+                    if (tabUrl && tabUrl !== 'about:blank' && tabUrl !== ':' && tabUrl.length > 10) break;
+                }
                 console.log(`  New tab URL: ${tabUrl}`);
-                if (tabUrl && tabUrl.length > 10 && tabUrl !== 'about:blank') {
+                if (tabUrl && tabUrl.length > 10 && tabUrl !== 'about:blank' && tabUrl !== ':') {
                     const resp = await pdfPage.context().request.fetch(tabUrl);
                     const pdfBuffer = await resp.body();
                     await pdfPage.close();
@@ -142,15 +181,22 @@ async function extractPdfFromPrintIcon(page, printIconId) {
                         return pdfBuffer;
                     }
                 }
+                await pdfPage.close();
             } catch (e) {
                 console.log(`  ⚠️  Tab approach failed: ${e.message}`);
+                try { await pdfPage.close(); } catch(e2) {}
             }
-            await pdfPage.close();
         }
+        // If all strategies failed and this is the first attempt, retry once
+        if (retryCount === 0) {
+            console.log(`  ⚠️  All strategies failed, retrying once...`);
+            await page.waitForTimeout(3000);
+            return extractPdfFromPrintIcon(page, printIconId, 1);
+        }
+        console.log(`  ⚠️  Could not extract PDF after retry`);
         return null;
     } catch (error) {
         console.log(`  ⚠️  Error in PDF extraction: ${error.message}`);
-        // Restore window.open just in case
         try { await page.evaluate(() => { if (window.__originalOpen) { window.open = window.__originalOpen; } }); } catch(e) {}
         return null;
     }
@@ -2761,6 +2807,15 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                                                     modifier1.value = 'UD';
                                                     modifier1.dispatchEvent(new Event('input', { bubbles: true }));
                                                     modifier1.dispatchEvent(new Event('change', { bubbles: true }));
+                                                    // Also update Angular model
+                                                    if (window.angular) {
+                                                        try {
+                                                            const scope = window.angular.element(modifier1).scope();
+                                                            if (scope && scope.lineItem) {
+                                                                scope.$apply(() => { scope.lineItem.modifier1 = 'UD'; });
+                                                            }
+                                                        } catch(e) {}
+                                                    }
                                                     udModifiersAdded++;
                                                 } else if (m1Val !== 'UD') {
                                                     const modifier2 = row.querySelector('input[ng-model="lineItem.modifier2"]');
@@ -2768,6 +2823,14 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                                                         modifier2.value = 'UD';
                                                         modifier2.dispatchEvent(new Event('input', { bubbles: true }));
                                                         modifier2.dispatchEvent(new Event('change', { bubbles: true }));
+                                                        if (window.angular) {
+                                                            try {
+                                                                const scope = window.angular.element(modifier2).scope();
+                                                                if (scope && scope.lineItem) {
+                                                                    scope.$apply(() => { scope.lineItem.modifier2 = 'UD'; });
+                                                                }
+                                                            } catch(e) {}
+                                                        }
                                                         udModifiersAdded++;
                                                     }
                                                 }
