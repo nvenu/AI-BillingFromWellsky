@@ -4194,10 +4194,57 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
         console.log(`  Total Fallon records excluded: ${fallonSkipRecords.length}`);
     }
     console.log("\n=== SELECTING ALL RECORDS FOR APPROVAL ===");
+    // Ensure we're on the Pending Approval page with fresh data
+    console.log("Verifying we are on Pending Approval page...");
+    const currentUrl = page.url();
+    if (!currentUrl.includes('approve-claims')) {
+        console.log("  Not on Pending Approval page, navigating...");
+        try {
+            await page.click('#pendingClaimsApproval');
+            await page.waitForLoadState('domcontentloaded', { timeout: 30000 });
+            await page.waitForTimeout(3000);
+        } catch (e) {
+            console.log(`  ⚠️  Could not navigate to Pending Approval: ${e.message}`);
+        }
+    }
+    // Wait for page to be fully loaded
+    try {
+        await page.waitForSelector('.loading-message', { state: 'hidden', timeout: 30000 });
+    } catch (e) {}
+    await page.waitForTimeout(2000);
+    // Ensure All Insurances is selected in dropdown
+    try {
+        await page.waitForSelector('select[ng-model="insuranceKey"]', { timeout: 10000 });
+        await page.selectOption('select[ng-model="insuranceKey"]', '1');
+        console.log("  ✓ Selected 'All Insurances' in dropdown");
+        await page.waitForTimeout(3000);
+        try {
+            await page.waitForSelector('.loading-message', { state: 'hidden', timeout: 30000 });
+        } catch (e) {}
+        await page.waitForTimeout(2000);
+    } catch (e) {
+        console.log(`  ⚠️  Could not select All Insurances: ${e.message}`);
+    }
+    // Count records available for approval
+    const totalRecordsInTable = await page.evaluate(() => {
+        const rows = Array.from(document.querySelectorAll('table tbody tr'));
+        return rows.filter(r => r.querySelector('input[type="checkbox"]')).length;
+    });
+    console.log(`  Records in Pending Approval table: ${totalRecordsInTable}`);
+    if (totalRecordsInTable === 0) {
+        console.log("  ✓ No records in Pending Approval - nothing to approve");
+        return { changedRecords, snFailures: recordsFailingSNCheck.map(idx => {
+            const record = validRecords[idx];
+            return { mrn: record ? record.mrn : 'Unknown', billingPeriod: record ? record.billingPeriodText : 'Unknown', insurance: record ? record.insurance : 'Unknown' };
+        })};
+    }
     // Try to find and click the "Select All" checkbox
     console.log("Looking for 'Select All' checkbox...");
     // Try multiple selectors for the Select All checkbox
     const selectAllSelectors = [
+        '#page1_rowSelection',
+        'input#page1_rowSelection',
+        'input[ng-model="templateModel.checkboxState"]',
         'input[type="checkbox"][ng-model*="selectAll"]',
         'input[type="checkbox"][ng-click*="selectAll"]',
         'thead input[type="checkbox"]',
@@ -4211,31 +4258,44 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
             if (selectAllCheckbox) {
                 console.log(`✓ Found 'Select All' checkbox with selector: ${selector}`);
                 try {
-                    await page.click(selector, { timeout: 5000 });
-                    await page.waitForTimeout(2000); // Wait for selection to propagate
-                    console.log("✓ Clicked 'Select All' checkbox");
+                    // Use evaluate to click and trigger Angular ng-change
+                    await page.evaluate((sel) => {
+                        const cb = document.querySelector(sel);
+                        if (cb) {
+                            cb.checked = true;
+                            cb.dispatchEvent(new Event('change', { bubbles: true }));
+                            cb.dispatchEvent(new Event('click', { bubbles: true }));
+                            // Trigger Angular digest
+                            if (window.angular) {
+                                const scope = window.angular.element(cb).scope();
+                                if (scope) {
+                                    scope.$apply(() => {
+                                        scope.templateModel.checkboxState = true;
+                                        if (scope.templateModel.checkboxEvent) {
+                                            scope.templateModel.checkboxEvent(scope.templateModel.location, true);
+                                        }
+                                    });
+                                }
+                            }
+                        }
+                    }, selector);
+                    await page.waitForTimeout(3000); // Wait for selection to propagate
+                    console.log("✓ Clicked 'Select All' checkbox and triggered Angular change");
                     selectAllFound = true;
                     break;
                 }
                 catch (clickError) {
-                    console.log(`  ⚠️ Found but click failed: ${clickError.message}`);
-                    // Try force click via evaluate
+                    console.log(`  ⚠️ Click/evaluate failed: ${clickError.message}`);
+                    // Try simple click as fallback
                     try {
-                        await page.evaluate((sel) => {
-                            const cb = document.querySelector(sel);
-                            if (cb) {
-                                cb.click();
-                                return true;
-                            }
-                            return false;
-                        }, selector);
-                        await page.waitForTimeout(2000);
-                        console.log("✓ Clicked 'Select All' checkbox via evaluate");
+                        await page.click(selector, { timeout: 5000 });
+                        await page.waitForTimeout(3000);
+                        console.log("✓ Clicked 'Select All' checkbox via direct click");
                         selectAllFound = true;
                         break;
                     }
-                    catch (evalError) {
-                        console.log(`  ⚠️ Evaluate click also failed`);
+                    catch (directClickError) {
+                        console.log(`  ⚠️ Direct click also failed: ${directClickError.message}`);
                     }
                 }
             }
@@ -4409,8 +4469,20 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
         console.log("✓ Approve button clicked successfully");
         // Wait for approval to process
         console.log("Waiting for approval to process...");
-        await page.waitForTimeout(5000);
-        console.log("✓ Approval processing complete");
+        await page.waitForTimeout(3000);
+        // Wait for loading spinner
+        try {
+            await page.waitForSelector('.loading-message', { state: 'hidden', timeout: 30000 });
+        } catch (e) {}
+        await page.waitForTimeout(3000);
+        // Verify records were approved by checking remaining count
+        const remainingCount = await page.evaluate(() => {
+            const rows = Array.from(document.querySelectorAll('table tbody tr'));
+            return rows.filter(r => r.querySelector('input[type="checkbox"]')).length;
+        });
+        console.log(`✓ Approval processing complete`);
+        console.log(`  Records remaining in Pending Approval: ${remainingCount}`);
+        console.log(`  Records moved to Ready To Send: ${selectedCount - remainingCount >= 0 ? selectedCount - remainingCount : 'unknown'}`);
     }
     else {
         console.log("✗ Failed to click Approve button - skipping approval");
