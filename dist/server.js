@@ -786,6 +786,8 @@ app.get("/billing", (req, res) => {
       <script>
         let currentOffice = null;
         let eventSource = null;
+        let autoScrollEnabled = true;
+        let automationRunning = false;
         
         // Connect to live log stream
         function connectToLogStream() {
@@ -793,17 +795,38 @@ app.get("/billing", (req, res) => {
             eventSource.close();
           }
           
+          automationRunning = true;
           eventSource = new EventSource('/api/logs/stream');
           
           eventSource.onmessage = function(event) {
             const data = JSON.parse(event.data);
             appendToConsole(data.timestamp, data.message);
+            // Check if automation completed
+            if (data.message && (data.message.includes('Cleaning up browser') || data.message.includes('Automation complete') || data.message.includes('Error in billing automation'))) {
+              automationRunning = false;
+              // Close stream after a short delay to catch final messages
+              setTimeout(() => {
+                if (eventSource) {
+                  eventSource.close();
+                  eventSource = null;
+                }
+              }, 5000);
+            }
           };
           
           eventSource.onerror = function(error) {
-            console.error('SSE Error:', error);
-            appendToConsole(new Date().toISOString(), '⚠️  Connection lost. Reconnecting...');
-            setTimeout(connectToLogStream, 3000);
+            // Only reconnect if automation is still running
+            if (automationRunning) {
+              console.error('SSE Error:', error);
+              appendToConsole(new Date().toISOString(), '⚠️  Connection lost. Reconnecting...');
+              setTimeout(connectToLogStream, 3000);
+            } else {
+              // Automation finished, don't reconnect
+              if (eventSource) {
+                eventSource.close();
+                eventSource = null;
+              }
+            }
           };
         }
         
@@ -814,8 +837,22 @@ app.get("/billing", (req, res) => {
           logLine.style.marginBottom = '4px';
           logLine.innerHTML = '<span style="color: #888;">[' + time + ']</span> ' + escapeHtml(message);
           consoleOutput.appendChild(logLine);
-          consoleOutput.scrollTop = consoleOutput.scrollHeight;
+          // Only auto-scroll if user hasn't scrolled up
+          if (autoScrollEnabled) {
+            consoleOutput.scrollTop = consoleOutput.scrollHeight;
+          }
         }
+        
+        // Detect user scroll to pause/resume auto-scroll
+        document.addEventListener('DOMContentLoaded', function() {
+          const consoleOutput = document.getElementById('consoleOutput');
+          if (consoleOutput) {
+            consoleOutput.addEventListener('scroll', function() {
+              const atBottom = consoleOutput.scrollHeight - consoleOutput.clientHeight <= consoleOutput.scrollTop + 50;
+              autoScrollEnabled = atBottom;
+            });
+          }
+        });
         
         function escapeHtml(text) {
           const div = document.createElement('div');
