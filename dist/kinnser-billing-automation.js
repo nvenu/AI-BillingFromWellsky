@@ -3918,6 +3918,242 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
         console.log(`FALLON SUMMARY: ${fallonRecords.length} processed`);
         console.log(`\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501`);
     }
+    // PROCESS BOSTON MEDICAL CENTER HEALTH PLAN RECORDS
+    // T-code auth → TOB 327, UD modifier for SN visits >30 days from admission
+    const bmcRecords = isInsuranceSelected('boston medical center health plan')
+        ? validRecords.filter(r => r.insurance.toLowerCase().trim() === 'boston medical center health plan')
+        : [];
+    if (bmcRecords.length > 0) {
+        console.log(`\n=== PROCESSING BOSTON MEDICAL CENTER HEALTH PLAN RECORDS ===`);
+        console.log(`Found ${bmcRecords.length} BMC Health Plan record(s)`);
+        console.log("  Requires: T-code auth check (TOB 327), admission date, UD modifier for SN >30 days");
+        for (const record of bmcRecords) {
+            console.log(`\nProcessing BMC record:`);
+            console.log(`  MRN: ${record.mrn}`);
+            console.log(`  Insurance: ${record.insurance}`);
+            console.log(`  Billing Period: ${record.billingPeriodText}`);
+            if (!record.editButtonId) {
+                console.log(`  \u26a0\ufe0f  No edit button found - skipping`);
+                continue;
+            }
+            try {
+                // STEP 1: Get Authorization Code from Ready tab records
+                console.log(`  Step 1: Getting Authorization Code...`);
+                let authorizationCode = null;
+                if (readyTabRecords && readyTabRecords.length > 0) {
+                    const matchingRecord = readyTabRecords.find(r => {
+                        if (r.allColumns) {
+                            return r.allColumns.some(col => col && col.includes(record.mrn));
+                        }
+                        return false;
+                    });
+                    if (matchingRecord && matchingRecord.authorization) {
+                        authorizationCode = matchingRecord.authorization.trim();
+                        console.log(`  \u2713 Authorization Code (from Ready tab): ${authorizationCode}`);
+                    }
+                }
+                if (!authorizationCode && record.allCells) {
+                    for (const cell of record.allCells) {
+                        if (cell && /^[A-Za-z]-?\d{4,}/.test(cell.trim())) {
+                            authorizationCode = cell.trim();
+                            console.log(`  \u2713 Authorization Code (from table cells): ${authorizationCode}`);
+                            break;
+                        }
+                    }
+                }
+                if (!authorizationCode) {
+                    console.log(`  \u26a0\ufe0f  No Authorization Code found`);
+                }
+                // STEP 2: Get admission date from PDF
+                console.log(`  Step 2: Getting admission date from PDF...`);
+                let admissionDate = null;
+                const claimNumber = record.editButtonId.replace('openWorksheet', '');
+                const printIconId = `openClaimPrintView${claimNumber}`;
+                try {
+                    const pdfBuffer = await extractPdfFromPrintIcon(page, printIconId);
+                    if (pdfBuffer) {
+                        const { extractDateOfAdmission } = await Promise.resolve().then(() => __importStar(require('./pdf-helper')));
+                        admissionDate = await extractDateOfAdmission(pdfBuffer);
+                        if (admissionDate) {
+                            console.log(`  \u2713 Admission Date: ${admissionDate}`);
+                        } else {
+                            console.log(`  \u26a0\ufe0f  Could not extract admission date from PDF`);
+                        }
+                    } else {
+                        console.log(`  \u26a0\ufe0f  Could not get PDF content`);
+                    }
+                } catch (pdfError) {
+                    console.log(`  \u26a0\ufe0f  Error getting PDF: ${pdfError.message}`);
+                }
+                // STEP 3: Open Claim Edit Screen
+                console.log(`  Step 3: Opening claim edit screen...`);
+                await page.waitForSelector(`#${record.editButtonId}`, { timeout: 15000 });
+                await page.click(`#${record.editButtonId}`);
+                console.log(`  \u2713 Clicked edit button`);
+                await page.waitForLoadState('domcontentloaded', { timeout: 30000 });
+                await page.waitForTimeout(3000);
+                // Handle modal
+                try {
+                    const modalVisible = await page.isVisible('#modal_go');
+                    if (modalVisible) {
+                        await page.click('#modal_go', { timeout: 3000 });
+                        console.log(`  \u2713 Clicked OK on modal`);
+                    }
+                } catch (e) {}
+                try {
+                    await page.evaluate(() => { const btn = document.querySelector('#modal_go'); if (btn) btn.click(); });
+                } catch (e) {}
+                await page.waitForTimeout(2000);
+                console.log(`  \u2713 Worksheet loaded`);
+                // STEP 4: T-Code Authorization check → TOB 327
+                let needsTOB327 = false;
+                if (authorizationCode) {
+                    const authLower = authorizationCode.toLowerCase().trim();
+                    // Check if starts with "t-code" or "t code" (case-insensitive)
+                    if (authLower.startsWith('t-code') || authLower.startsWith('t code')) {
+                        needsTOB327 = true;
+                        console.log(`  Step 4: Auth "${authorizationCode}" starts with t-code \u2192 TOB 327`);
+                        await page.evaluate(() => {
+                            const select = document.querySelector('#typeOfBill');
+                            if (select) {
+                                const option327 = Array.from(select.options).find(opt => opt.text.trim() === '327 - Adjustment Claim');
+                                if (option327) {
+                                    select.value = option327.value;
+                                    select.dispatchEvent(new Event('change', { bubbles: true }));
+                                    select.dispatchEvent(new Event('input', { bubbles: true }));
+                                }
+                            }
+                        });
+                        console.log(`  \u2713 Changed TOB to 327`);
+                    } else {
+                        console.log(`  Step 4: Auth "${authorizationCode}" does NOT start with t-code \u2192 TOB unchanged`);
+                    }
+                } else {
+                    console.log(`  Step 4: No auth code \u2192 TOB unchanged`);
+                }
+                // STEP 5: Expand Visits and add UD modifier for SN visits >30 days from admission
+                console.log(`  Step 5: Processing Skilled Nursing visits for UD modifier...`);
+                try {
+                    await page.evaluate(() => {
+                        const links = Array.from(document.querySelectorAll('a.accordion-toggle'));
+                        const visitsLink = links.find(a => a.textContent.trim() === 'Visits');
+                        if (visitsLink) visitsLink.click();
+                    });
+                    console.log(`  \u2713 Expanded Visits`);
+                    await page.waitForTimeout(2000);
+                } catch (e) {
+                    console.log(`  \u26a0\ufe0f  Could not expand Visits section`);
+                }
+                const visitResult = await page.evaluate((admDateStr) => {
+                    const rows = Array.from(document.querySelectorAll('table.table-striped tbody tr'));
+                    let udModifiersAdded = 0;
+                    const snVisitsByDate = {};
+                    let admDate = null;
+                    const debugInfo = [];
+                    if (admDateStr && admDateStr.length === 8) {
+                        const month = parseInt(admDateStr.substring(0, 2)) - 1;
+                        const day = parseInt(admDateStr.substring(2, 4));
+                        const year = parseInt(admDateStr.substring(4, 8));
+                        admDate = new Date(year, month, day);
+                    }
+                    rows.forEach((row, idx) => {
+                        const cells = row.querySelectorAll('td');
+                        if (cells.length >= 2) {
+                            const dateStr = cells[0].textContent.trim();
+                            const visitType = cells[1].textContent.trim();
+                            const isSN = visitType.toLowerCase().includes('skilled nursing');
+                            if (idx < 3) {
+                                debugInfo.push(`Row ${idx}: date="${dateStr}" type="${visitType}" isSN=${isSN}`);
+                            }
+                            if (isSN) {
+                                if (dateStr) {
+                                    if (!snVisitsByDate[dateStr]) snVisitsByDate[dateStr] = 0;
+                                    snVisitsByDate[dateStr]++;
+                                }
+                                if (admDate && dateStr) {
+                                    const parts = dateStr.split('/');
+                                    if (parts.length === 3) {
+                                        const visitDate = new Date(parseInt(parts[2]), parseInt(parts[0]) - 1, parseInt(parts[1]));
+                                        const diffDays = Math.floor((visitDate - admDate) / (1000 * 60 * 60 * 24));
+                                        if (diffDays > 30) {
+                                            const modifier1 = row.querySelector('input[ng-model="lineItem.modifier1"]');
+                                            if (modifier1) {
+                                                const m1Val = modifier1.value.trim();
+                                                if (!m1Val || m1Val === '') {
+                                                    modifier1.value = 'UD';
+                                                    modifier1.dispatchEvent(new Event('input', { bubbles: true }));
+                                                    modifier1.dispatchEvent(new Event('change', { bubbles: true }));
+                                                    if (window.angular) {
+                                                        try {
+                                                            const scope = window.angular.element(modifier1).scope();
+                                                            if (scope && scope.lineItem) {
+                                                                scope.$apply(() => { scope.lineItem.modifier1 = 'UD'; });
+                                                            }
+                                                        } catch(e) {}
+                                                    }
+                                                    udModifiersAdded++;
+                                                } else if (m1Val !== 'UD') {
+                                                    const modifier2 = row.querySelector('input[ng-model="lineItem.modifier2"]');
+                                                    if (modifier2 && (!modifier2.value.trim() || modifier2.value.trim() === '')) {
+                                                        modifier2.value = 'UD';
+                                                        modifier2.dispatchEvent(new Event('input', { bubbles: true }));
+                                                        modifier2.dispatchEvent(new Event('change', { bubbles: true }));
+                                                        if (window.angular) {
+                                                            try {
+                                                                const scope = window.angular.element(modifier2).scope();
+                                                                if (scope && scope.lineItem) {
+                                                                    scope.$apply(() => { scope.lineItem.modifier2 = 'UD'; });
+                                                                }
+                                                            } catch(e) {}
+                                                        }
+                                                        udModifiersAdded++;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    });
+                    return { udModifiersAdded, snVisitsByDate, debugInfo, totalRows: rows.length };
+                }, admissionDate);
+                console.log(`  UD modifiers added: ${visitResult.udModifiersAdded}`);
+                console.log(`  SN visits by date: ${JSON.stringify(visitResult.snVisitsByDate)}`);
+                if (visitResult.debugInfo && visitResult.debugInfo.length > 0) {
+                    visitResult.debugInfo.forEach(d => console.log(`    ${d}`));
+                }
+                // STEP 6: Save and Close
+                console.log(`  Step 6: Clicking Save and Close...`);
+                await page.evaluate(() => {
+                    const btn = document.querySelector('#submitBtn');
+                    if (btn) btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                });
+                await page.waitForTimeout(1000);
+                await page.click('#submitBtn');
+                console.log(`  \u2713 Clicked Save and Close`);
+                await page.waitForLoadState('domcontentloaded', { timeout: 30000 });
+                await page.waitForTimeout(3000);
+                try {
+                    await page.waitForSelector('.loading-message', { state: 'hidden', timeout: 30000 });
+                } catch (e) {}
+                await page.waitForTimeout(3000);
+                try {
+                    await page.waitForSelector('table tbody tr', { timeout: 15000 });
+                } catch (e) {}
+                await page.waitForTimeout(2000);
+                console.log(`  \u2705 Successfully processed BMC record`);
+            } catch (error) {
+                console.error(`  \u274c Error processing BMC record:`, error.message || error);
+                try { await page.click('#returnBtn'); await page.waitForTimeout(3000); } catch (e) {
+                    try { await page.click('#pendingClaimsApproval'); await page.waitForTimeout(3000); } catch (e2) {}
+                }
+            }
+        }
+        console.log(`\n\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501`);
+        console.log(`BMC HEALTH PLAN SUMMARY: ${bmcRecords.length} processed`);
+        console.log(`\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501`);
+    }
     // Check for PARTNERSHIP HEALTH PLAN OF CA records (always need 327)
     console.log("\n=== CHECKING FOR PARTNERSHIP HEALTH PLAN OF CA RECORDS ===");
     const partnershipRecords = isInsuranceSelected('partnership health plan of ca')

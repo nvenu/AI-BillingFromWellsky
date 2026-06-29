@@ -108,6 +108,11 @@ class InsuranceHelper {
                     this.noChangesInsurances.add(nameLower);
                     console.log(`  ℹ️  Added special handling insurance: ${instruction.Name}`);
                 }
+                // Special handling: Boston Medical Center Health Plan - T-code TOB 327 + UD modifier
+                else if (nameLower === "boston medical center health plan") {
+                    this.noChangesInsurances.add(nameLower);
+                    console.log(`  ℹ️  Added special handling insurance: ${instruction.Name}`);
+                }
             }
         });
         console.log(`Loaded ${this.instructions.length} insurance instructions`);
@@ -131,6 +136,11 @@ class InsuranceHelper {
         if (!this.noChangesInsurances.has("fallon community health plan mav")) {
             this.noChangesInsurances.add("fallon community health plan mav");
             console.log(`  ℹ️  Added Fallon Community Health Plan MAV to processable list (hardcoded)`);
+        }
+        // Ensure Boston Medical Center Health Plan is always in the processable list
+        if (!this.noChangesInsurances.has("boston medical center health plan")) {
+            this.noChangesInsurances.add("boston medical center health plan");
+            console.log(`  ℹ️  Added Boston Medical Center Health Plan to processable list (hardcoded)`);
         }
         console.log("Insurances to process:", Array.from(this.noChangesInsurances).sort());
     }
@@ -225,7 +235,8 @@ class InsuranceHelper {
                 (nameLower === "ucsd") ||
                 (nameLower === "ucsd commercial") ||
                 (nameLower === "fallon community health plan") ||
-                (nameLower === "fallon community health plan mav");
+                (nameLower === "fallon community health plan mav") ||
+                (nameLower === "boston medical center health plan");
         })
             .map(instruction => instruction.Name)
             .sort();
@@ -267,7 +278,8 @@ class InsuranceHelper {
             "ucsd": "electronic", // Send electronically (after OC50 + Value Codes 61/85)
             "ucsd commercial": "electronic", // Send electronically (after OC50 + Value Codes 61/85)
             "fallon community health plan": "electronic", // Send electronically (after auth code check + SN validation)
-            "fallon community health plan mav": "electronic" // Send electronically (after auth code check + SN validation)
+            "fallon community health plan mav": "electronic", // Send electronically (after auth code check + SN validation)
+            "boston medical center health plan": "electronic" // Send electronically (after T-code check + UD modifier)
         };
         return specialHandlingConfig[nameLower] || null;
     }
