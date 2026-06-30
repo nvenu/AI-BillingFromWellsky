@@ -206,17 +206,6 @@ const originalConsoleLog = console.log;
 const logFilePath = path.join(__dirname, '..', 'logs', `automation-${(0, date_fns_1.format)(new Date(), 'yyyy-MM-dd')}.log`);
 // Ensure logs directory exists
 try { fs.mkdirSync(path.join(__dirname, '..', 'logs'), { recursive: true }); } catch(e) {}
-// Clean up log files older than today
-try {
-    const logsDir = path.join(__dirname, '..', 'logs');
-    const today = (0, date_fns_1.format)(new Date(), 'yyyy-MM-dd');
-    const logFiles = fs.readdirSync(logsDir);
-    logFiles.forEach(file => {
-        if (file.startsWith('automation-') && file.endsWith('.log') && !file.includes(today)) {
-            fs.unlinkSync(path.join(logsDir, file));
-        }
-    });
-} catch(e) {}
 console.log = function (...args) {
     const message = args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : String(arg)).join(' ');
     originalConsoleLog.apply(console, args);
@@ -523,6 +512,19 @@ async function loginAndProcessOffices(officeValue = 'all', selectedInsurances = 
         console.log(`🚀 Kinnser Billing Automation v${APP_VERSION}`);
         console.log(`📅 Build Date: ${BUILD_DATE}`);
         console.log(`⏰ Started: ${(0, date_fns_1.format)(new Date(), 'yyyy-MM-dd HH:mm:ss')}`);
+        // Clean up old log files (keep only today's)
+        try {
+            const logsDir = path.join(__dirname, '..', 'logs');
+            if (fs.existsSync(logsDir)) {
+                const today = (0, date_fns_1.format)(new Date(), 'yyyy-MM-dd');
+                const logFiles = fs.readdirSync(logsDir);
+                logFiles.forEach(file => {
+                    if (file.startsWith('automation-') && file.endsWith('.log') && !file.includes(today)) {
+                        fs.unlinkSync(path.join(logsDir, file));
+                    }
+                });
+            }
+        } catch(e) {}
         console.log('='.repeat(60));
         // Create downloads directory
         const downloadsPath = path.join(process.cwd(), 'downloads');
