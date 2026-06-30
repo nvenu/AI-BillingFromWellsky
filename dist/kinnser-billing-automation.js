@@ -201,14 +201,22 @@ async function extractPdfFromPrintIcon(page, printIconId, retryCount = 0) {
         return null;
     }
 }
-// Override console.log to broadcast to web interface
+// Override console.log to broadcast to web interface AND write to log file
 const originalConsoleLog = console.log;
+const logFilePath = path.join(__dirname, '..', 'logs', `automation-${(0, date_fns_1.format)(new Date(), 'yyyy-MM-dd')}.log`);
+// Ensure logs directory exists
+try { fs.mkdirSync(path.join(__dirname, '..', 'logs'), { recursive: true }); } catch(e) {}
 console.log = function (...args) {
     const message = args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : String(arg)).join(' ');
     originalConsoleLog.apply(console, args);
     if (logBroadcaster) {
         logBroadcaster(message);
     }
+    // Write to daily log file
+    try {
+        const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
+        fs.appendFileSync(logFilePath, `[${timestamp}] ${message}\n`);
+    } catch(e) {}
 };
 async function selectOffice(page, office) {
     console.log(`\n=== Selecting Office: ${office.name} ===`);
@@ -336,6 +344,23 @@ async function processOffice(page, office, insuranceHelper, selectedInsurances =
         let changedTo327 = [];
         let snFailures = [];
         try {
+            // Browser health check before Pending Approval
+            console.log(`\n=== BROWSER HEALTH CHECK ===`);
+            try {
+                const healthUrl = page.url();
+                console.log(`  Current URL: ${healthUrl}`);
+                if (!healthUrl || healthUrl === 'about:blank' || healthUrl === ':') {
+                    console.log(`  ⚠️  Browser appears disconnected! Attempting recovery...`);
+                    // Try to navigate to billing manager
+                    await page.goto('https://kinnser.net/EHR/#/AM/billing/claims-manager/managed-care/approve-claims', { waitUntil: 'domcontentloaded', timeout: 30000 });
+                    console.log(`  ✓ Recovered - navigated to Pending Approval`);
+                } else {
+                    console.log(`  ✓ Browser is alive`);
+                }
+            } catch (healthError) {
+                console.error(`  ⚠️  Browser health check failed: ${healthError.message}`);
+                console.error(`  ⚠️  CRITICAL: Browser context may be dead. Pending Approval processing may fail.`);
+            }
             const result = await processPendingApproval(page, insuranceHelper, selectedInsurances, selectedRecords);
             readyToSendFiles = result.files;
             changedTo327 = result.changedTo327;
@@ -1961,6 +1986,9 @@ async function processPendingApproval(page, insuranceHelper, selectedInsurances 
 }
 async function processPendingApprovalRecords(page, insuranceHelper, selectedInsurances = null, readyTabRecords = []) {
     // Get all records with MRN and billing period
+    console.log("\n════════════════════════════════════════════════════════");
+    console.log("ENTERING processPendingApprovalRecords");
+    console.log("════════════════════════════════════════════════════════");
     console.log("\nExtracting record details from table...");
     const changedRecords = [];
     const records = await page.evaluate(() => {
