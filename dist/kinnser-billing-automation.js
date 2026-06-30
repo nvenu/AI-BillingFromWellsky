@@ -206,6 +206,17 @@ const originalConsoleLog = console.log;
 const logFilePath = path.join(__dirname, '..', 'logs', `automation-${(0, date_fns_1.format)(new Date(), 'yyyy-MM-dd')}.log`);
 // Ensure logs directory exists
 try { fs.mkdirSync(path.join(__dirname, '..', 'logs'), { recursive: true }); } catch(e) {}
+// Clean up log files older than today
+try {
+    const logsDir = path.join(__dirname, '..', 'logs');
+    const today = (0, date_fns_1.format)(new Date(), 'yyyy-MM-dd');
+    const logFiles = fs.readdirSync(logsDir);
+    logFiles.forEach(file => {
+        if (file.startsWith('automation-') && file.endsWith('.log') && !file.includes(today)) {
+            fs.unlinkSync(path.join(logsDir, file));
+        }
+    });
+} catch(e) {}
 console.log = function (...args) {
     const message = args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : String(arg)).join(' ');
     originalConsoleLog.apply(console, args);
