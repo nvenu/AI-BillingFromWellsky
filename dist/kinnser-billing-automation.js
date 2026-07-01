@@ -206,17 +206,24 @@ const originalConsoleLog = console.log;
 const logFilePath = path.join(__dirname, '..', 'logs', `automation-${(0, date_fns_1.format)(new Date(), 'yyyy-MM-dd')}.log`);
 // Ensure logs directory exists
 try { fs.mkdirSync(path.join(__dirname, '..', 'logs'), { recursive: true }); } catch(e) {}
+// Use a write stream for non-blocking file logging
+let logStream = null;
+try {
+    logStream = fs.createWriteStream(logFilePath, { flags: 'a' });
+} catch(e) {}
 console.log = function (...args) {
     const message = args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : String(arg)).join(' ');
     originalConsoleLog.apply(console, args);
     if (logBroadcaster) {
         logBroadcaster(message);
     }
-    // Write to daily log file
-    try {
-        const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
-        fs.appendFileSync(logFilePath, `[${timestamp}] ${message}\n`);
-    } catch(e) {}
+    // Write to daily log file (non-blocking)
+    if (logStream) {
+        try {
+            const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
+            logStream.write(`[${timestamp}] ${message}\n`);
+        } catch(e) {}
+    }
 };
 async function selectOffice(page, office) {
     console.log(`\n=== Selecting Office: ${office.name} ===`);
