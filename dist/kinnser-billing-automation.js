@@ -2519,8 +2519,25 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                 // Step 1: Click print icon to get admission date from PDF
                 console.log(`  Step 1: Getting admission date from PDF...`);
                 let admissionDate = null;
-                const claimNumber = record.editButtonId.replace('openWorksheet', '');
-                const printIconId = `openClaimPrintView${claimNumber}`;
+                // Find print icon fresh from current page (table reloads after each save)
+                let printIconId = null;
+                try {
+                    printIconId = await page.evaluate((mrn) => {
+                        const rows = Array.from(document.querySelectorAll('table tbody tr'));
+                        for (const row of rows) {
+                            if ((row.textContent || '').includes(mrn)) {
+                                const icon = row.querySelector('label[id*="openClaimPrintView"]');
+                                if (icon) return icon.id;
+                            }
+                        }
+                        return null;
+                    }, record.mrn);
+                } catch (e) {}
+                if (!printIconId) {
+                    const claimNumber = record.editButtonId.replace('openWorksheet', '');
+                    printIconId = `openClaimPrintView${claimNumber}`;
+                }
+                console.log(`  Print icon ID: ${printIconId}`);
                 try {
                     const pdfBuffer = await extractPdfFromPrintIcon(page, printIconId);
                     if (pdfBuffer) {
@@ -2751,8 +2768,25 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                 // Step 1: Click print icon to get admission date from PDF
                 console.log(`  Step 1: Getting admission date from PDF...`);
                 let admissionDate = null;
-                const claimNumber = record.editButtonId.replace('openWorksheet', '');
-                const printIconId = `openClaimPrintView${claimNumber}`;
+                // Find print icon fresh from current page (table reloads after each save)
+                let printIconId = null;
+                try {
+                    printIconId = await page.evaluate((mrn) => {
+                        const rows = Array.from(document.querySelectorAll('table tbody tr'));
+                        for (const row of rows) {
+                            if ((row.textContent || '').includes(mrn)) {
+                                const icon = row.querySelector('label[id*="openClaimPrintView"]');
+                                if (icon) return icon.id;
+                            }
+                        }
+                        return null;
+                    }, record.mrn);
+                } catch (e) {}
+                if (!printIconId) {
+                    const claimNumber = record.editButtonId.replace('openWorksheet', '');
+                    printIconId = `openClaimPrintView${claimNumber}`;
+                }
+                console.log(`  Print icon ID: ${printIconId}`);
                 try {
                     const pdfBuffer = await extractPdfFromPrintIcon(page, printIconId);
                     if (pdfBuffer) {
@@ -3255,8 +3289,25 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                     // Step 1: Click print icon to get admission date from PDF
                     console.log(`  Step 1: Getting admission date from PDF...`);
                     let admissionDate = null;
-                    const claimNumber = record.editButtonId.replace('openWorksheet', '');
-                    const printIconId = `openClaimPrintView${claimNumber}`;
+                    // Find print icon fresh from current page
+                    let printIconId = null;
+                    try {
+                        printIconId = await page.evaluate((mrn) => {
+                            const rows = Array.from(document.querySelectorAll('table tbody tr'));
+                            for (const row of rows) {
+                                if ((row.textContent || '').includes(mrn)) {
+                                    const icon = row.querySelector('label[id*="openClaimPrintView"]');
+                                    if (icon) return icon.id;
+                                }
+                            }
+                            return null;
+                        }, record.mrn);
+                    } catch (e) {}
+                    if (!printIconId) {
+                        const claimNumber = record.editButtonId.replace('openWorksheet', '');
+                        printIconId = `openClaimPrintView${claimNumber}`;
+                    }
+                    console.log(`  Print icon ID: ${printIconId}`);
                     try {
                             const pdfBuffer = await extractPdfFromPrintIcon(page, printIconId);
                         if (pdfBuffer) {
@@ -4008,8 +4059,29 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                 // STEP 2: Get admission date from PDF
                 console.log(`  Step 2: Getting admission date from PDF...`);
                 let admissionDate = null;
-                const claimNumber = record.editButtonId.replace('openWorksheet', '');
-                const printIconId = `openClaimPrintView${claimNumber}`;
+                // Find print icon fresh from current page (table may have reloaded)
+                let printIconId = null;
+                try {
+                    printIconId = await page.evaluate((mrn) => {
+                        const rows = Array.from(document.querySelectorAll('table tbody tr'));
+                        for (const row of rows) {
+                            const text = row.textContent || '';
+                            if (text.includes(mrn)) {
+                                const printIcon = row.querySelector('label[id*="openClaimPrintView"]');
+                                if (printIcon) return printIcon.id;
+                            }
+                        }
+                        return null;
+                    }, record.mrn);
+                } catch (e) {}
+                // Fallback to derived ID if fresh lookup failed
+                if (!printIconId) {
+                    const claimNumber = record.editButtonId.replace('openWorksheet', '');
+                    printIconId = `openClaimPrintView${claimNumber}`;
+                    console.log(`  Using derived print icon ID: ${printIconId}`);
+                } else {
+                    console.log(`  Found fresh print icon ID: ${printIconId}`);
+                }
                 try {
                     const pdfBuffer = await extractPdfFromPrintIcon(page, printIconId);
                     if (pdfBuffer) {
@@ -4028,8 +4100,27 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                 }
                 // STEP 3: Open Claim Edit Screen
                 console.log(`  Step 3: Opening claim edit screen...`);
-                await page.waitForSelector(`#${record.editButtonId}`, { timeout: 15000 });
-                await page.click(`#${record.editButtonId}`);
+                // Re-find edit button fresh from current page (table may have reloaded)
+                let editButtonId = record.editButtonId;
+                try {
+                    const freshEditId = await page.evaluate((mrn) => {
+                        const rows = Array.from(document.querySelectorAll('table tbody tr'));
+                        for (const row of rows) {
+                            const text = row.textContent || '';
+                            if (text.includes(mrn)) {
+                                const editBtn = row.querySelector('a[id*="openWorksheet"]') || row.querySelector('a.ui-kinnser-edit');
+                                if (editBtn) return editBtn.id;
+                            }
+                        }
+                        return null;
+                    }, record.mrn);
+                    if (freshEditId) {
+                        editButtonId = freshEditId;
+                        console.log(`  Found fresh edit button: ${editButtonId}`);
+                    }
+                } catch (e) {}
+                await page.waitForSelector(`#${editButtonId}`, { timeout: 15000 });
+                await page.click(`#${editButtonId}`);
                 console.log(`  \u2713 Clicked edit button`);
                 await page.waitForLoadState('domcontentloaded', { timeout: 30000 });
                 await page.waitForTimeout(3000);
