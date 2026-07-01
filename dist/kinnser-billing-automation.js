@@ -4288,10 +4288,10 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
     }
     // PROCESS NORTHCOAST PPS - ANTHEM / NORTHCOAST - AETNA RECORDS
     // Occurrence Code 50 only, no auto-approve (claims stay in Pending Approval)
-    const northcoastRecords = (isInsuranceSelected('northcoast pps - anthem') || isInsuranceSelected('northcoast pps \u2013 anthem') || isInsuranceSelected('northcoast - aetna') || isInsuranceSelected('northcoast \u2013 aetna'))
+    const northcoastRecords = (isInsuranceSelected('northcoast pps - anthem') || isInsuranceSelected('northcoast pps \u2013 anthem') || isInsuranceSelected('northcost pps- anthem') || isInsuranceSelected('northcoast - aetna') || isInsuranceSelected('northcoast \u2013 aetna') || isInsuranceSelected('northcoast -aetna'))
         ? validRecords.filter(r => {
             const ins = r.insurance.toLowerCase().trim();
-            return ins.includes('northcoast') && (ins.includes('anthem') || ins.includes('aetna'));
+            return ins.includes('northco') && (ins.includes('anthem') || ins.includes('aetna'));
         })
         : [];
     if (northcoastRecords.length > 0) {

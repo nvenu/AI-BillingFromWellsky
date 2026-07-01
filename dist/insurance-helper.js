@@ -114,12 +114,12 @@ class InsuranceHelper {
                     console.log(`  ℹ️  Added special handling insurance: ${instruction.Name}`);
                 }
                 // Special handling: Northcoast PPS - Anthem - Occurrence Code 50
-                else if (nameLower === "northcoast pps - anthem" || nameLower === "northcoast pps – anthem") {
+                else if (nameLower === "northcoast pps - anthem" || nameLower === "northcoast pps – anthem" || nameLower === "northcost pps- anthem") {
                     this.noChangesInsurances.add(nameLower);
                     console.log(`  ℹ️  Added special handling insurance: ${instruction.Name}`);
                 }
                 // Special handling: Northcoast - Aetna - Occurrence Code 50
-                else if (nameLower === "northcoast - aetna" || nameLower === "northcoast – aetna") {
+                else if (nameLower === "northcoast - aetna" || nameLower === "northcoast – aetna" || nameLower === "northcoast -aetna") {
                     this.noChangesInsurances.add(nameLower);
                     console.log(`  ℹ️  Added special handling insurance: ${instruction.Name}`);
                 }
@@ -158,11 +158,21 @@ class InsuranceHelper {
             this.noChangesInsurances.add("northcoast pps – anthem");
             console.log(`  ℹ️  Added Northcoast PPS - Anthem to processable list (hardcoded)`);
         }
+        // Ensure Northcost PPS- Anthem (typo variant) is always in the processable list
+        if (!this.noChangesInsurances.has("northcost pps- anthem")) {
+            this.noChangesInsurances.add("northcost pps- anthem");
+            console.log(`  ℹ️  Added Northcost PPS- Anthem to processable list (hardcoded)`);
+        }
         // Ensure Northcoast - Aetna is always in the processable list
         if (!this.noChangesInsurances.has("northcoast - aetna") && !this.noChangesInsurances.has("northcoast – aetna")) {
             this.noChangesInsurances.add("northcoast - aetna");
             this.noChangesInsurances.add("northcoast – aetna");
             console.log(`  ℹ️  Added Northcoast - Aetna to processable list (hardcoded)`);
+        }
+        // Ensure Northcoast -Aetna (no space variant) is always in the processable list
+        if (!this.noChangesInsurances.has("northcoast -aetna")) {
+            this.noChangesInsurances.add("northcoast -aetna");
+            console.log(`  ℹ️  Added Northcoast -Aetna to processable list (hardcoded)`);
         }
         console.log("Insurances to process:", Array.from(this.noChangesInsurances).sort());
     }
@@ -261,8 +271,10 @@ class InsuranceHelper {
                 (nameLower === "boston medical center health plan") ||
                 (nameLower === "northcoast pps - anthem") ||
                 (nameLower === "northcoast pps – anthem") ||
+                (nameLower === "northcost pps- anthem") ||
                 (nameLower === "northcoast - aetna") ||
-                (nameLower === "northcoast – aetna");
+                (nameLower === "northcoast – aetna") ||
+                (nameLower === "northcoast -aetna");
         })
             .map(instruction => instruction.Name)
             .sort();
@@ -308,8 +320,10 @@ class InsuranceHelper {
             "boston medical center health plan": "electronic", // Send electronically (after T-code check + UD modifier)
             "northcoast pps - anthem": "electronic", // Send electronically (after OC50)
             "northcoast pps – anthem": "electronic", // Send electronically (em dash variant)
+            "northcost pps- anthem": "electronic", // Send electronically (typo variant from spreadsheet)
             "northcoast - aetna": "electronic", // Send electronically (after OC50)
-            "northcoast – aetna": "electronic" // Send electronically (em dash variant)
+            "northcoast – aetna": "electronic", // Send electronically (em dash variant)
+            "northcoast -aetna": "electronic" // Send electronically (no space variant from spreadsheet)
         };
         return specialHandlingConfig[nameLower] || null;
     }
