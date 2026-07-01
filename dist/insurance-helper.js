@@ -113,6 +113,16 @@ class InsuranceHelper {
                     this.noChangesInsurances.add(nameLower);
                     console.log(`  ℹ️  Added special handling insurance: ${instruction.Name}`);
                 }
+                // Special handling: Northcoast PPS - Anthem - Occurrence Code 50
+                else if (nameLower === "northcoast pps - anthem" || nameLower === "northcoast pps – anthem") {
+                    this.noChangesInsurances.add(nameLower);
+                    console.log(`  ℹ️  Added special handling insurance: ${instruction.Name}`);
+                }
+                // Special handling: Northcoast - Aetna - Occurrence Code 50
+                else if (nameLower === "northcoast - aetna" || nameLower === "northcoast – aetna") {
+                    this.noChangesInsurances.add(nameLower);
+                    console.log(`  ℹ️  Added special handling insurance: ${instruction.Name}`);
+                }
             }
         });
         console.log(`Loaded ${this.instructions.length} insurance instructions`);
@@ -141,6 +151,18 @@ class InsuranceHelper {
         if (!this.noChangesInsurances.has("boston medical center health plan")) {
             this.noChangesInsurances.add("boston medical center health plan");
             console.log(`  ℹ️  Added Boston Medical Center Health Plan to processable list (hardcoded)`);
+        }
+        // Ensure Northcoast PPS - Anthem is always in the processable list
+        if (!this.noChangesInsurances.has("northcoast pps - anthem") && !this.noChangesInsurances.has("northcoast pps – anthem")) {
+            this.noChangesInsurances.add("northcoast pps - anthem");
+            this.noChangesInsurances.add("northcoast pps – anthem");
+            console.log(`  ℹ️  Added Northcoast PPS - Anthem to processable list (hardcoded)`);
+        }
+        // Ensure Northcoast - Aetna is always in the processable list
+        if (!this.noChangesInsurances.has("northcoast - aetna") && !this.noChangesInsurances.has("northcoast – aetna")) {
+            this.noChangesInsurances.add("northcoast - aetna");
+            this.noChangesInsurances.add("northcoast – aetna");
+            console.log(`  ℹ️  Added Northcoast - Aetna to processable list (hardcoded)`);
         }
         console.log("Insurances to process:", Array.from(this.noChangesInsurances).sort());
     }
@@ -236,7 +258,11 @@ class InsuranceHelper {
                 (nameLower === "ucsd commercial") ||
                 (nameLower === "fallon community health plan") ||
                 (nameLower === "fallon community health plan mav") ||
-                (nameLower === "boston medical center health plan");
+                (nameLower === "boston medical center health plan") ||
+                (nameLower === "northcoast pps - anthem") ||
+                (nameLower === "northcoast pps – anthem") ||
+                (nameLower === "northcoast - aetna") ||
+                (nameLower === "northcoast – aetna");
         })
             .map(instruction => instruction.Name)
             .sort();
@@ -279,7 +305,11 @@ class InsuranceHelper {
             "ucsd commercial": "electronic", // Send electronically (after OC50 + Value Codes 61/85)
             "fallon community health plan": "electronic", // Send electronically (after auth code check + SN validation)
             "fallon community health plan mav": "electronic", // Send electronically (after auth code check + SN validation)
-            "boston medical center health plan": "electronic" // Send electronically (after T-code check + UD modifier)
+            "boston medical center health plan": "electronic", // Send electronically (after T-code check + UD modifier)
+            "northcoast pps - anthem": "electronic", // Send electronically (after OC50)
+            "northcoast pps – anthem": "electronic", // Send electronically (em dash variant)
+            "northcoast - aetna": "electronic", // Send electronically (after OC50)
+            "northcoast – aetna": "electronic" // Send electronically (em dash variant)
         };
         return specialHandlingConfig[nameLower] || null;
     }
