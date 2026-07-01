@@ -904,6 +904,9 @@ app.get("/billing", (req, res) => {
         async function showInsuranceModal(officeValue, officeName, stateCode) {
           console.log('showInsuranceModal called with:', { officeValue, officeName, stateCode });
           currentOffice = { officeValue, officeName, stateCode };
+          // Clear console when selecting a new office
+          clearConsole();
+          autoScrollEnabled = true;
           console.log('currentOffice set to:', currentOffice);
           
           const modal = document.getElementById('insuranceModal');
@@ -1022,6 +1025,7 @@ app.get("/billing", (req, res) => {
           // Show live console
           showConsole();
           clearConsole();
+          autoScrollEnabled = true;
           appendToConsole(new Date().toISOString(), '🚀 Starting automation for ' + officeName + '...');
           
           const results = document.getElementById('results');

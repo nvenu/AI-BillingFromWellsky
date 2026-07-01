@@ -203,26 +203,11 @@ async function extractPdfFromPrintIcon(page, printIconId, retryCount = 0) {
 }
 // Override console.log to broadcast to web interface AND write to log file
 const originalConsoleLog = console.log;
-const logFilePath = path.join(__dirname, '..', 'logs', `automation-${(0, date_fns_1.format)(new Date(), 'yyyy-MM-dd')}.log`);
-// Ensure logs directory exists
-try { fs.mkdirSync(path.join(__dirname, '..', 'logs'), { recursive: true }); } catch(e) {}
-// Use a write stream for non-blocking file logging
-let logStream = null;
-try {
-    logStream = fs.createWriteStream(logFilePath, { flags: 'a' });
-} catch(e) {}
 console.log = function (...args) {
     const message = args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : String(arg)).join(' ');
     originalConsoleLog.apply(console, args);
     if (logBroadcaster) {
         logBroadcaster(message);
-    }
-    // Write to daily log file (non-blocking)
-    if (logStream) {
-        try {
-            const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
-            logStream.write(`[${timestamp}] ${message}\n`);
-        } catch(e) {}
     }
 };
 async function selectOffice(page, office) {
@@ -519,19 +504,6 @@ async function loginAndProcessOffices(officeValue = 'all', selectedInsurances = 
         console.log(`🚀 Kinnser Billing Automation v${APP_VERSION}`);
         console.log(`📅 Build Date: ${BUILD_DATE}`);
         console.log(`⏰ Started: ${(0, date_fns_1.format)(new Date(), 'yyyy-MM-dd HH:mm:ss')}`);
-        // Clean up old log files (keep only today's)
-        try {
-            const logsDir = path.join(__dirname, '..', 'logs');
-            if (fs.existsSync(logsDir)) {
-                const today = (0, date_fns_1.format)(new Date(), 'yyyy-MM-dd');
-                const logFiles = fs.readdirSync(logsDir);
-                logFiles.forEach(file => {
-                    if (file.startsWith('automation-') && file.endsWith('.log') && !file.includes(today)) {
-                        fs.unlinkSync(path.join(logsDir, file));
-                    }
-                });
-            }
-        } catch(e) {}
         console.log('='.repeat(60));
         // Create downloads directory
         const downloadsPath = path.join(process.cwd(), 'downloads');
