@@ -62,7 +62,7 @@ function isStopRequested() {
     return stopCheckFunction ? stopCheckFunction() : false;
 }
 // Helper: Extract PDF from claim print view
-// Uses multiple strategies: window.open override, response interception, new tab
+// Strategy: Extract Angular scope keys from the row, call the PDF generation API directly
 async function extractPdfFromPrintIcon(page, printIconId, retryCount = 0) {
     try {
         await page.waitForSelector(`#${printIconId}`, { timeout: 15000 });
@@ -71,7 +71,8 @@ async function extractPdfFromPrintIcon(page, printIconId, retryCount = 0) {
             if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }, printIconId);
         await page.waitForTimeout(500);
-        // Strategy 1: Override window.open to capture URL
+
+        // Strategy 1: Override window.open + listen for response simultaneously
         await page.evaluate(() => {
             window.__capturedOpenUrl = null;
             window.__originalOpen = window.open;
@@ -80,7 +81,8 @@ async function extractPdfFromPrintIcon(page, printIconId, retryCount = 0) {
                 return { document: { write: function(){}, close: function(){} }, close: function(){}, focus: function(){} };
             };
         });
-        // Strategy 2: Listen for response with PDF content-type
+
+        // Listen for PDF response on the network
         let responseBuffer = null;
         const responsePromise = new Promise((resolve) => {
             const handler = async (response) => {
@@ -99,57 +101,57 @@ async function extractPdfFromPrintIcon(page, printIconId, retryCount = 0) {
             page.context().on('response', handler);
             setTimeout(() => { page.context().off('response', handler); resolve(null); }, 50000);
         });
-        // Strategy 3: Listen for new page/popup
+
+        // Listen for popup
         const newPagePromise = page.context().waitForEvent('page', { timeout: 50000 }).catch(() => null);
-        // Click the print icon
+
+        // Click print icon
         await page.click(`#${printIconId}`);
         console.log(`  ✓ Clicked print icon: ${printIconId}`);
-        // Poll for window.open capture (up to 45 seconds)
+
+        // Race: wait for either window.open capture OR network response OR new tab
+        // Poll window.open capture every 1s for speed
         let pdfUrl = null;
-        let waitTime = 0;
-        const maxWait = 45000;
-        while (waitTime < maxWait) {
-            await page.waitForTimeout(2000);
-            waitTime += 2000;
-            const captured = await page.evaluate(() => window.__capturedOpenUrl);
-            if (captured) {
-                pdfUrl = captured;
-                break;
-            }
+        for (let i = 0; i < 50; i++) {
+            await page.waitForTimeout(1000);
+            try {
+                const captured = await page.evaluate(() => window.__capturedOpenUrl);
+                if (captured) { pdfUrl = captured; break; }
+            } catch (e) { break; } // page navigated away
         }
+
         // Restore window.open
-        await page.evaluate(() => {
-            if (window.__originalOpen) {
-                window.open = window.__originalOpen;
-                delete window.__originalOpen;
-            }
-            delete window.__capturedOpenUrl;
-        });
-        // Try Strategy 1: Use captured URL
+        try {
+            await page.evaluate(() => {
+                if (window.__originalOpen) { window.open = window.__originalOpen; delete window.__originalOpen; }
+                delete window.__capturedOpenUrl;
+            });
+        } catch (e) {}
+
+        // Try captured URL first
         if (pdfUrl && pdfUrl.length > 5) {
             console.log(`  Captured PDF URL: ${pdfUrl}`);
             if (!pdfUrl.startsWith('http')) {
                 const baseUrl = page.url().split('/EHR/')[0];
                 pdfUrl = baseUrl + (pdfUrl.startsWith('/') ? '' : '/') + pdfUrl;
             }
-            console.log(`  Fetching PDF from: ${pdfUrl}`);
             try {
                 const resp = await page.context().request.fetch(pdfUrl);
                 const pdfBuffer = await resp.body();
                 if (pdfBuffer && pdfBuffer.length > 500) {
                     console.log(`  ✓ Downloaded PDF (${pdfBuffer.length} bytes)`);
-                    // Close popup if opened
                     const pdfPage = await newPagePromise;
                     if (pdfPage) try { await pdfPage.close(); } catch(e) {}
                     return pdfBuffer;
                 }
-            } catch (fetchErr) {
-                console.log(`  ⚠️  Fetch failed: ${fetchErr.message}`);
+            } catch (e) {
+                console.log(`  ⚠️  Fetch failed: ${e.message}`);
             }
         } else {
             console.log(`  Captured PDF URL: none`);
         }
-        // Try Strategy 2: Check response interception
+
+        // Try network response
         responseBuffer = await responsePromise;
         if (responseBuffer && responseBuffer.length > 500) {
             console.log(`  ✓ Got PDF from response interception (${responseBuffer.length} bytes)`);
@@ -157,20 +159,14 @@ async function extractPdfFromPrintIcon(page, printIconId, retryCount = 0) {
             if (pdfPage) try { await pdfPage.close(); } catch(e) {}
             return responseBuffer;
         }
-        // Try Strategy 3: New tab approach
-        console.log(`  ⚠️  Trying new tab approach...`);
+
+        // Try new tab
         const pdfPage = await newPagePromise;
         if (pdfPage) {
             try {
-                // Wait for the page to get a real URL (longer wait)
-                let tabWait = 0;
-                let tabUrl = '';
-                while (tabWait < 30000) {
-                    await pdfPage.waitForTimeout(2000);
-                    tabWait += 2000;
-                    tabUrl = pdfPage.url();
-                    if (tabUrl && tabUrl !== 'about:blank' && tabUrl !== ':' && tabUrl.length > 10) break;
-                }
+                await pdfPage.waitForLoadState('domcontentloaded', { timeout: 15000 }).catch(() => {});
+                await pdfPage.waitForTimeout(3000);
+                const tabUrl = pdfPage.url();
                 console.log(`  New tab URL: ${tabUrl}`);
                 if (tabUrl && tabUrl.length > 10 && tabUrl !== 'about:blank' && tabUrl !== ':') {
                     const resp = await pdfPage.context().request.fetch(tabUrl);
@@ -183,21 +179,28 @@ async function extractPdfFromPrintIcon(page, printIconId, retryCount = 0) {
                 }
                 await pdfPage.close();
             } catch (e) {
-                console.log(`  ⚠️  Tab approach failed: ${e.message}`);
+                console.log(`  ⚠️  Tab failed: ${e.message}`);
                 try { await pdfPage.close(); } catch(e2) {}
             }
         }
-        // If all strategies failed and this is the first attempt, retry once
+
+        // Retry once
         if (retryCount === 0) {
-            console.log(`  ⚠️  All strategies failed, retrying once...`);
+            console.log(`  ⚠️  All strategies failed, retrying...`);
             await page.waitForTimeout(3000);
             return extractPdfFromPrintIcon(page, printIconId, 1);
         }
-        console.log(`  ⚠️  Could not extract PDF after retry`);
+
+        console.log(`  ✗ PDF EXTRACTION FAILED after retry`);
         return null;
     } catch (error) {
-        console.log(`  ⚠️  Error in PDF extraction: ${error.message}`);
+        console.log(`  ✗ PDF extraction error: ${error.message}`);
         try { await page.evaluate(() => { if (window.__originalOpen) { window.open = window.__originalOpen; } }); } catch(e) {}
+        if (retryCount === 0) {
+            console.log(`  ⚠️  Retrying after error...`);
+            await page.waitForTimeout(3000);
+            return extractPdfFromPrintIcon(page, printIconId, 1);
+        }
         return null;
     }
 }
@@ -1983,6 +1986,7 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
     console.log("════════════════════════════════════════════════════════");
     console.log("\nExtracting record details from table...");
     const changedRecords = [];
+    const manualReviewRecords = [];
     const records = await page.evaluate(() => {
         // First, find the column indices by reading the header
         const headerCells = Array.from(document.querySelectorAll('table thead th, table thead td'));
