@@ -300,14 +300,14 @@ async function processOffice(page, office, insuranceHelper, selectedInsurances =
             let changedTo327 = [];
             let snFailures = [];
             try {
-                const result = await processPendingApproval(page, insuranceHelper, selectedInsurances, selectedRecords);
+                const result = await processPendingApproval(page, insuranceHelper, selectedInsurances, []);
                 readyToSendFiles = result.files;
                 changedTo327 = result.changedTo327;
                 snFailures = result.snFailures || [];
                 console.log(`✓ Pending Approval and Ready To Send workflow completed for ${office.name}`);
             }
             catch (error) {
-                console.error(`⚠️  Error in Pending Approval/Ready To Send for ${office.name}:`, error);
+                console.error(`⚠️  Error in Pending Approval/Ready To Send for ${office.name}:`, error.message || error);
             }
             return { records: [], filename: null, readyToSendFiles, readyToSendCount: readyToSendFiles.length > 0 ? readyToSendFiles.filter(f => f.includes('electronic') || f.includes('paper-claim')).length : 0, changedTo327, snFailures };
         }
