@@ -174,7 +174,34 @@ class InsuranceHelper {
             this.noChangesInsurances.add("northcoast -aetna");
             console.log(`  ℹ️  Added Northcoast -Aetna to processable list (hardcoded)`);
         }
+        // EXCLUSION LIST: Remove specific insurances from automation by location
+        this.excludedInsurances = new Map();
+        const exclusions = {
+            'YC': ['blue cross blue shield medicare', 'humana', 'imperial health plan', 'liberty healthshare pps', 'medicare', 'molina pps', 'private pay'],
+            'OH': ['medigold'],
+            'NV': ['bcbs mcr of nv', 'optum care network nv-ppo', 'optum-life1'],
+            'MN': ['no charge', 'private pay'],
+            'MA': ['boston medical center health plan pps', 'cca (masshealth)', 'eternal health', 'private pay', 'uhc (masshealth)'],
+            'IL': ['zing health'],
+            'FL': ['humana pps'],
+            'CT': ['private pay'],
+            'SD': ['medicare scripps aco'],
+            'AZ': ['arizona priority care', 'professional health network']
+        };
+        Object.entries(exclusions).forEach(([location, names]) => {
+            this.excludedInsurances.set(location, new Set(names));
+        });
+        console.log(`Excluded insurances configured for ${Object.keys(exclusions).length} locations`);
         console.log("Insurances to process:", Array.from(this.noChangesInsurances).sort());
+    }
+    /**
+     * Check if an insurance is excluded for a specific location
+     */
+    isExcludedForLocation(insuranceName, location) {
+        if (!location || !insuranceName) return false;
+        const excludedForLocation = this.excludedInsurances.get(location);
+        if (!excludedForLocation) return false;
+        return excludedForLocation.has(insuranceName.toLowerCase().trim());
     }
     /**
      * Check if an insurance name matches the "no changes except identical claims" criteria
@@ -277,6 +304,14 @@ class InsuranceHelper {
                 (nameLower === "northcoast -aetna");
         })
             .map(instruction => instruction.Name)
+            .filter(name => {
+                // Exclude insurances that are in the exclusion list for this location
+                const excludedForLocation = this.excludedInsurances.get(location);
+                if (excludedForLocation && excludedForLocation.has(name.toLowerCase().trim())) {
+                    return false;
+                }
+                return true;
+            })
             .sort();
     }
     /**
