@@ -182,10 +182,10 @@ class InsuranceHelper {
             'NV': ['bcbs mcr of nv', 'optum care network nv-ppo', 'optum-life1'],
             'MN': ['no charge', 'private pay'],
             'MA': ['boston medical center health plan pps', 'cca (masshealth)', 'eternal health', 'private pay', 'uhc (masshealth)'],
-            'IL': ['zing health'],
+            'IL': ['zing health', 'private pay', 'essence healthcare'],
             'FL': ['humana pps'],
-            'CT': ['private pay'],
-            'SD': ['medicare scripps aco'],
+            'CT': ['private pay', 'carelon medical benefits management aetna', 'wellcare medicare'],
+            'SD': ['medicare scripps aco', 'alignment health plan', 'imperial health plan', 'primary care associated medical group'],
             'AZ': ['arizona priority care', 'professional health network']
         };
         Object.entries(exclusions).forEach(([location, names]) => {
