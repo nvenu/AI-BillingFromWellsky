@@ -1206,16 +1206,9 @@ app.post("/send-email", async (req, res) => {
         const { sendEmail } = require('./email-helper');
         const today = format(new Date(), 'yyyy-MM-dd');
         const cwd = process.cwd();
-        // Find today's files (optionally filtered by state code)
+        // Find today's files - all xlsx and pdf with today's date
         const allFiles = fs.readdirSync(cwd);
-        const todayFiles = allFiles.filter(f => {
-            if (!f.includes(today) && !f.endsWith('.xlsx') && !f.endsWith('.pdf')) return false;
-            if (f.includes(today)) {
-                if (stateCode && (f.includes(`-${stateCode}-`) || f.includes(`${stateCode}_`) || f.includes(stateCode))) return true;
-                if (!stateCode) return true;
-            }
-            return false;
-        });
+        const todayFiles = allFiles.filter(f => f.includes(today) && (f.endsWith('.xlsx') || f.endsWith('.pdf')));
         // Also check downloads folder
         const downloadsPath = path.join(cwd, 'downloads');
         let downloadFiles = [];
@@ -1224,13 +1217,7 @@ app.post("/send-email", async (req, res) => {
                 .filter(f => f.includes(today) && f.endsWith('.pdf'))
                 .map(f => path.join(downloadsPath, f));
         }
-        // If no state-specific files found, get all today's files
-        let attachments = [...todayFiles.map(f => path.join(cwd, f)), ...downloadFiles];
-        if (attachments.length === 0) {
-            // Fallback: get all xlsx/pdf from today regardless of state
-            const fallbackFiles = allFiles.filter(f => f.includes(today) && (f.endsWith('.xlsx') || f.endsWith('.pdf')));
-            attachments = [...fallbackFiles.map(f => path.join(cwd, f)), ...downloadFiles];
-        }
+        const attachments = [...todayFiles.map(f => path.join(cwd, f)), ...downloadFiles];
         if (attachments.length === 0) {
             return res.json({ success: false, message: `No files found for today (${today}) for ${officeName || 'any office'}` });
         }
