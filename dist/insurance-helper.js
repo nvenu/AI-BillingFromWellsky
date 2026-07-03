@@ -113,6 +113,11 @@ class InsuranceHelper {
                     this.noChangesInsurances.add(nameLower);
                     console.log(`  ℹ️  Added special handling insurance: ${instruction.Name}`);
                 }
+                // Special handling: HUMANA - Value Codes 61/85
+                else if (nameLower === "humana") {
+                    this.noChangesInsurances.add(nameLower);
+                    console.log(`  ℹ️  Added special handling insurance: ${instruction.Name}`);
+                }
                 // Special handling: Northcoast PPS - Anthem - Occurrence Code 50
                 else if (nameLower === "northcoast pps - anthem" || nameLower === "northcoast pps – anthem" || nameLower === "northcost pps- anthem") {
                     this.noChangesInsurances.add(nameLower);

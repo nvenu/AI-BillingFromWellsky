@@ -4268,6 +4268,252 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
         console.log(`\n\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501`);
         console.log(`BMC HEALTH PLAN SUMMARY: ${bmcRecords.length} processed`);
         console.log(`\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501`);
+    // PROCESS HUMANA RECORDS (Value Code 61 CBSA + Value Code 85 FIPS)
+    // Applies to "HUMANA" only (not HUMANA PPS or HUMANA JENCARE), all states
+    const humanaRecords = isInsuranceSelected('humana')
+        ? validRecords.filter(r => r.insurance.toLowerCase().trim() === 'humana')
+        : [];
+    if (humanaRecords.length > 0) {
+        console.log(`\n=== PROCESSING HUMANA RECORDS (Value Codes 61/85) ===`);
+        console.log(`Found ${humanaRecords.length} HUMANA record(s)`);
+        console.log("  Requires: ZIP lookup, Value Code 61 (CBSA), Value Code 85 (FIPS)");
+        // Load Value Codes Information spreadsheet
+        let valueCodesData = null;
+        try {
+            const valueCodesPath = path.join(__dirname, '..', 'Value Codes Information.xlsx');
+            const vcWorkbook = XLSX.readFile(valueCodesPath);
+            const vcSheet = vcWorkbook.Sheets['All States'];
+            valueCodesData = XLSX.utils.sheet_to_json(vcSheet);
+            console.log(`  \u2713 Loaded Value Codes: ${valueCodesData.length} ZIP entries`);
+        } catch (vcError) {
+            console.log(`  \u26a0\ufe0f  Could not load Value Codes Information.xlsx: ${vcError.message}`);
+        }
+        if (valueCodesData) {
+            for (const record of humanaRecords) {
+                console.log(`\nProcessing HUMANA record:`);
+                console.log(`  MRN: ${record.mrn}`);
+                console.log(`  Insurance: ${record.insurance}`);
+                console.log(`  Billing Period: ${record.billingPeriodText}`);
+                if (!record.editButtonId) {
+                    console.log(`  \u26a0\ufe0f  No edit button found - skipping`);
+                    continue;
+                }
+                try {
+                    // STEP 1: Open claim edit screen
+                    console.log(`  Step 1: Opening claim edit screen...`);
+                    let editButtonId = record.editButtonId;
+                    try {
+                        const freshEditId = await page.evaluate((mrn) => {
+                            const rows = Array.from(document.querySelectorAll('table tbody tr'));
+                            for (const row of rows) {
+                                if ((row.textContent || '').includes(mrn)) {
+                                    const editBtn = row.querySelector('a[id*="openWorksheet"]') || row.querySelector('a.ui-kinnser-edit');
+                                    if (editBtn) return editBtn.id;
+                                }
+                            }
+                            return null;
+                        }, record.mrn);
+                        if (freshEditId) editButtonId = freshEditId;
+                    } catch (e) {}
+                    await page.waitForSelector(`#${editButtonId}`, { timeout: 15000 });
+                    await page.click(`#${editButtonId}`);
+                    console.log(`  \u2713 Clicked edit button`);
+                    await page.waitForLoadState('domcontentloaded', { timeout: 30000 });
+                    await page.waitForTimeout(3000);
+                    // Handle modal
+                    try {
+                        const modalVisible = await page.isVisible('#modal_go');
+                        if (modalVisible) { await page.click('#modal_go', { timeout: 3000 }); console.log(`  \u2713 Clicked OK on modal`); }
+                    } catch (e) {}
+                    try { await page.evaluate(() => { const btn = document.querySelector('#modal_go'); if (btn) btn.click(); }); } catch (e) {}
+                    await page.waitForTimeout(2000);
+                    console.log(`  \u2713 Worksheet loaded`);
+                    // STEP 2: Extract patient ZIP code
+                    console.log(`  Step 2: Extracting patient ZIP code...`);
+                    const patientZip = await page.evaluate(() => {
+                        const zipSelectors = [
+                            '#patientZip', '#patZip', 'input[ng-model*="zip"]', 'input[ng-model*="Zip"]',
+                            'input[name*="zip"]', 'input[name*="Zip"]', '#zip', '#zipCode'
+                        ];
+                        for (const sel of zipSelectors) {
+                            const el = document.querySelector(sel);
+                            if (el && el.value) return el.value.trim();
+                        }
+                        const allInputs = document.querySelectorAll('input[type="text"]');
+                        for (const input of allInputs) {
+                            if (/^\d{5}(-\d{4})?$/.test(input.value.trim())) return input.value.trim();
+                        }
+                        const textElements = document.querySelectorAll('span.ng-binding, div.ng-binding');
+                        for (const el of textElements) {
+                            if (/^\d{5}(-\d{4})?$/.test(el.textContent.trim())) return el.textContent.trim();
+                        }
+                        return null;
+                    });
+                    let zipCode5 = null;
+                    if (patientZip) {
+                        zipCode5 = patientZip.substring(0, 5);
+                        console.log(`  \u2713 Patient ZIP: ${patientZip} \u2192 Using: ${zipCode5}`);
+                    } else {
+                        console.log(`  \u26a0\ufe0f  Could not find patient ZIP - skipping Value Codes`);
+                        try { await page.click('#returnBtn'); } catch (e) { try { await page.click('#cancelBtn'); } catch (e2) {} }
+                        await page.waitForTimeout(3000);
+                        continue;
+                    }
+                    // STEP 3: Lookup ZIP in Value Codes spreadsheet
+                    console.log(`  Step 3: Looking up ZIP ${zipCode5}...`);
+                    const vcMatch = valueCodesData.find(row => String(row['ZIP Code']).trim() === zipCode5);
+                    let valueCode61 = null;
+                    let valueCode85 = null;
+                    if (vcMatch) {
+                        valueCode61 = String(vcMatch['Value Code 61 (CBSA)'] || '').trim();
+                        valueCode85 = String(vcMatch['Value Code 85 (FIPS)'] || '').trim();
+                        console.log(`  \u2713 VC61 (CBSA): ${valueCode61}, VC85 (FIPS): ${valueCode85}`);
+                    } else {
+                        console.log(`  \u26a0\ufe0f  ZIP ${zipCode5} NOT FOUND - skipping`);
+                        try { await page.click('#returnBtn'); } catch (e) { try { await page.click('#cancelBtn'); } catch (e2) {} }
+                        await page.waitForTimeout(3000);
+                        continue;
+                    }
+                    // STEP 4: Set Value Code 61
+                    console.log(`  Step 4: Setting Value Code 61 = ${valueCode61}...`);
+                    const vc61Result = await page.evaluate((args) => {
+                        const vcValue = args.vcValue;
+                        const results = { success: false, slot: 0 };
+                        let targetSlot = 0;
+                        for (let i = 1; i <= 12; i++) {
+                            const codeInput = document.querySelector(`#valueCode${i}`);
+                            if (codeInput) {
+                                const val = codeInput.value;
+                                if (!val || val.trim() === '') { targetSlot = i; break; }
+                                if (val === '61') { targetSlot = i; break; }
+                            }
+                        }
+                        if (!targetSlot) return results;
+                        results.slot = targetSlot;
+                        const codeInput = document.querySelector(`#valueCode${targetSlot}`);
+                        const amountInput = document.querySelector(`#valueAmount${targetSlot}`);
+                        if (codeInput) {
+                            codeInput.value = '61';
+                            codeInput.dispatchEvent(new Event('input', { bubbles: true }));
+                            codeInput.dispatchEvent(new Event('change', { bubbles: true }));
+                        }
+                        if (amountInput) {
+                            amountInput.value = vcValue;
+                            amountInput.dispatchEvent(new Event('input', { bubbles: true }));
+                            amountInput.dispatchEvent(new Event('change', { bubbles: true }));
+                        }
+                        try {
+                            if (window.angular && codeInput) {
+                                const scope = window.angular.element(codeInput).scope();
+                                if (scope && scope.claim) {
+                                    scope.$apply(() => {
+                                        scope.claim[`valueCode${targetSlot}Select2`] = { id: '61', text: '61 - Location Where Service is Furnished' };
+                                        scope.claim[`valueAmount${targetSlot}`] = vcValue;
+                                    });
+                                }
+                            }
+                        } catch (e) {}
+                        try {
+                            const $ = window.jQuery;
+                            if ($ && $.fn.select2) {
+                                $(`#valueCode${targetSlot}`).select2('data', { id: '61', text: '61 - Location Where Service is Furnished' });
+                                $(`#valueCode${targetSlot}`).trigger('change');
+                            }
+                        } catch (e) {}
+                        results.success = true;
+                        return results;
+                    }, { vcValue: valueCode61 });
+                    if (vc61Result.success) {
+                        console.log(`  \u2713 VC61 set in slot ${vc61Result.slot}`);
+                    } else {
+                        console.log(`  \u26a0\ufe0f  Could not set VC61`);
+                    }
+                    // STEP 5: Set Value Code 85
+                    console.log(`  Step 5: Setting Value Code 85 = ${valueCode85}...`);
+                    const vc85Result = await page.evaluate((args) => {
+                        const vcValue = args.vcValue;
+                        const prevSlot = args.prevSlot;
+                        const results = { success: false, slot: 0 };
+                        let targetSlot = 0;
+                        for (let i = prevSlot + 1; i <= 12; i++) {
+                            const codeInput = document.querySelector(`#valueCode${i}`);
+                            if (codeInput) {
+                                const val = codeInput.value;
+                                if (!val || val.trim() === '') { targetSlot = i; break; }
+                                if (val === '85') { targetSlot = i; break; }
+                            }
+                        }
+                        if (!targetSlot) return results;
+                        results.slot = targetSlot;
+                        const codeInput = document.querySelector(`#valueCode${targetSlot}`);
+                        const amountInput = document.querySelector(`#valueAmount${targetSlot}`);
+                        if (codeInput) {
+                            codeInput.value = '85';
+                            codeInput.dispatchEvent(new Event('input', { bubbles: true }));
+                            codeInput.dispatchEvent(new Event('change', { bubbles: true }));
+                        }
+                        if (amountInput) {
+                            amountInput.value = vcValue;
+                            amountInput.dispatchEvent(new Event('input', { bubbles: true }));
+                            amountInput.dispatchEvent(new Event('change', { bubbles: true }));
+                        }
+                        try {
+                            if (window.angular && codeInput) {
+                                const scope = window.angular.element(codeInput).scope();
+                                if (scope && scope.claim) {
+                                    scope.$apply(() => {
+                                        scope.claim[`valueCode${targetSlot}Select2`] = { id: '85', text: '85 - County FIPS Code' };
+                                        scope.claim[`valueAmount${targetSlot}`] = vcValue;
+                                    });
+                                }
+                            }
+                        } catch (e) {}
+                        try {
+                            const $ = window.jQuery;
+                            if ($ && $.fn.select2) {
+                                $(`#valueCode${targetSlot}`).select2('data', { id: '85', text: '85 - County FIPS Code' });
+                                $(`#valueCode${targetSlot}`).trigger('change');
+                            }
+                        } catch (e) {}
+                        results.success = true;
+                        return results;
+                    }, { vcValue: valueCode85, prevSlot: vc61Result.slot || 0 });
+                    if (vc85Result.success) {
+                        console.log(`  \u2713 VC85 set in slot ${vc85Result.slot}`);
+                    } else {
+                        console.log(`  \u26a0\ufe0f  Could not set VC85`);
+                    }
+                    // STEP 6: Validate and Save
+                    if (!vc61Result.success || !vc85Result.success) {
+                        console.log(`  \u26a0\ufe0f  Validation failed - not saving`);
+                        try { await page.click('#returnBtn'); } catch (e) { try { await page.click('#cancelBtn'); } catch (e2) {} }
+                        await page.waitForTimeout(3000);
+                        continue;
+                    }
+                    console.log(`  Step 6: Clicking Save and Close...`);
+                    await page.evaluate(() => { const btn = document.querySelector('#submitBtn'); if (btn) btn.scrollIntoView({ behavior: 'smooth', block: 'center' }); });
+                    await page.waitForTimeout(1000);
+                    await page.click('#submitBtn');
+                    console.log(`  \u2713 Clicked Save and Close`);
+                    await page.waitForLoadState('domcontentloaded', { timeout: 30000 });
+                    await page.waitForTimeout(3000);
+                    try { await page.waitForSelector('.loading-message', { state: 'hidden', timeout: 30000 }); } catch (e) {}
+                    await page.waitForTimeout(3000);
+                    try { await page.waitForSelector('table tbody tr', { timeout: 15000 }); } catch (e) {}
+                    await page.waitForTimeout(2000);
+                    console.log(`  \u2705 Successfully processed HUMANA record`);
+                } catch (error) {
+                    console.error(`  \u274c Error processing HUMANA record:`, error.message || error);
+                    try { await page.click('#returnBtn'); await page.waitForTimeout(3000); } catch (e) {
+                        try { await page.click('#pendingClaimsApproval'); await page.waitForTimeout(3000); } catch (e2) {}
+                    }
+                }
+            }
+        }
+        console.log(`\n\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501`);
+        console.log(`HUMANA SUMMARY: ${humanaRecords.length} processed`);
+        console.log(`\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501`);
+    }
     }
     // PROCESS NORTHCOAST PPS - ANTHEM / NORTHCOAST - AETNA RECORDS
     // Occurrence Code 50 only, no auto-approve (claims stay in Pending Approval)
