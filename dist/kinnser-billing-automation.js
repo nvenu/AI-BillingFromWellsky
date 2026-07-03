@@ -304,12 +304,13 @@ async function processOffice(page, office, insuranceHelper, selectedInsurances =
                 readyToSendFiles = result.files;
                 changedTo327 = result.changedTo327;
                 snFailures = result.snFailures || [];
+ const manualReviewFromPA = result.manualReview || [];
                 console.log(`✓ Pending Approval and Ready To Send workflow completed for ${office.name}`);
             }
             catch (error) {
                 console.error(`⚠️  Error in Pending Approval/Ready To Send for ${office.name}:`, error.message || error);
             }
-            return { records: [], filename: null, readyToSendFiles, readyToSendCount: readyToSendFiles.length > 0 ? readyToSendFiles.filter(f => f.includes('electronic') || f.includes('paper-claim')).length : 0, changedTo327, snFailures };
+            return { records: [], filename: null, readyToSendFiles, readyToSendCount: readyToSendFiles.length > 0 ? readyToSendFiles.filter(f => f.includes('electronic') || f.includes('paper-claim')).length : 0, changedTo327, snFailures, manualReview: manualReviewFromPA || [] };
         }
         // 5. Process records ONE BY ONE: select valid record → click create → repeat
         const { selectedCount, selectedRecords, failedRecords } = await processRecordsOneByOne(page, insuranceHelper, selectedInsurances);
@@ -360,6 +361,7 @@ async function processOffice(page, office, insuranceHelper, selectedInsurances =
             readyToSendFiles = result.files;
             changedTo327 = result.changedTo327;
             snFailures = result.snFailures || [];
+ const manualReviewFromPA = result.manualReview || [];
             console.log(`✓ Pending Approval and Ready To Send workflow completed for ${office.name}`);
         }
         catch (error) {
@@ -389,7 +391,7 @@ async function processOffice(page, office, insuranceHelper, selectedInsurances =
         }
         console.log(`✓ Successfully processed ${office.name}`);
         const readyToSendCount = readyToSendFiles.length > 0 ? readyToSendFiles.filter(f => f.includes('electronic') || f.includes('paper-claim')).length : 0;
-        return { records: selectedRecords, filename, readyToSendFiles, readyToSendCount, changedTo327, snFailures };
+        return { records: selectedRecords, filename, readyToSendFiles, readyToSendCount, changedTo327, snFailures, manualReview: manualReviewFromPA || [] };
     }
     catch (error) {
         console.error(`✗ Error processing office ${office.name}:`, error);
@@ -568,6 +570,7 @@ async function loginAndProcessOffices(officeValue = 'all', selectedInsurances = 
         const allReadyToSendFiles = [];
         const all327Changes = [];
         const allSNFailures = [];
+        const allManualReview = [];
         // 2. Process each office
         for (let i = 0; i < officesToProcess.length; i++) {
             const office = officesToProcess[i];
@@ -575,7 +578,7 @@ async function loginAndProcessOffices(officeValue = 'all', selectedInsurances = 
             // Select the office
             await selectOffice(page, office);
             // Process this office
-            const { records: officeRecords, filename, readyToSendFiles, readyToSendCount, changedTo327, snFailures } = await processOffice(page, office, insuranceHelper, selectedInsurances);
+            const { records: officeRecords, filename, readyToSendFiles, readyToSendCount, changedTo327, snFailures, manualReview } = await processOffice(page, office, insuranceHelper, selectedInsurances);
             allSelectedRecords.push(...officeRecords);
             const totalCount = officeRecords.length + (readyToSendCount || 0);
             summary.push({ office: office.name, count: officeRecords.length, readyToSendCount: readyToSendCount || 0, changedTo327Count: changedTo327.length });
@@ -596,6 +599,18 @@ async function loginAndProcessOffices(officeValue = 'all', selectedInsurances = 
                         mrn: failure.mrn,
                         billingPeriod: failure.billingPeriod,
                         insurance: failure.insurance
+                    });
+                });
+            }
+            // Collect manual review records
+            if (manualReview && manualReview.length > 0) {
+                manualReview.forEach(item => {
+                    allManualReview.push({
+                        office: office.name,
+                        mrn: item.mrn,
+                        insurance: item.insurance,
+                        billingPeriod: item.billingPeriod,
+                        reason: item.reason
                     });
                 });
             }
@@ -676,6 +691,15 @@ ${allSNFailures.map(f => `  - MRN: ${f.mrn}, Billing Period: ${f.billingPeriod},
 
 These records remain in Pending Approval for manual review.
 Please verify Skilled Nursing visit counts before billing.` : ''}
+
+${allManualReview.length > 0 ? `
+RECORDS REQUIRING MANUAL REVIEW AND SUBMISSION:
+⚠️  ${allManualReview.length} record(s) were skipped and need manual processing:
+${allManualReview.map(r => `  - MRN: ${r.mrn}, Insurance: ${r.insurance}, Billing Period: ${r.billingPeriod}
+    Office: ${r.office}
+    Reason: ${r.reason}`).join('\n')}
+
+These records remain in Pending Approval and must be reviewed and submitted manually.` : ''}
 
 ${(allSelectedRecords.length > 0 || allReadyToSendFiles.length > 0) ? `
 WORKFLOW STATUS:
@@ -1848,7 +1872,7 @@ async function processPendingApproval(page, insuranceHelper, selectedInsurances 
     // Check if stop was requested before starting
     if (isStopRequested()) {
         console.log(`⚠️  STOP REQUESTED - Skipping Pending Approval tab`);
-        return { files: [], changedTo327: [], snFailures: [] };
+        return { files: [], changedTo327: [], snFailures: [], manualReview: [] };
     }
     try {
         // Navigate to Pending Approval tab
@@ -1928,6 +1952,7 @@ async function processPendingApproval(page, insuranceHelper, selectedInsurances 
         // Track 327 changes
         let changedTo327 = [];
         let snFailures = [];
+        let manualReview = [];
         // Check if there are no records to display
         const noRecordsMessage = await page.textContent('body');
         if (noRecordsMessage && noRecordsMessage.includes('There are currently no records to display.')) {
@@ -1941,7 +1966,11 @@ async function processPendingApproval(page, insuranceHelper, selectedInsurances 
             const pendingResult = await processPendingApprovalRecords(page, insuranceHelper, selectedInsurances, readyTabRecords);
             changedTo327 = pendingResult.changedRecords || pendingResult;
             snFailures = pendingResult.snFailures || [];
+            manualReview = pendingResult.manualReviewRecords || [];
             console.log(`✓ Type of Bill changes: ${changedTo327.length} records changed to 327`);
+            if (manualReview.length > 0) {
+                console.log(`⚠️  Manual Review: ${manualReview.length} records skipped`);
+            }
             if (snFailures.length > 0) {
                 console.log(`✓ SN Visit failures: ${snFailures.length} records not approved (> 2 SN/day)`);
             }
@@ -1972,7 +2001,7 @@ async function processPendingApproval(page, insuranceHelper, selectedInsurances 
         const readyToSendFiles = await processReadyToSend(page, insuranceHelper, selectedInsurances);
         console.log(`✓ Ready To Send completed with ${readyToSendFiles.length} files`);
         // Return files and 327 changes and SN failures for email
-        return { files: readyToSendFiles, changedTo327, snFailures: snFailures || [] };
+        return { files: readyToSendFiles, changedTo327, snFailures: snFailures || [], manualReview: manualReview || [] };
     }
     catch (error) {
         console.error("✗ Error in Pending Approval workflow:", error);
@@ -4578,6 +4607,7 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                 if (!admissionDate) {
                     console.log(`  \u26a0\ufe0f  Cannot process without admission date - flagging for manual review`);
                     record.skipApproval = true;
+ manualReviewRecords.push({ mrn: record.mrn, insurance: record.insurance, billingPeriod: record.billingPeriodText, reason: "Could not extract admission date from PDF" });
                     continue;
                 }
                 // STEP 2: Determine Occurrence Code 50 date
@@ -4670,10 +4700,12 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                                         console.log(`  \u2713 Scenario B: Recertification visit date \u2192 OC50 = ${occurrenceCode50Date}`);
                                     } else {
                                         console.log(`  \u26a0\ufe0f  No Recertification visit found - flagging for manual review`);
+ manualReviewRecords.push({ mrn: record.mrn, insurance: record.insurance, billingPeriod: record.billingPeriodText, reason: "No Recertification visit found in previous episode" });
                                         record.skipApproval = true;
                                     }
                                 } else {
                                     console.log(`  \u26a0\ufe0f  No Previous Episode link - flagging for manual review`);
+ manualReviewRecords.push({ mrn: record.mrn, insurance: record.insurance, billingPeriod: record.billingPeriodText, reason: "No Previous Episode link found" });
                                     record.skipApproval = true;
                                 }
                                 // Navigate back to Pending Approval
@@ -4687,6 +4719,7 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                                 } catch (e) {}
                             } else {
                                 console.log(`  \u26a0\ufe0f  No billing period link - flagging for manual review`);
+ manualReviewRecords.push({ mrn: record.mrn, insurance: record.insurance, billingPeriod: record.billingPeriodText, reason: "No billing period link available" });
                                 record.skipApproval = true;
                             }
                         }
@@ -4699,6 +4732,7 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                 // STEP 3: Open Claim Edit Screen and set OC50
                 if (!occurrenceCode50Date) {
                     console.log(`  \u26a0\ufe0f  No OC50 date determined - flagging for manual review`);
+ manualReviewRecords.push({ mrn: record.mrn, insurance: record.insurance, billingPeriod: record.billingPeriodText, reason: "Could not determine Occurrence Code 50 date" });
                     record.skipApproval = true;
                     continue;
                 }
@@ -4798,6 +4832,7 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                     console.log(`  \u2713 OC50 set in slot ${occResult.slot} (${occResult.methods.join(', ')})`);
                 } else {
                     console.log(`  \u26a0\ufe0f  Could not set OC50 - flagging for manual review`);
+ manualReviewRecords.push({ mrn: record.mrn, insurance: record.insurance, billingPeriod: record.billingPeriodText, reason: "Could not set Occurrence Code 50" });
                     record.skipApproval = true;
                     try { await page.click('#returnBtn'); } catch (e) { try { await page.click('#cancelBtn'); } catch (e2) {} }
                     await page.waitForTimeout(3000);
@@ -5212,7 +5247,7 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
     console.log(`  Records in Pending Approval table: ${totalRecordsInTable}`);
     if (totalRecordsInTable === 0) {
         console.log("  ✓ No records in Pending Approval - nothing to approve");
-        return { changedRecords, snFailures: recordsFailingSNCheck.map(idx => {
+        return { changedRecords, manualReviewRecords, snFailures: recordsFailingSNCheck.map(idx => {
             const record = validRecords[idx];
             return { mrn: record ? record.mrn : 'Unknown', billingPeriod: record ? record.billingPeriodText : 'Unknown', insurance: record ? record.insurance : 'Unknown' };
         })};
@@ -5287,7 +5322,7 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
         console.log("⚠️  'Select All' checkbox not found with any selector");
         console.log("⚠️  This is unexpected - Pending Approval should have a Select All checkbox");
         console.log("⚠️  Skipping approval to avoid errors");
-        return { changedRecords, snFailures: recordsFailingSNCheck.map(idx => {
+        return { changedRecords, manualReviewRecords, snFailures: recordsFailingSNCheck.map(idx => {
             const record = records[idx];
             return { mrn: record ? record.mrn : 'Unknown', billingPeriod: record ? record.billingPeriodText : 'Unknown', insurance: record ? record.insurance : 'Senior whole Health (BID)' };
         })};
@@ -5467,7 +5502,7 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
         console.log("✗ Failed to click Approve button - skipping approval");
     }
     // Return the list of changed records and SN failures
-    return { changedRecords, snFailures: recordsFailingSNCheck.map(idx => {
+    return { changedRecords, manualReviewRecords, snFailures: recordsFailingSNCheck.map(idx => {
         const record = records[idx];
         return { mrn: record ? record.mrn : 'Unknown', billingPeriod: record ? record.billingPeriodText : 'Unknown', insurance: record ? record.insurance : 'Senior whole Health (BID)' };
     })};
