@@ -99,6 +99,12 @@ app.get("/billing", (req, res) => {
         </svg>
         Select Insurances
       </button>
+      <button class="office-btn" style="background: #1976d2; margin-top: 8px;" onclick="sendManualEmail('${office.name}', '${office.stateCode}')">
+        <svg class="btn-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
+        </svg>
+        Send Email
+      </button>
     </div>
   `).join('\n');
     res.send(`
@@ -864,6 +870,25 @@ app.get("/billing", (req, res) => {
           document.getElementById('consoleOutput').innerHTML = '';
         }
         
+        async function sendManualEmail(officeName, stateCode) {
+          if (!confirm('Send email with today\\'s files for ' + officeName + '?')) return;
+          try {
+            const response = await fetch('/send-email', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ officeName: officeName, stateCode: stateCode })
+            });
+            const data = await response.json();
+            if (data.success) {
+              alert('Email sent successfully!\\n\\nFiles: ' + data.files.join(', '));
+            } else {
+              alert('Failed to send email:\\n' + data.message);
+            }
+          } catch (error) {
+            alert('Error: ' + error.message);
+          }
+        }
+        
         async function stopAutomation() {
           if (confirm('Are you sure you want to stop the automation? It will finish the current record and then stop.')) {
             appendToConsole(new Date().toISOString(), '⚠️  Stop requested by user...');
@@ -1170,6 +1195,68 @@ app.post("/stop-automation", (req, res) => {
     stopRequested = true;
     broadcastLog("⚠️  STOP REQUESTED - Automation will stop after current record...");
     res.json({ success: true, message: "Stop requested - will stop gracefully after current record" });
+});
+// API endpoint to manually send email with today's files
+app.post("/send-email", async (req, res) => {
+    try {
+        const { officeName, stateCode } = req.body || {};
+        const fs = require('fs');
+        const path = require('path');
+        const { format } = require('date-fns');
+        const { sendEmail } = require('./email-helper');
+        const today = format(new Date(), 'yyyy-MM-dd');
+        const cwd = process.cwd();
+        // Find today's files (optionally filtered by state code)
+        const allFiles = fs.readdirSync(cwd);
+        const todayFiles = allFiles.filter(f => {
+            if (!f.includes(today) && !f.endsWith('.xlsx') && !f.endsWith('.pdf')) return false;
+            if (f.includes(today)) {
+                if (stateCode && (f.includes(`-${stateCode}-`) || f.includes(`${stateCode}_`) || f.includes(stateCode))) return true;
+                if (!stateCode) return true;
+            }
+            return false;
+        });
+        // Also check downloads folder
+        const downloadsPath = path.join(cwd, 'downloads');
+        let downloadFiles = [];
+        if (fs.existsSync(downloadsPath)) {
+            downloadFiles = fs.readdirSync(downloadsPath)
+                .filter(f => f.includes(today) && f.endsWith('.pdf'))
+                .map(f => path.join(downloadsPath, f));
+        }
+        // If no state-specific files found, get all today's files
+        let attachments = [...todayFiles.map(f => path.join(cwd, f)), ...downloadFiles];
+        if (attachments.length === 0) {
+            // Fallback: get all xlsx/pdf from today regardless of state
+            const fallbackFiles = allFiles.filter(f => f.includes(today) && (f.endsWith('.xlsx') || f.endsWith('.pdf')));
+            attachments = [...fallbackFiles.map(f => path.join(cwd, f)), ...downloadFiles];
+        }
+        if (attachments.length === 0) {
+            return res.json({ success: false, message: `No files found for today (${today}) for ${officeName || 'any office'}` });
+        }
+        const emailBody = `
+Manual Email Send - Kinnser Billing Automation
+Generated: ${format(new Date(), 'yyyy-MM-dd HH:mm:ss')}
+Office: ${officeName || 'Unknown'}
+
+This email was triggered manually because the automated email failed to send.
+
+ATTACHED FILES (${attachments.length}):
+${attachments.map(f => `  - ${path.basename(f)}`).join('\n')}
+`;
+        await sendEmail({
+            to: process.env.EMAIL_RECIPIENTS || "nvenu@solifetec.com",
+            subject: `Kinnser Billing Report - ${officeName || 'Manual'} - ${today} [MANUAL SEND]`,
+            body: emailBody,
+            attachments: attachments
+        });
+        console.log(`✓ Manual email sent with ${attachments.length} attachments for ${officeName}`);
+        broadcastLog(`✓ Manual email sent with ${attachments.length} attachments for ${officeName}`);
+        res.json({ success: true, message: `Email sent with ${attachments.length} files`, files: attachments.map(f => path.basename(f)) });
+    } catch (error) {
+        console.error(`✗ Failed to send manual email:`, error.message || error);
+        res.json({ success: false, message: `Failed: ${error.message}` });
+    }
 });
 app.listen(PORT, () => {
     console.log(`Server running at http://localhost:${PORT}`);
