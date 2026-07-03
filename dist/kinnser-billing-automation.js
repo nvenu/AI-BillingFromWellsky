@@ -304,7 +304,7 @@ async function processOffice(page, office, insuranceHelper, selectedInsurances =
                 readyToSendFiles = result.files;
                 changedTo327 = result.changedTo327;
                 snFailures = result.snFailures || [];
- const manualReviewFromPA = result.manualReview || [];
+ manualReviewFromPA = result.manualReview || [];
                 console.log(`✓ Pending Approval and Ready To Send workflow completed for ${office.name}`);
             }
             catch (error) {
@@ -338,6 +338,7 @@ async function processOffice(page, office, insuranceHelper, selectedInsurances =
         // 8. ALWAYS process Pending Approval and Ready To Send (even if no records were selected in Ready)
         let readyToSendFiles = [];
         let changedTo327 = [];
+        let manualReviewFromPA = [];
         let snFailures = [];
         try {
             // Browser health check before Pending Approval
@@ -361,7 +362,7 @@ async function processOffice(page, office, insuranceHelper, selectedInsurances =
             readyToSendFiles = result.files;
             changedTo327 = result.changedTo327;
             snFailures = result.snFailures || [];
- const manualReviewFromPA = result.manualReview || [];
+ manualReviewFromPA = result.manualReview || [];
             console.log(`✓ Pending Approval and Ready To Send workflow completed for ${office.name}`);
         }
         catch (error) {
