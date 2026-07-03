@@ -299,6 +299,7 @@ async function processOffice(page, office, insuranceHelper, selectedInsurances =
             let readyToSendFiles = [];
             let changedTo327 = [];
             let snFailures = [];
+            let manualReviewFromPA = [];
             try {
                 const result = await processPendingApproval(page, insuranceHelper, selectedInsurances, []);
                 readyToSendFiles = result.files;
