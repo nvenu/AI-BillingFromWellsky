@@ -2567,6 +2567,12 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                     console.log(`  \u26a0\ufe0f  Error getting PDF: ${pdfError.message}`);
                 }
                 // Step 2: Click edit button
+ // Skip if no admission date (PDF failed)
+ if (!admissionDate) {
+ console.log(" WARNING: No admission date - skipping record (manual review)");
+ manualReviewRecords.push({ mrn: record.mrn, insurance: record.insurance, billingPeriod: record.billingPeriodText, reason: "Could not extract admission date from PDF" });
+ continue;
+ }
                 console.log(`  Step 2: Clicking edit button...`);
                 await page.click(`#${record.editButtonId}`);
                 console.log(`  ✓ Clicked edit button`);
@@ -2815,6 +2821,12 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                 } catch (pdfError) {
                     console.log(`  \u26a0\ufe0f  Error getting PDF: ${pdfError.message}`);
                 }
+ // Skip if no admission date (PDF failed)
+ if (!admissionDate) {
+ console.log(" WARNING: No admission date - skipping record (manual review)");
+ manualReviewRecords.push({ mrn: record.mrn, insurance: record.insurance, billingPeriod: record.billingPeriodText, reason: "Could not extract admission date from PDF" });
+ continue;
+ }
                 console.log(`  Step 2: Clicking edit button...`);
                 await page.click(`#${record.editButtonId}`);
                 console.log(`  ✓ Clicked edit button`);
@@ -4111,6 +4123,12 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                     console.log(`  \u26a0\ufe0f  Error getting PDF: ${pdfError.message}`);
                 }
                 // STEP 3: Open Claim Edit Screen
+ // Skip if no admission date (PDF failed)
+ if (!admissionDate) {
+ console.log(" WARNING: No admission date - skipping record (manual review)");
+ manualReviewRecords.push({ mrn: record.mrn, insurance: record.insurance, billingPeriod: record.billingPeriodText, reason: "Could not extract admission date from PDF" });
+ continue;
+ }
                 console.log(`  Step 3: Opening claim edit screen...`);
                 // Re-find edit button fresh from current page (table may have reloaded)
                 let editButtonId = record.editButtonId;
