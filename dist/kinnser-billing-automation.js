@@ -3291,14 +3291,12 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
         // Load Value Codes Information spreadsheet for ZIP lookup
         let valueCodesData = null;
         try {
-            const valueCodesPath = path.join(__dirname, '..', 'Value Codes Information.xlsx');
-            const vcWorkbook = XLSX.readFile(valueCodesPath);
-            // Use 'All States' sheet which has all ZIPs
-            const vcSheet = vcWorkbook.Sheets['All States'];
-            valueCodesData = XLSX.utils.sheet_to_json(vcSheet);
-            console.log(`  ✓ Loaded Value Codes Information: ${valueCodesData.length} ZIP entries`);
+            const valueCodesPath = path.join(__dirname, '..', 'value-codes-lookup.json');
+            const vcJson = JSON.parse(fs.readFileSync(valueCodesPath, 'utf8'));
+            valueCodesData = vcJson;
+            console.log(`  ✓ Loaded Value Codes: ${Object.keys(vcJson).length} ZIP entries`);
         } catch (vcError) {
-            console.log(`  ⚠️  Could not load Value Codes Information.xlsx: ${vcError.message}`);
+            console.log(`  ⚠️  Could not load value-codes-lookup.json: ${vcError.message}`);
             console.log(`  ⚠️  UCSD records cannot be processed without Value Codes data`);
         }
         if (valueCodesData) {
@@ -3553,12 +3551,12 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                     }
                     // STEP 4b: Lookup ZIP in Value Codes spreadsheet
                     console.log(`  Step 4b: Looking up ZIP ${zipCode5} in Value Codes...`);
-                    const vcMatch = valueCodesData.find(row => String(row['ZIP Code']).trim() === zipCode5);
+                    const vcMatch = valueCodesData[zipCode5] || null;
                     let valueCode61 = null;
                     let valueCode85 = null;
                     if (vcMatch) {
-                        valueCode61 = String(vcMatch['Value Code 61 (CBSA)'] || '').trim();
-                        valueCode85 = String(vcMatch['Value Code 85 (FIPS)'] || '').trim();
+                        valueCode61 = String(vcMatch.cbsa || '').trim();
+                        valueCode85 = String(vcMatch.fips || '').trim();
                         console.log(`  ✓ Found ZIP ${zipCode5}:`);
                         console.log(`    Value Code 61 (CBSA): ${valueCode61}`);
                         console.log(`    Value Code 85 (FIPS): ${valueCode85}`);
@@ -4329,13 +4327,12 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
         // Load Value Codes Information spreadsheet
         let valueCodesData = null;
         try {
-            const valueCodesPath = path.join(__dirname, '..', 'Value Codes Information.xlsx');
-            const vcWorkbook = XLSX.readFile(valueCodesPath);
-            const vcSheet = vcWorkbook.Sheets['All States'];
-            valueCodesData = XLSX.utils.sheet_to_json(vcSheet);
-            console.log(`  \u2713 Loaded Value Codes: ${valueCodesData.length} ZIP entries`);
+            const valueCodesPath = path.join(__dirname, '..', 'value-codes-lookup.json');
+            const vcJson = JSON.parse(fs.readFileSync(valueCodesPath, 'utf8'));
+            valueCodesData = vcJson;
+            console.log(`  \u2713 Loaded Value Codes: ${Object.keys(vcJson).length} ZIP entries`);
         } catch (vcError) {
-            console.log(`  \u26a0\ufe0f  Could not load Value Codes Information.xlsx: ${vcError.message}`);
+            console.log(`  \u26a0\ufe0f  Could not load value-codes-lookup.json: ${vcError.message}`);
         }
         if (valueCodesData) {
             for (const record of humanaRecords) {
@@ -4410,12 +4407,12 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                     }
                     // STEP 3: Lookup ZIP in Value Codes spreadsheet
                     console.log(`  Step 3: Looking up ZIP ${zipCode5}...`);
-                    const vcMatch = valueCodesData.find(row => String(row['ZIP Code']).trim() === zipCode5);
+                    const vcMatch = valueCodesData[zipCode5] || null;
                     let valueCode61 = null;
                     let valueCode85 = null;
                     if (vcMatch) {
-                        valueCode61 = String(vcMatch['Value Code 61 (CBSA)'] || '').trim();
-                        valueCode85 = String(vcMatch['Value Code 85 (FIPS)'] || '').trim();
+                        valueCode61 = String(vcMatch.cbsa || '').trim();
+                        valueCode85 = String(vcMatch.fips || '').trim();
                         console.log(`  \u2713 VC61 (CBSA): ${valueCode61}, VC85 (FIPS): ${valueCode85}`);
                     } else {
                         console.log(`  \u26a0\ufe0f  ZIP ${zipCode5} NOT FOUND - skipping`);
