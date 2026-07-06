@@ -213,6 +213,135 @@ console.log = function (...args) {
         logBroadcaster(message);
     }
 };
+// Shared helper: Extract patient ZIP code from claim worksheet
+async function extractPatientZip(page) {
+    return await page.evaluate(() => {
+        // Strategy 1: Find the "Zip" label in the Patient Address table and get adjacent value
+        const allTds = document.querySelectorAll('td.two-column-label');
+        for (const td of allTds) {
+            if (td.textContent.trim().toLowerCase() === 'zip') {
+                const valueTd = td.nextElementSibling;
+                if (valueTd) {
+                    // Get just the first text node (ZIP without the +4 span)
+                    let zip = '';
+                    for (const node of valueTd.childNodes) {
+                        if (node.nodeType === 3) { // TEXT_NODE
+                            const text = node.textContent.trim();
+                            if (/^\d{5}/.test(text)) {
+                                zip = text.substring(0, 5);
+                                break;
+                            }
+                        }
+                    }
+                    if (zip) return zip;
+                    // Fallback: get full text and extract 5-digit ZIP
+                    const fullText = valueTd.textContent.trim();
+                    const match = fullText.match(/(\d{5})/);
+                    if (match) return match[1];
+                }
+            }
+        }
+        // Strategy 2: Look for inputs with zip-related ng-model or name
+        const zipSelectors = [
+            'input[ng-model*="zip" i]', 'input[ng-model*="Zip"]',
+            '#patientZip', '#patZip', '#zip', '#zipCode',
+            'input[id*="zip" i]'
+        ];
+        for (const sel of zipSelectors) {
+            try {
+                const el = document.querySelector(sel);
+                if (el && el.value && el.value.trim().length >= 5) return el.value.trim();
+            } catch(e) {}
+        }
+        // Strategy 3: Look for ng-binding elements near "zip" text
+        const rows = document.querySelectorAll('tr');
+        for (const row of rows) {
+            const cells = row.querySelectorAll('td');
+            if (cells.length >= 2 && cells[0].textContent.trim().toLowerCase().includes('zip')) {
+                const val = cells[1].textContent.trim();
+                const match = val.match(/(\d{5})/);
+                if (match) return match[1];
+            }
+        }
+        // Strategy 4: Scan all ng-binding tds for ZIP pattern
+        const ngBindings = document.querySelectorAll('td.ng-binding, td.table-value');
+        for (const el of ngBindings) {
+            const text = el.textContent.trim();
+            if (/^\d{5}(-\d{4})?(\s|$)/.test(text)) {
+                return text.substring(0, 5);
+            }
+        }
+        return null;
+    });
+}
+// Shared helper: Set Value Code on claim worksheet
+// codeNumber: 61 or 85
+// value: the CBSA or FIPS value to enter
+// startSlot: which slot to start looking from
+async function setValueCode(page, codeNumber, codeText, value, startSlot = 1) {
+    return await page.evaluate((args) => {
+        const { codeNum, codeTxt, val, startAt } = args;
+        const results = { success: false, slot: 0, method: '' };
+        // The select options use index values: "0" = 61, "1" = 85
+        // Map code number to option value
+        const optionValue = codeNum === 61 ? '0' : codeNum === 85 ? '1' : '';
+        // Find first available slot
+        let targetSlot = 0;
+        for (let i = startAt; i <= 12; i++) {
+            const codeSelect = document.querySelector(`#valueCode${i}`);
+            if (codeSelect) {
+                const currentVal = codeSelect.value;
+                if (!currentVal || currentVal === '') { targetSlot = i; break; }
+                if (currentVal === optionValue) { targetSlot = i; break; }
+            }
+        }
+        if (!targetSlot) { results.method = 'no-empty-slot'; return results; }
+        results.slot = targetSlot;
+        const codeSelect = document.querySelector(`#valueCode${targetSlot}`);
+        const amountInput = document.querySelector(`#valueCodeAmount${targetSlot}`);
+        if (!codeSelect) { results.method = 'code-select-not-found'; return results; }
+        if (!amountInput) { results.method = 'amount-input-not-found(#valueCodeAmount' + targetSlot + ')'; return results; }
+        // Set the code dropdown
+        codeSelect.value = optionValue;
+        codeSelect.dispatchEvent(new Event('change', { bubbles: true }));
+        // Force Angular to recognize the change
+        if (window.angular) {
+            try {
+                const scope = window.angular.element(codeSelect).scope();
+                if (scope) {
+                    scope.$apply(() => {
+                        scope.claim[`valueCode${targetSlot}`] = optionValue;
+                    });
+                }
+            } catch(e) {}
+        }
+        // Set the amount value
+        amountInput.value = val;
+        amountInput.dispatchEvent(new Event('input', { bubbles: true }));
+        amountInput.dispatchEvent(new Event('change', { bubbles: true }));
+        amountInput.dispatchEvent(new Event('blur', { bubbles: true }));
+        results.method = 'direct-set+';
+        // Angular scope update for amount
+        try {
+            if (window.angular) {
+                const scope = window.angular.element(amountInput).scope();
+                if (scope && scope.claim) {
+                    scope.$apply(() => {
+                        scope.claim[`valueCodeAmount${targetSlot}`] = val;
+                    });
+                    results.method += 'angular+';
+                }
+            }
+        } catch (e) { results.method += 'angular-err+'; }
+        // Verify - check both the select and the Angular model
+        const verifiedSelect = codeSelect.value;
+        const verifiedAmount = amountInput.value;
+        // Success if amount is set (code might show differently due to Angular binding)
+        results.success = (verifiedAmount === val);
+        results.method += `verified(code=${verifiedSelect},amount=${verifiedAmount})`;
+        return results;
+    }, { codeNum: codeNumber, codeTxt: codeText, val: value, startAt: startSlot });
+}
 async function selectOffice(page, office) {
     console.log(`\n=== Selecting Office: ${office.name} ===`);
     try {
@@ -4315,11 +4444,21 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
         console.log(`\n\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501`);
         console.log(`BMC HEALTH PLAN SUMMARY: ${bmcRecords.length} processed`);
         console.log(`\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501`);
+    }
     // PROCESS HUMANA RECORDS (Value Code 61 CBSA + Value Code 85 FIPS)
     // Applies to "HUMANA" only (not HUMANA PPS or HUMANA JENCARE), all states
-    const humanaRecords = isInsuranceSelected('humana')
+    const humanaSelected = isInsuranceSelected('humana');
+    console.log(`\n=== CHECKING FOR HUMANA RECORDS ===`);
+    console.log(`  isInsuranceSelected('humana'): ${humanaSelected}`);
+    const humanaRecords = humanaSelected
         ? validRecords.filter(r => r.insurance.toLowerCase().trim() === 'humana')
         : [];
+    console.log(`  HUMANA records found: ${humanaRecords.length}`);
+    if (humanaRecords.length === 0 && humanaSelected) {
+        console.log(`  DEBUG: Insurance names in validRecords:`);
+        const uniqueInsurances = [...new Set(validRecords.map(r => r.insurance))];
+        uniqueInsurances.forEach(ins => console.log(`    - "${ins}"`));
+    }
     if (humanaRecords.length > 0) {
         console.log(`\n=== PROCESSING HUMANA RECORDS (Value Codes 61/85) ===`);
         console.log(`Found ${humanaRecords.length} HUMANA record(s)`);
@@ -4376,25 +4515,7 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                     console.log(`  \u2713 Worksheet loaded`);
                     // STEP 2: Extract patient ZIP code
                     console.log(`  Step 2: Extracting patient ZIP code...`);
-                    const patientZip = await page.evaluate(() => {
-                        const zipSelectors = [
-                            '#patientZip', '#patZip', 'input[ng-model*="zip"]', 'input[ng-model*="Zip"]',
-                            'input[name*="zip"]', 'input[name*="Zip"]', '#zip', '#zipCode'
-                        ];
-                        for (const sel of zipSelectors) {
-                            const el = document.querySelector(sel);
-                            if (el && el.value) return el.value.trim();
-                        }
-                        const allInputs = document.querySelectorAll('input[type="text"]');
-                        for (const input of allInputs) {
-                            if (/^\d{5}(-\d{4})?$/.test(input.value.trim())) return input.value.trim();
-                        }
-                        const textElements = document.querySelectorAll('span.ng-binding, div.ng-binding');
-                        for (const el of textElements) {
-                            if (/^\d{5}(-\d{4})?$/.test(el.textContent.trim())) return el.textContent.trim();
-                        }
-                        return null;
-                    });
+                    const patientZip = await extractPatientZip(page);
                     let zipCode5 = null;
                     if (patientZip) {
                         zipCode5 = patientZip.substring(0, 5);
@@ -4420,115 +4541,14 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                         await page.waitForTimeout(3000);
                         continue;
                     }
-                    // STEP 4: Set Value Code 61
-                    console.log(`  Step 4: Setting Value Code 61 = ${valueCode61}...`);
-                    const vc61Result = await page.evaluate((args) => {
-                        const vcValue = args.vcValue;
-                        const results = { success: false, slot: 0 };
-                        let targetSlot = 0;
-                        for (let i = 1; i <= 12; i++) {
-                            const codeInput = document.querySelector(`#valueCode${i}`);
-                            if (codeInput) {
-                                const val = codeInput.value;
-                                if (!val || val.trim() === '') { targetSlot = i; break; }
-                                if (val === '61') { targetSlot = i; break; }
-                            }
-                        }
-                        if (!targetSlot) return results;
-                        results.slot = targetSlot;
-                        const codeInput = document.querySelector(`#valueCode${targetSlot}`);
-                        const amountInput = document.querySelector(`#valueAmount${targetSlot}`);
-                        if (codeInput) {
-                            codeInput.value = '61';
-                            codeInput.dispatchEvent(new Event('input', { bubbles: true }));
-                            codeInput.dispatchEvent(new Event('change', { bubbles: true }));
-                        }
-                        if (amountInput) {
-                            amountInput.value = vcValue;
-                            amountInput.dispatchEvent(new Event('input', { bubbles: true }));
-                            amountInput.dispatchEvent(new Event('change', { bubbles: true }));
-                        }
-                        try {
-                            if (window.angular && codeInput) {
-                                const scope = window.angular.element(codeInput).scope();
-                                if (scope && scope.claim) {
-                                    scope.$apply(() => {
-                                        scope.claim[`valueCode${targetSlot}Select2`] = { id: '61', text: '61 - Location Where Service is Furnished' };
-                                        scope.claim[`valueAmount${targetSlot}`] = vcValue;
-                                    });
-                                }
-                            }
-                        } catch (e) {}
-                        try {
-                            const $ = window.jQuery;
-                            if ($ && $.fn.select2) {
-                                $(`#valueCode${targetSlot}`).select2('data', { id: '61', text: '61 - Location Where Service is Furnished' });
-                                $(`#valueCode${targetSlot}`).trigger('change');
-                            }
-                        } catch (e) {}
-                        results.success = true;
-                        return results;
-                    }, { vcValue: valueCode61 });
-                    if (vc61Result.success) {
-                        console.log(`  \u2713 VC61 set in slot ${vc61Result.slot}`);
-                    } else {
-                        console.log(`  \u26a0\ufe0f  Could not set VC61`);
-                    }
-                    // STEP 5: Set Value Code 85
-                    console.log(`  Step 5: Setting Value Code 85 = ${valueCode85}...`);
-                    const vc85Result = await page.evaluate((args) => {
-                        const vcValue = args.vcValue;
-                        const prevSlot = args.prevSlot;
-                        const results = { success: false, slot: 0 };
-                        let targetSlot = 0;
-                        for (let i = prevSlot + 1; i <= 12; i++) {
-                            const codeInput = document.querySelector(`#valueCode${i}`);
-                            if (codeInput) {
-                                const val = codeInput.value;
-                                if (!val || val.trim() === '') { targetSlot = i; break; }
-                                if (val === '85') { targetSlot = i; break; }
-                            }
-                        }
-                        if (!targetSlot) return results;
-                        results.slot = targetSlot;
-                        const codeInput = document.querySelector(`#valueCode${targetSlot}`);
-                        const amountInput = document.querySelector(`#valueAmount${targetSlot}`);
-                        if (codeInput) {
-                            codeInput.value = '85';
-                            codeInput.dispatchEvent(new Event('input', { bubbles: true }));
-                            codeInput.dispatchEvent(new Event('change', { bubbles: true }));
-                        }
-                        if (amountInput) {
-                            amountInput.value = vcValue;
-                            amountInput.dispatchEvent(new Event('input', { bubbles: true }));
-                            amountInput.dispatchEvent(new Event('change', { bubbles: true }));
-                        }
-                        try {
-                            if (window.angular && codeInput) {
-                                const scope = window.angular.element(codeInput).scope();
-                                if (scope && scope.claim) {
-                                    scope.$apply(() => {
-                                        scope.claim[`valueCode${targetSlot}Select2`] = { id: '85', text: '85 - County FIPS Code' };
-                                        scope.claim[`valueAmount${targetSlot}`] = vcValue;
-                                    });
-                                }
-                            }
-                        } catch (e) {}
-                        try {
-                            const $ = window.jQuery;
-                            if ($ && $.fn.select2) {
-                                $(`#valueCode${targetSlot}`).select2('data', { id: '85', text: '85 - County FIPS Code' });
-                                $(`#valueCode${targetSlot}`).trigger('change');
-                            }
-                        } catch (e) {}
-                        results.success = true;
-                        return results;
-                    }, { vcValue: valueCode85, prevSlot: vc61Result.slot || 0 });
-                    if (vc85Result.success) {
-                        console.log(`  \u2713 VC85 set in slot ${vc85Result.slot}`);
-                    } else {
-                        console.log(`  \u26a0\ufe0f  Could not set VC85`);
-                    }
+                    // STEP 4: Set Value Code 85 (FIPS) first
+                    console.log(`  Step 4: Setting Value Code 85 (FIPS) = ${valueCode85}...`);
+                    const vc85Result = await setValueCode(page, 85, '85', valueCode85, 1);
+                    console.log(`  VC85: slot=${vc85Result.slot}, success=${vc85Result.success}, method=${vc85Result.method}`);
+                    // STEP 5: Set Value Code 61 (CBSA)
+                    console.log(`  Step 5: Setting Value Code 61 (CBSA) = ${valueCode61}...`);
+                    const vc61Result = await setValueCode(page, 61, '61', valueCode61, vc85Result.slot + 1);
+                    console.log(`  VC61: slot=${vc61Result.slot}, success=${vc61Result.success}, method=${vc61Result.method}`);
                     // STEP 6: Validate and Save
                     if (!vc61Result.success || !vc85Result.success) {
                         console.log(`  \u26a0\ufe0f  Validation failed - not saving`);
@@ -4559,7 +4579,6 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
         console.log(`\n\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501`);
         console.log(`HUMANA SUMMARY: ${humanaRecords.length} processed`);
         console.log(`\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501`);
-    }
     }
     // PROCESS NORTHCOAST PPS - ANTHEM / NORTHCOAST - AETNA RECORDS
     // Occurrence Code 50 only, no auto-approve (claims stay in Pending Approval)
