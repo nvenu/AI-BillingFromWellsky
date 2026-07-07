@@ -2148,7 +2148,7 @@ async function processPendingApproval(page, insuranceHelper, selectedInsurances 
     }
     catch (error) {
         console.error("✗ Error in Pending Approval workflow:", error);
-        throw error;
+        return { files: [], changedTo327: changedTo327 || [], snFailures: snFailures || [], manualReview: manualReview || [] };
     }
 }
 async function processPendingApprovalRecords(page, insuranceHelper, selectedInsurances = null, readyTabRecords = []) {
