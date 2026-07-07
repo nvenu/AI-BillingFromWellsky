@@ -282,9 +282,11 @@ async function setValueCode(page, codeNumber, codeText, value, startSlot = 1) {
     return await page.evaluate((args) => {
         const { codeNum, codeTxt, val, startAt } = args;
         const results = { success: false, slot: 0, method: '' };
-        // The select options use index values: "0" = 61, "1" = 85
-        // Map code number to option value
+        // ng-options uses "claimValueCode.value as claimValueCode.text"
+        // The model stores claimValueCode.value (which is the code number as string: "61" or "85")
+        // The DOM <option value="0"> is just Angular's internal index, NOT the model value
         const optionValue = codeNum === 61 ? '0' : codeNum === 85 ? '1' : '';
+        const modelValue = String(codeNum); // "61" or "85" - what Angular model actually needs
         // Find first available slot
         let targetSlot = 0;
         for (let i = startAt; i <= 12; i++) {
@@ -301,16 +303,16 @@ async function setValueCode(page, codeNumber, codeText, value, startSlot = 1) {
         const amountInput = document.querySelector(`#valueCodeAmount${targetSlot}`);
         if (!codeSelect) { results.method = 'code-select-not-found'; return results; }
         if (!amountInput) { results.method = 'amount-input-not-found(#valueCodeAmount' + targetSlot + ')'; return results; }
-        // Set the code dropdown
+        // Set the code dropdown (DOM uses index "0" or "1")
         codeSelect.value = optionValue;
         codeSelect.dispatchEvent(new Event('change', { bubbles: true }));
-        // Force Angular to recognize the change
+        // Force Angular model to use actual code number ("61" or "85")
         if (window.angular) {
             try {
                 const scope = window.angular.element(codeSelect).scope();
                 if (scope) {
                     scope.$apply(() => {
-                        scope.claim[`valueCode${targetSlot}`] = optionValue;
+                        scope.claim[`valueCode${targetSlot}`] = modelValue;
                     });
                 }
             } catch(e) {}
