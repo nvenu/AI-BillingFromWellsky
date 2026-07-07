@@ -348,7 +348,7 @@ class InsuranceHelper {
         const nameLower = insuranceName.toLowerCase().trim();
         // Define processing type for each special handling insurance
         const specialHandlingConfig = {
-            "community health group": "paper", // Download PDF (not electronic)
+            "community health group": "electronic", // Send electronically (after severity point calculation)
             "partnership health plan of ca": "electronic", // Send electronically (Type of Bill 327)
             "senior whole health (bid)": "electronic", // Send electronically (after SN visit validation)
             "united health care ma": "electronic", // Send electronically (after UD modifier + SN check)
