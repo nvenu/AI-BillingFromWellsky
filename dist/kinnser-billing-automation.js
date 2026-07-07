@@ -342,6 +342,16 @@ async function setValueCode(page, codeNumber, codeText, value, startSlot = 1) {
         return results;
     }, { codeNum: codeNumber, codeTxt: codeText, val: value, startAt: startSlot });
 }
+// Shared: Check if authorization code triggers TOB 327 change
+// Rule: starts with T/t OR contains "not t" (case-insensitive)
+function shouldChangeTOB327ForAuth(authorizationCode) {
+    if (!authorizationCode) return false;
+    const auth = authorizationCode.trim();
+    const authLower = auth.toLowerCase();
+    if (/^[Tt]/.test(auth)) return true;
+    if (authLower.includes('not t')) return true;
+    return false;
+}
 async function selectOffice(page, office) {
     console.log(`\n=== Selecting Office: ${office.name} ===`);
     try {
@@ -2979,6 +2989,25 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                     await page.evaluate(() => { const btn = document.querySelector('#modal_go'); if (btn) btn.click(); });
                 } catch (e) {}
                 await page.waitForTimeout(2000);
+                // T-code check: Look up auth from Ready tab and change TOB if needed
+                let authorizationCode = null;
+                if (readyTabRecords && readyTabRecords.length > 0) {
+                    const matchingRecord = readyTabRecords.find(r => r.allColumns && r.allColumns.some(col => col && col.includes(record.mrn)));
+                    if (matchingRecord && matchingRecord.authorization) {
+                        authorizationCode = matchingRecord.authorization.trim();
+                    }
+                }
+                if (authorizationCode && shouldChangeTOB327ForAuth(authorizationCode)) {
+                    console.log(`  T-code: Auth "${authorizationCode}" triggers TOB 327`);
+                    await page.evaluate(() => {
+                        const select = document.querySelector('#typeOfBill');
+                        if (select) {
+                            const option327 = Array.from(select.options).find(opt => opt.text.trim() === '327 - Adjustment Claim');
+                            if (option327) { select.value = option327.value; select.dispatchEvent(new Event('change', { bubbles: true })); }
+                        }
+                    });
+                    console.log(`  \u2713 Changed TOB to 327`);
+                }
                 // Step 5: Expand Visits section and add UD modifier
                 console.log(`  Step 4: Expanding Visits section...`);
                 try {
@@ -4054,29 +4083,25 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                 console.log(`  \u2713 Worksheet loaded`);
                 // STEP 3: Type of Bill validation - check if auth code starts with T
                 let needsTOB327 = false;
-                if (authorizationCode) {
-                    const authTrimmed = authorizationCode.trim();
-                    // Case-insensitive check: starts with T, T-, or t-code
-                    if (/^[Tt][-]?/.test(authTrimmed)) {
-                        needsTOB327 = true;
-                        console.log(`  Step 3: Auth code "${authorizationCode}" starts with T \u2192 Setting TOB to 327`);
-                        await page.evaluate(() => {
-                            const select = document.querySelector('#typeOfBill');
-                            if (select) {
-                                const option327 = Array.from(select.options).find(opt => opt.text.trim() === '327 - Adjustment Claim');
-                                if (option327) {
-                                    select.value = option327.value;
-                                    select.dispatchEvent(new Event('change', { bubbles: true }));
-                                    select.dispatchEvent(new Event('input', { bubbles: true }));
-                                }
+                if (authorizationCode && shouldChangeTOB327ForAuth(authorizationCode)) {
+                    needsTOB327 = true;
+                    console.log(`  Step 3: Auth "${authorizationCode}" triggers TOB 327 (T-code or not-T rule)`);
+                    await page.evaluate(() => {
+                        const select = document.querySelector('#typeOfBill');
+                        if (select) {
+                            const option327 = Array.from(select.options).find(opt => opt.text.trim() === '327 - Adjustment Claim');
+                            if (option327) {
+                                select.value = option327.value;
+                                select.dispatchEvent(new Event('change', { bubbles: true }));
+                                select.dispatchEvent(new Event('input', { bubbles: true }));
                             }
-                        });
-                        console.log(`  \u2713 Changed TOB to 327`);
-                    } else {
-                        console.log(`  Step 3: Auth code "${authorizationCode}" does NOT start with T \u2192 TOB unchanged`);
-                    }
+                        }
+                    });
+                    console.log(`  \u2713 Changed TOB to 327`);
+                } else if (authorizationCode) {
+                    console.log(`  Step 3: Auth "${authorizationCode}" does NOT trigger TOB 327`);
                 } else {
-                    console.log(`  Step 3: No auth code extracted \u2192 TOB unchanged`);
+                    console.log(`  Step 3: No auth code \u2192 TOB unchanged`);
                 }
                 // STEP 4: Visit Validation - check SN visits per day
                 console.log(`  Step 4: Validating Skilled Nursing visits...`);
@@ -4298,27 +4323,23 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                 console.log(`  \u2713 Worksheet loaded`);
                 // STEP 4: T-Code Authorization check → TOB 327
                 let needsTOB327 = false;
-                if (authorizationCode) {
-                    const authLower = authorizationCode.toLowerCase().trim();
-                    // Check if starts with "t-code" or "t code" (case-insensitive)
-                    if (authLower.startsWith('t-code') || authLower.startsWith('t code')) {
-                        needsTOB327 = true;
-                        console.log(`  Step 4: Auth "${authorizationCode}" starts with t-code \u2192 TOB 327`);
-                        await page.evaluate(() => {
-                            const select = document.querySelector('#typeOfBill');
-                            if (select) {
-                                const option327 = Array.from(select.options).find(opt => opt.text.trim() === '327 - Adjustment Claim');
-                                if (option327) {
-                                    select.value = option327.value;
-                                    select.dispatchEvent(new Event('change', { bubbles: true }));
-                                    select.dispatchEvent(new Event('input', { bubbles: true }));
-                                }
+                if (authorizationCode && shouldChangeTOB327ForAuth(authorizationCode)) {
+                    needsTOB327 = true;
+                    console.log(`  Step 4: Auth "${authorizationCode}" triggers TOB 327 (T-code or not-T rule)`);
+                    await page.evaluate(() => {
+                        const select = document.querySelector('#typeOfBill');
+                        if (select) {
+                            const option327 = Array.from(select.options).find(opt => opt.text.trim() === '327 - Adjustment Claim');
+                            if (option327) {
+                                select.value = option327.value;
+                                select.dispatchEvent(new Event('change', { bubbles: true }));
+                                select.dispatchEvent(new Event('input', { bubbles: true }));
                             }
-                        });
-                        console.log(`  \u2713 Changed TOB to 327`);
-                    } else {
-                        console.log(`  Step 4: Auth "${authorizationCode}" does NOT start with t-code \u2192 TOB unchanged`);
-                    }
+                        }
+                    });
+                    console.log(`  \u2713 Changed TOB to 327`);
+                } else if (authorizationCode) {
+                    console.log(`  Step 4: Auth "${authorizationCode}" does NOT trigger TOB 327`);
                 } else {
                     console.log(`  Step 4: No auth code \u2192 TOB unchanged`);
                 }
