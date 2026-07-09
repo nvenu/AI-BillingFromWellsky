@@ -280,69 +280,76 @@ async function extractPatientZip(page) {
 // startSlot: which slot to start looking from
 async function setValueCode(page, codeNumber, codeText, value, startSlot = 1) {
     return await page.evaluate((args) => {
-        const { codeNum, codeTxt, val, startAt } = args;
-        const results = { success: false, slot: 0, method: '' };
-        // ng-options uses "claimValueCode.value as claimValueCode.text"
-        // The model stores claimValueCode.value (which is the code number as string: "61" or "85")
-        // The DOM <option value="0"> is just Angular's internal index, NOT the model value
-        const optionValue = codeNum === 61 ? '0' : codeNum === 85 ? '1' : '';
-        const modelValue = String(codeNum); // "61" or "85" - what Angular model actually needs
-        // Find first available slot
-        let targetSlot = 0;
-        for (let i = startAt; i <= 12; i++) {
-            const codeSelect = document.querySelector(`#valueCode${i}`);
-            if (codeSelect) {
-                const currentVal = codeSelect.value;
-                if (!currentVal || currentVal === '') { targetSlot = i; break; }
-                if (currentVal === optionValue) { targetSlot = i; break; }
-            }
-        }
-        if (!targetSlot) { results.method = 'no-empty-slot'; return results; }
+        const { codeNum, val } = args;
+        const results = { success: false, slot: 0, method: '', debug: '' };
+        // Fixed slot mapping:
+        // Value Code 61 → slot 1 (#valueCode1, #valueCodeAmount1)
+        // Value Code 85 → slot 5 (#valueCode5, #valueCodeAmount5)
+        const targetSlot = codeNum === 61 ? 1 : codeNum === 85 ? 5 : 0;
+        if (!targetSlot) { results.method = 'unknown-code'; return results; }
         results.slot = targetSlot;
         const codeSelect = document.querySelector(`#valueCode${targetSlot}`);
         const amountInput = document.querySelector(`#valueCodeAmount${targetSlot}`);
-        if (!codeSelect) { results.method = 'code-select-not-found'; return results; }
+        if (!codeSelect) { results.method = 'code-select-not-found(#valueCode' + targetSlot + ')'; return results; }
         if (!amountInput) { results.method = 'amount-input-not-found(#valueCodeAmount' + targetSlot + ')'; return results; }
-        // Set the code dropdown (DOM uses index "0" or "1")
-        codeSelect.value = optionValue;
+        // Dropdown options:
+        // <option value="0">61 - Location Where Service is Furnished</option>
+        // <option value="1">85 - County FIPS Code</option>
+        // ng-options: "claimValueCode.value as claimValueCode.text" means model stores "61" or "85"
+        const domOptionValue = codeNum === 61 ? '0' : '1'; // DOM option value attribute
+        const modelValue = String(codeNum); // "61" or "85" - what Angular model stores
+        // Set the dropdown DOM value
+        codeSelect.value = domOptionValue;
         codeSelect.dispatchEvent(new Event('change', { bubbles: true }));
-        // Force Angular model to use actual code number ("61" or "85")
+        results.method = 'dom-set+';
+        // Set Angular model directly (this is what persists on save)
         if (window.angular) {
             try {
                 const scope = window.angular.element(codeSelect).scope();
-                if (scope) {
+                if (scope && scope.claim) {
                     scope.$apply(() => {
                         scope.claim[`valueCode${targetSlot}`] = modelValue;
                     });
+                    results.method += 'angular-code+';
                 }
-            } catch(e) {}
+            } catch(e) { results.method += 'angular-code-err+'; }
         }
-        // Set the amount value
+        // Set the amount value in DOM
         amountInput.value = val;
         amountInput.dispatchEvent(new Event('input', { bubbles: true }));
         amountInput.dispatchEvent(new Event('change', { bubbles: true }));
         amountInput.dispatchEvent(new Event('blur', { bubbles: true }));
-        results.method = 'direct-set+';
-        // Angular scope update for amount
-        try {
-            if (window.angular) {
+        // Set Angular model for amount
+        if (window.angular) {
+            try {
                 const scope = window.angular.element(amountInput).scope();
                 if (scope && scope.claim) {
                     scope.$apply(() => {
                         scope.claim[`valueCodeAmount${targetSlot}`] = val;
                     });
-                    results.method += 'angular+';
+                    results.method += 'angular-amount+';
                 }
-            }
-        } catch (e) { results.method += 'angular-err+'; }
-        // Verify - check both the select and the Angular model
-        const verifiedSelect = codeSelect.value;
-        const verifiedAmount = amountInput.value;
-        // Success if amount is set (code might show differently due to Angular binding)
-        results.success = (verifiedAmount === val);
-        results.method += `verified(code=${verifiedSelect},amount=${verifiedAmount})`;
+            } catch (e) { results.method += 'angular-amount-err+'; }
+        }
+        // Verify via Angular model
+        let verifiedCode = '';
+        let verifiedAmount = '';
+        if (window.angular) {
+            try {
+                const scope = window.angular.element(codeSelect).scope();
+                if (scope && scope.claim) {
+                    verifiedCode = String(scope.claim[`valueCode${targetSlot}`] || '');
+                    verifiedAmount = String(scope.claim[`valueCodeAmount${targetSlot}`] || '');
+                }
+            } catch(e) {}
+        }
+        if (!verifiedAmount) verifiedAmount = amountInput.value;
+        if (!verifiedCode) verifiedCode = codeSelect.value === domOptionValue ? modelValue : '';
+        results.success = (verifiedCode === modelValue && verifiedAmount === val);
+        results.method += `verified(code=${verifiedCode},amount=${verifiedAmount})`;
+        results.debug = `slot=${targetSlot}, domOpt=${domOptionValue}, model=${modelValue}`;
         return results;
-    }, { codeNum: codeNumber, codeTxt: codeText, val: value, startAt: startSlot });
+    }, { codeNum: codeNumber, val: value });
 }
 // Shared: Check if authorization code triggers TOB 327 change
 // Rule: starts with T/t OR contains "not t" (case-insensitive)
@@ -4564,14 +4571,16 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                         await page.waitForTimeout(3000);
                         continue;
                     }
-                    // STEP 4: Set Value Code 85 (FIPS) first
-                    console.log(`  Step 4: Setting Value Code 85 (FIPS) = ${valueCode85}...`);
-                    const vc85Result = await setValueCode(page, 85, '85', valueCode85, 1);
-                    console.log(`  VC85: slot=${vc85Result.slot}, success=${vc85Result.success}, method=${vc85Result.method}`);
-                    // STEP 5: Set Value Code 61 (CBSA)
-                    console.log(`  Step 5: Setting Value Code 61 (CBSA) = ${valueCode61}...`);
-                    const vc61Result = await setValueCode(page, 61, '61', valueCode61, vc85Result.slot + 1);
+                    // STEP 4: Set Value Code 61 (CBSA) in slot 1
+                    console.log(`  Step 4: Setting Value Code 61 (CBSA) = ${valueCode61} in slot 1...`);
+                    const vc61Result = await setValueCode(page, 61, '61', valueCode61);
                     console.log(`  VC61: slot=${vc61Result.slot}, success=${vc61Result.success}, method=${vc61Result.method}`);
+                    if (vc61Result.debug) console.log(`  VC61 debug: ${vc61Result.debug}`);
+                    // STEP 5: Set Value Code 85 (FIPS) in slot 5
+                    console.log(`  Step 5: Setting Value Code 85 (FIPS) = ${valueCode85} in slot 5...`);
+                    const vc85Result = await setValueCode(page, 85, '85', valueCode85);
+                    console.log(`  VC85: slot=${vc85Result.slot}, success=${vc85Result.success}, method=${vc85Result.method}`);
+                    if (vc85Result.debug) console.log(`  VC85 debug: ${vc85Result.debug}`);
                     // STEP 6: Validate and Save
                     if (!vc61Result.success || !vc85Result.success) {
                         console.log(`  \u26a0\ufe0f  Validation failed - not saving`);
