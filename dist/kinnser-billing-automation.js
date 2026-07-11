@@ -274,6 +274,32 @@ async function extractPatientZip(page) {
         return null;
     });
 }
+// Shared helper: Dismiss the "Helpful Suggestion" modal that appears on claim edit screens
+// Waits up to 10 seconds for modal to appear, then clicks OK
+async function dismissModal(page) {
+    try {
+        // Wait for the modal OK button to become visible (up to 10 seconds)
+        await page.waitForSelector('#modal_go', { state: 'visible', timeout: 10000 });
+        await page.waitForTimeout(500); // Brief pause to ensure button is clickable
+        await page.click('#modal_go');
+        console.log(`  ✓ Clicked OK on "Helpful Suggestion" modal`);
+        await page.waitForTimeout(1000); // Wait for modal to dismiss
+    } catch (e) {
+        // Modal might not appear (already dismissed or not present)
+        // Try fallback: direct DOM click in case visibility detection failed
+        try {
+            const clicked = await page.evaluate(() => {
+                const btn = document.querySelector('#modal_go');
+                if (btn && btn.offsetParent !== null) { btn.click(); return true; }
+                return false;
+            });
+            if (clicked) {
+                console.log(`  ✓ Clicked OK on modal (fallback)`);
+                await page.waitForTimeout(1000);
+            }
+        } catch (e2) {}
+    }
+}
 // Shared helper: Set Value Code on claim worksheet
 // codeNumber: 61 or 85
 // value: the CBSA or FIPS value to enter
@@ -2501,54 +2527,7 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                     console.log(`  ✓ Worksheet page loaded`);
                     // Step 3: NOW wait for and handle "Helpful Suggestion" modal (appears AFTER page loads)
                     console.log(`  Step 3: Waiting for "Helpful Suggestion" modal...`);
-                    // Wait a bit for modal to appear
-                    await page.waitForTimeout(2000);
-                    // Try multiple approaches to click the modal
-                    let modalClicked = false;
-                    // Approach 1: Wait for visible modal button
-                    try {
-                        const modalVisible = await page.isVisible('#modal_go');
-                        if (modalVisible) {
-                            console.log(`  ✓ Modal is visible, clicking OK button...`);
-                            await page.click('#modal_go', { timeout: 3000 });
-                            console.log(`  ✓ Clicked OK on "Helpful Suggestion" modal`);
-                            modalClicked = true;
-                            await page.waitForTimeout(1000);
-                        }
-                    }
-                    catch (e) {
-                        console.log(`  ⚠️  Approach 1 failed: ${e.message}`);
-                    }
-                    // Approach 2: Try clicking via evaluate if approach 1 failed
-                    if (!modalClicked) {
-                        try {
-                            const clicked = await page.evaluate(() => {
-                                const modal = document.querySelector('.modal');
-                                const okButton = document.querySelector('#modal_go');
-                                console.log('Modal element:', modal ? 'Found' : 'Not found');
-                                console.log('OK button:', okButton ? 'Found' : 'Not found');
-                                if (okButton) {
-                                    console.log('OK button visible:', okButton.offsetParent !== null);
-                                    console.log('OK button disabled:', okButton.disabled);
-                                    okButton.click();
-                                    return true;
-                                }
-                                return false;
-                            });
-                            if (clicked) {
-                                console.log(`  ✓ Clicked OK via evaluate`);
-                                modalClicked = true;
-                                await page.waitForTimeout(1000);
-                            }
-                        }
-                        catch (e) {
-                            console.log(`  ⚠️  Approach 2 failed: ${e.message}`);
-                        }
-                    }
-                    if (!modalClicked) {
-                        console.log(`  ⚠️  Modal not found or could not be clicked - continuing anyway`);
-                    }
-                    await page.waitForTimeout(2000);
+                    await dismissModal(page);
                     // Step 4: Change Type of Bill to 327
                     console.log(`  Step 4: Changing Type of Bill to 327...`);
                     const tobChanged = await page.evaluate(() => {
@@ -2732,18 +2711,7 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                 console.log(`  ✓ Worksheet page loaded`);
                 // Step 4: Handle modal
                 console.log(`  Step 3: Handling modal...`);
-                await page.waitForTimeout(2000);
-                try {
-                    const modalVisible = await page.isVisible('#modal_go');
-                    if (modalVisible) {
-                        await page.click('#modal_go', { timeout: 3000 });
-                        console.log(`  ✓ Clicked OK on modal`);
-                    }
-                } catch (e) {}
-                try {
-                    await page.evaluate(() => { const btn = document.querySelector('#modal_go'); if (btn) btn.click(); });
-                } catch (e) {}
-                await page.waitForTimeout(2000);
+                await dismissModal(page);
                 // Step 5: Expand Visits section
                 console.log(`  Step 4: Expanding Visits section...`);
                 try {
@@ -2761,7 +2729,24 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                 console.log(`  Step 5: Processing Skilled Nursing visits...`);
                 let needsTOB327 = false;
                 const visitResult = await page.evaluate((admDateStr) => {
-                    const rows = Array.from(document.querySelectorAll('table.table-striped tbody tr'));
+                    // Find the Visits table specifically (not other tables on the page)
+                    let rows = [];
+                    const accordionToggles = Array.from(document.querySelectorAll('a.accordion-toggle'));
+                    const visitsToggle = accordionToggles.find(a => a.textContent.trim() === 'Visits');
+                    if (visitsToggle) {
+                        const accordionGroup = visitsToggle.closest('.accordion-group') || visitsToggle.closest('[class*="accordion"]');
+                        if (accordionGroup) {
+                            rows = Array.from(accordionGroup.querySelectorAll('table tbody tr'));
+                        }
+                    }
+                    // Fallback: if accordion approach failed, try last table.table-striped (Visits is usually last)
+                    if (rows.length === 0) {
+                        const allTables = document.querySelectorAll('table.table-striped');
+                        if (allTables.length > 0) {
+                            const lastTable = allTables[allTables.length - 1];
+                            rows = Array.from(lastTable.querySelectorAll('tbody tr'));
+                        }
+                    }
                     const snVisitsByDate = {};
                     let udModifiersAdded = 0;
                     let admDate = null;
@@ -2801,6 +2786,15 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                                                     modifier1.value = 'UD';
                                                     modifier1.dispatchEvent(new Event('input', { bubbles: true }));
                                                     modifier1.dispatchEvent(new Event('change', { bubbles: true }));
+                                                    // Angular model update for persistence
+                                                    if (window.angular) {
+                                                        try {
+                                                            const scope = window.angular.element(modifier1).scope();
+                                                            if (scope && scope.lineItem) {
+                                                                scope.$apply(() => { scope.lineItem.modifier1 = 'UD'; });
+                                                            }
+                                                        } catch(e) {}
+                                                    }
                                                     udModifiersAdded++;
                                                 } else if (m1Val !== 'UD') {
                                                     // modifier1 occupied, try modifier2
@@ -2809,6 +2803,14 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                                                         modifier2.value = 'UD';
                                                         modifier2.dispatchEvent(new Event('input', { bubbles: true }));
                                                         modifier2.dispatchEvent(new Event('change', { bubbles: true }));
+                                                        if (window.angular) {
+                                                            try {
+                                                                const scope = window.angular.element(modifier2).scope();
+                                                                if (scope && scope.lineItem) {
+                                                                    scope.$apply(() => { scope.lineItem.modifier2 = 'UD'; });
+                                                                }
+                                                            } catch(e) {}
+                                                        }
                                                         udModifiersAdded++;
                                                     }
                                                 }
@@ -2986,18 +2988,7 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                 console.log(`  ✓ Worksheet page loaded`);
                 // Step 4: Handle modal
                 console.log(`  Step 3: Handling modal...`);
-                await page.waitForTimeout(2000);
-                try {
-                    const modalVisible = await page.isVisible('#modal_go');
-                    if (modalVisible) {
-                        await page.click('#modal_go', { timeout: 3000 });
-                        console.log(`  ✓ Clicked OK on modal`);
-                    }
-                } catch (e) {}
-                try {
-                    await page.evaluate(() => { const btn = document.querySelector('#modal_go'); if (btn) btn.click(); });
-                } catch (e) {}
-                await page.waitForTimeout(2000);
+                await dismissModal(page);
                 // T-code check: Look up auth from Ready tab and change TOB if needed
                 let authorizationCode = null;
                 if (readyTabRecords && readyTabRecords.length > 0) {
@@ -3034,7 +3025,23 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                 // Also check: if any date has > 2 SN visits, skip the claim
                 console.log(`  Step 5: Processing Skilled Nursing visits for UD modifier...`);
                 const visitResult = await page.evaluate((admDateStr) => {
-                    const rows = Array.from(document.querySelectorAll('table.table-striped tbody tr'));
+                    // Find the Visits table specifically (not other tables on the page)
+                    let rows = [];
+                    const accordionToggles = Array.from(document.querySelectorAll('a.accordion-toggle'));
+                    const visitsToggle = accordionToggles.find(a => a.textContent.trim() === 'Visits');
+                    if (visitsToggle) {
+                        const accordionGroup = visitsToggle.closest('.accordion-group') || visitsToggle.closest('[class*="accordion"]');
+                        if (accordionGroup) {
+                            rows = Array.from(accordionGroup.querySelectorAll('table tbody tr'));
+                        }
+                    }
+                    if (rows.length === 0) {
+                        const allTables = document.querySelectorAll('table.table-striped');
+                        if (allTables.length > 0) {
+                            const lastTable = allTables[allTables.length - 1];
+                            rows = Array.from(lastTable.querySelectorAll('tbody tr'));
+                        }
+                    }
                     let udModifiersAdded = 0;
                     const snVisitsByDate = {};
                     let admDate = null;
@@ -3281,12 +3288,7 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                                     await page.waitForLoadState('domcontentloaded', { timeout: 30000 });
                                     await page.waitForTimeout(3000);
                                     // Handle modal
-                                    try {
-                                        const modalVisible = await page.isVisible('#modal_go');
-                                        if (modalVisible) { await page.click('#modal_go', { timeout: 3000 }); }
-                                    } catch (e) {}
-                                    try { await page.evaluate(() => { const btn = document.querySelector('#modal_go'); if (btn) btn.click(); }); } catch (e) {}
-                                    await page.waitForTimeout(2000);
+                                    await dismissModal(page);
                                     console.log(`  ✓ Re-opened claim worksheet`);
                                 } catch (navError) {
                                     console.log(`  ⚠️  Could not re-open claim worksheet: ${navError.message}`);
@@ -3653,17 +3655,7 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                     await page.waitForLoadState('domcontentloaded', { timeout: 30000 });
                     await page.waitForTimeout(3000);
                     // Handle Helpful Suggestion modal
-                    try {
-                        const modalVisible = await page.isVisible('#modal_go');
-                        if (modalVisible) {
-                            await page.click('#modal_go', { timeout: 3000 });
-                            console.log(`  ✓ Clicked OK on modal`);
-                        }
-                    } catch (e) {}
-                    try {
-                        await page.evaluate(() => { const btn = document.querySelector('#modal_go'); if (btn) btn.click(); });
-                    } catch (e) {}
-                    await page.waitForTimeout(2000);
+                    await dismissModal(page);
                     console.log(`  ✓ Worksheet loaded`);
                     // STEP 4: Extract patient ZIP code from the worksheet
                     console.log(`  Step 4: Extracting patient ZIP code...`);
@@ -4078,16 +4070,7 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                 await page.waitForLoadState('domcontentloaded', { timeout: 30000 });
                 await page.waitForTimeout(3000);
                 // Handle Helpful Suggestion modal
-                try {
-                    const modalVisible = await page.isVisible('#modal_go');
-                    if (modalVisible) {
-                        await page.click('#modal_go', { timeout: 3000 });
-                        console.log(`  \u2713 Clicked OK on modal`);
-                    }
-                } catch (e) {}
-                try {
-                    await page.evaluate(() => { const btn = document.querySelector('#modal_go'); if (btn) btn.click(); });
-                } catch (e) {}
+                await dismissModal(page);
                 await page.waitForTimeout(2000);
                 console.log(`  \u2713 Worksheet loaded`);
                 // STEP 3: Type of Bill validation - check if auth code starts with T
@@ -4127,7 +4110,23 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                     console.log(`  \u26a0\ufe0f  Could not expand Visits section`);
                 }
                 const snCheck = await page.evaluate(() => {
-                    const rows = Array.from(document.querySelectorAll('table.table-striped tbody tr'));
+                    // Find the Visits table specifically
+                    let rows = [];
+                    const accordionToggles = Array.from(document.querySelectorAll('a.accordion-toggle'));
+                    const visitsToggle = accordionToggles.find(a => a.textContent.trim() === 'Visits');
+                    if (visitsToggle) {
+                        const accordionGroup = visitsToggle.closest('.accordion-group') || visitsToggle.closest('[class*="accordion"]');
+                        if (accordionGroup) {
+                            rows = Array.from(accordionGroup.querySelectorAll('table tbody tr'));
+                        }
+                    }
+                    if (rows.length === 0) {
+                        const allTables = document.querySelectorAll('table.table-striped');
+                        if (allTables.length > 0) {
+                            const lastTable = allTables[allTables.length - 1];
+                            rows = Array.from(lastTable.querySelectorAll('tbody tr'));
+                        }
+                    }
                     const snVisitsByDate = {};
                     rows.forEach(row => {
                         const cells = row.querySelectorAll('td');
@@ -4318,17 +4317,7 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                 await page.waitForLoadState('domcontentloaded', { timeout: 30000 });
                 await page.waitForTimeout(3000);
                 // Handle modal
-                try {
-                    const modalVisible = await page.isVisible('#modal_go');
-                    if (modalVisible) {
-                        await page.click('#modal_go', { timeout: 3000 });
-                        console.log(`  \u2713 Clicked OK on modal`);
-                    }
-                } catch (e) {}
-                try {
-                    await page.evaluate(() => { const btn = document.querySelector('#modal_go'); if (btn) btn.click(); });
-                } catch (e) {}
-                await page.waitForTimeout(2000);
+                await dismissModal(page);
                 console.log(`  \u2713 Worksheet loaded`);
                 // STEP 4: T-Code Authorization check → TOB 327
                 let needsTOB327 = false;
@@ -4366,7 +4355,23 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                     console.log(`  \u26a0\ufe0f  Could not expand Visits section`);
                 }
                 const visitResult = await page.evaluate((admDateStr) => {
-                    const rows = Array.from(document.querySelectorAll('table.table-striped tbody tr'));
+                    // Find the Visits table specifically
+                    let rows = [];
+                    const accordionToggles = Array.from(document.querySelectorAll('a.accordion-toggle'));
+                    const visitsToggle = accordionToggles.find(a => a.textContent.trim() === 'Visits');
+                    if (visitsToggle) {
+                        const accordionGroup = visitsToggle.closest('.accordion-group') || visitsToggle.closest('[class*="accordion"]');
+                        if (accordionGroup) {
+                            rows = Array.from(accordionGroup.querySelectorAll('table tbody tr'));
+                        }
+                    }
+                    if (rows.length === 0) {
+                        const allTables = document.querySelectorAll('table.table-striped');
+                        if (allTables.length > 0) {
+                            const lastTable = allTables[allTables.length - 1];
+                            rows = Array.from(lastTable.querySelectorAll('tbody tr'));
+                        }
+                    }
                     let udModifiersAdded = 0;
                     const snVisitsByDate = {};
                     let admDate = null;
@@ -4536,12 +4541,7 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                     await page.waitForLoadState('domcontentloaded', { timeout: 30000 });
                     await page.waitForTimeout(3000);
                     // Handle modal
-                    try {
-                        const modalVisible = await page.isVisible('#modal_go');
-                        if (modalVisible) { await page.click('#modal_go', { timeout: 3000 }); console.log(`  \u2713 Clicked OK on modal`); }
-                    } catch (e) {}
-                    try { await page.evaluate(() => { const btn = document.querySelector('#modal_go'); if (btn) btn.click(); }); } catch (e) {}
-                    await page.waitForTimeout(2000);
+                    await dismissModal(page);
                     console.log(`  \u2713 Worksheet loaded`);
                     // STEP 2: Extract patient ZIP code
                     console.log(`  Step 2: Extracting patient ZIP code...`);
@@ -4825,12 +4825,7 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                 await page.waitForLoadState('domcontentloaded', { timeout: 30000 });
                 await page.waitForTimeout(3000);
                 // Handle modal
-                try {
-                    const modalVisible = await page.isVisible('#modal_go');
-                    if (modalVisible) { await page.click('#modal_go', { timeout: 3000 }); console.log(`  \u2713 Clicked OK on modal`); }
-                } catch (e) {}
-                try { await page.evaluate(() => { const btn = document.querySelector('#modal_go'); if (btn) btn.click(); }); } catch (e) {}
-                await page.waitForTimeout(2000);
+                await dismissModal(page);
                 // STEP 4: Set Occurrence Code 50
                 console.log(`  Step 4: Setting Occurrence Code 50 = ${occurrenceCode50Date}...`);
                 const occResult = await page.evaluate((args) => {
@@ -5135,27 +5130,7 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                 console.log(`  ✓ Worksheet page loaded`);
                 // Step 3: Handle "Helpful Suggestion" modal
                 console.log(`  Step 3: Waiting for modal...`);
-                await page.waitForTimeout(2000);
-                let modalClicked = false;
-                try {
-                    const modalVisible = await page.isVisible('#modal_go');
-                    if (modalVisible) {
-                        await page.click('#modal_go', { timeout: 3000 });
-                        console.log(`  ✓ Clicked OK on modal`);
-                        modalClicked = true;
-                        await page.waitForTimeout(1000);
-                    }
-                } catch (e) {}
-                if (!modalClicked) {
-                    try {
-                        await page.evaluate(() => {
-                            const btn = document.querySelector('#modal_go');
-                            if (btn) btn.click();
-                        });
-                        console.log(`  ✓ Clicked OK via evaluate`);
-                    } catch (e) {}
-                }
-                await page.waitForTimeout(2000);
+                await dismissModal(page);
                 // Step 4: Click "+ Visits" accordion to expand
                 console.log(`  Step 4: Expanding Visits section...`);
                 try {
@@ -5179,7 +5154,23 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                 // Step 5: Extract Skilled Nursing visits and count per day
                 console.log(`  Step 5: Checking Skilled Nursing visits...`);
                 const snVisitCheck = await page.evaluate(() => {
-                    const rows = Array.from(document.querySelectorAll('table.table-striped tbody tr'));
+                    // Find the Visits table specifically
+                    let rows = [];
+                    const accordionToggles = Array.from(document.querySelectorAll('a.accordion-toggle'));
+                    const visitsToggle = accordionToggles.find(a => a.textContent.trim() === 'Visits');
+                    if (visitsToggle) {
+                        const accordionGroup = visitsToggle.closest('.accordion-group') || visitsToggle.closest('[class*="accordion"]');
+                        if (accordionGroup) {
+                            rows = Array.from(accordionGroup.querySelectorAll('table tbody tr'));
+                        }
+                    }
+                    if (rows.length === 0) {
+                        const allTables = document.querySelectorAll('table.table-striped');
+                        if (allTables.length > 0) {
+                            const lastTable = allTables[allTables.length - 1];
+                            rows = Array.from(lastTable.querySelectorAll('tbody tr'));
+                        }
+                    }
                     const snVisitsByDate = {};
                     rows.forEach(row => {
                         const cells = row.querySelectorAll('td');

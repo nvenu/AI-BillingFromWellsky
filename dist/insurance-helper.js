@@ -252,7 +252,7 @@ class InsuranceHelper {
         if (!authorization)
             return false;
         const auth = authorization.toLowerCase().trim();
-        return auth === "pending" || auth === "dummy" || auth === "non-billing" || auth === "denied" || auth === "no auth";
+        return auth === "pending" || auth.includes("dummy") || auth === "non-billing" || auth === "denied" || auth === "no auth";
     }
     /**
      * Check if authorization is valid for processing
