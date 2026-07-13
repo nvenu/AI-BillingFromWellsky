@@ -2343,29 +2343,40 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
     }
     console.log("\n=== IDENTIFYING RECORDS THAT NEED TYPE OF BILL 327 ===");
     const recordsNeedingTOB327 = [];
-    // DEBUG: Show all extracted records with full details
-    console.log("\n=== DEBUG: ALL EXTRACTED RECORDS ===");
+    // DEBUG: Show extracted records (limit to first 10 for large sets)
+    console.log("\n=== EXTRACTED RECORDS SUMMARY ===");
     console.log(`Total records extracted: ${validRecords.length}`);
-    validRecords.forEach((record, index) => {
-        console.log(`\n[${index}] Record Details:`);
-        console.log(`  MRN: "${record.mrn}"`);
-        console.log(`  Insurance: "${record.insurance}"`);
-        console.log(`  Billing Period Text: "${record.billingPeriodText}"`);
-        console.log(`  Billing Period Start: "${record.billingPeriodStart}"`);
-        console.log(`  Billing Period End: "${record.billingPeriodEnd}"`);
-        console.log(`  Type of Bill: "${record.typeOfBill}"`);
-        // Test date parsing
-        const startDate = new Date(record.billingPeriodStart);
-        const endDate = new Date(record.billingPeriodEnd);
-        console.log(`  Parsed Start Date: ${startDate.toISOString()} (Valid: ${!isNaN(startDate.getTime())})`);
-        console.log(`  Parsed End Date: ${endDate.toISOString()} (Valid: ${!isNaN(endDate.getTime())})`);
-    });
+    if (validRecords.length <= 20) {
+        validRecords.forEach((record, index) => {
+            console.log(`\n[${index}] Record Details:`);
+            console.log(`  MRN: "${record.mrn}"`);
+            console.log(`  Insurance: "${record.insurance}"`);
+            console.log(`  Billing Period Text: "${record.billingPeriodText}"`);
+            console.log(`  Billing Period Start: "${record.billingPeriodStart}"`);
+            console.log(`  Billing Period End: "${record.billingPeriodEnd}"`);
+            console.log(`  Type of Bill: "${record.typeOfBill}"`);
+            const startDate = new Date(record.billingPeriodStart);
+            const endDate = new Date(record.billingPeriodEnd);
+            console.log(`  Parsed Start Date: ${startDate.toISOString()} (Valid: ${!isNaN(startDate.getTime())})`);
+            console.log(`  Parsed End Date: ${endDate.toISOString()} (Valid: ${!isNaN(endDate.getTime())})`);
+        });
+    } else {
+        console.log(`  (Skipping per-record debug for ${validRecords.length} records — showing insurance breakdown)`);
+        const insuranceCounts = {};
+        validRecords.forEach(r => {
+            const ins = r.insurance || 'UNKNOWN';
+            insuranceCounts[ins] = (insuranceCounts[ins] || 0) + 1;
+        });
+        Object.entries(insuranceCounts).sort((a, b) => b[1] - a[1]).forEach(([ins, count]) => {
+            console.log(`    ${ins}: ${count} records`);
+        });
+    }
     // Check for duplicates with overlapping dates
     console.log("\n=== CHECKING FOR DUPLICATE MRNs WITH OVERLAPPING DATES ===");
     const duplicates = findDuplicatesWithOverlap(validRecords);
     // DEBUG: Show duplicate detection details
-    console.log("\n=== DEBUG: DUPLICATE DETECTION ANALYSIS ===");
-    // Group by MRN for analysis
+    // Duplicate detection analysis (condensed for large sets)
+    console.log("\n=== DUPLICATE DETECTION ANALYSIS ===");
     const mrnGroups = {};
     validRecords.forEach((record, index) => {
         if (!mrnGroups[record.mrn]) {
@@ -2373,34 +2384,29 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
         }
         mrnGroups[record.mrn].push({ ...record, index });
     });
-    console.log(`\nTotal unique MRNs: ${Object.keys(mrnGroups).length}`);
-    Object.keys(mrnGroups).forEach(mrn => {
-        const group = mrnGroups[mrn];
-        if (group.length > 1) {
+    const uniqueMRNs = Object.keys(mrnGroups);
+    const duplicateMRNs = uniqueMRNs.filter(mrn => mrnGroups[mrn].length > 1);
+    console.log(`Total unique MRNs: ${uniqueMRNs.length}`);
+    console.log(`MRNs with multiple records: ${duplicateMRNs.length}`);
+    // Only show detailed per-pair analysis for small sets
+    if (validRecords.length <= 50) {
+        duplicateMRNs.forEach(mrn => {
+            const group = mrnGroups[mrn];
             console.log(`\n⚠️  MRN "${mrn}" has ${group.length} records:`);
             group.forEach(record => {
                 console.log(`    [${record.index}] ${record.billingPeriodText} - ${record.insurance} - TOB: ${record.typeOfBill}`);
             });
-            // Check for overlaps
-            console.log(`  Checking for date overlaps:`);
-            for (let i = 0; i < group.length; i++) {
-                for (let j = i + 1; j < group.length; j++) {
-                    const r1 = group[i];
-                    const r2 = group[j];
-                    const start1 = new Date(r1.billingPeriodStart);
-                    const end1 = new Date(r1.billingPeriodEnd);
-                    const start2 = new Date(r2.billingPeriodStart);
-                    const end2 = new Date(r2.billingPeriodEnd);
-                    const overlaps = start1 <= end2 && start2 <= end1;
-                    console.log(`    [${r1.index}] vs [${r2.index}]: ${overlaps ? '⚠️ OVERLAP DETECTED' : '✓ No overlap'}`);
-                    if (overlaps) {
-                        console.log(`      ${r1.billingPeriodStart} to ${r1.billingPeriodEnd}`);
-                        console.log(`      ${r2.billingPeriodStart} to ${r2.billingPeriodEnd}`);
-                    }
-                }
-            }
+        });
+    } else {
+        // For large sets, just show summary
+        duplicateMRNs.slice(0, 10).forEach(mrn => {
+            const group = mrnGroups[mrn];
+            console.log(`  MRN "${mrn}": ${group.length} records (${group[0].insurance})`);
+        });
+        if (duplicateMRNs.length > 10) {
+            console.log(`  ... and ${duplicateMRNs.length - 10} more duplicate MRNs`);
         }
-    });
+    }
     if (duplicates.length > 0) {
         console.log(`\n⚠️  DUPLICATE DETECTION RESULTS: Found ${duplicates.length} duplicate MRN group(s) with overlapping billing periods`);
         for (const dup of duplicates) {
@@ -6322,35 +6328,36 @@ async function processReadyToSend(page, insuranceHelper, selectedInsurances = nu
     }
 }
 function findDuplicatesWithOverlap(records) {
-    const mrnGroups = {};
-    // Group by MRN
+    const mrnInsuranceGroups = {};
+    // Group by MRN + Insurance (duplicates only matter within same insurance)
     records.forEach((record, index) => {
-        if (record.mrn) {
-            if (!mrnGroups[record.mrn]) {
-                mrnGroups[record.mrn] = [];
+        if (record.mrn && record.insurance) {
+            const key = `${record.mrn}|||${record.insurance.toLowerCase().trim()}`;
+            if (!mrnInsuranceGroups[key]) {
+                mrnInsuranceGroups[key] = [];
             }
-            mrnGroups[record.mrn].push({ ...record, originalIndex: index });
+            mrnInsuranceGroups[key].push({ ...record, originalIndex: index });
         }
     });
     const duplicates = [];
-    // Check for overlapping dates within each MRN group
-    Object.keys(mrnGroups).forEach(mrn => {
-        const group = mrnGroups[mrn];
+    // Check for overlapping dates within each MRN+Insurance group
+    Object.keys(mrnInsuranceGroups).forEach(key => {
+        const group = mrnInsuranceGroups[key];
         if (group.length > 1) {
+            const mrn = group[0].mrn;
             // Find all records with overlapping dates
             const overlappingIndices = [];
             for (let i = 0; i < group.length; i++) {
                 for (let j = i + 1; j < group.length; j++) {
                     const record1 = group[i];
                     const record2 = group[j];
-                    // Parse dates (adjust format as needed)
+                    // Parse dates
                     const start1 = new Date(record1.billingPeriodStart);
                     const end1 = new Date(record1.billingPeriodEnd);
                     const start2 = new Date(record2.billingPeriodStart);
                     const end2 = new Date(record2.billingPeriodEnd);
                     // Check for overlap
                     if (start1 <= end2 && start2 <= end1) {
-                        // Add both indices if not already added
                         if (!overlappingIndices.includes(record1.originalIndex)) {
                             overlappingIndices.push(record1.originalIndex);
                         }
@@ -6360,11 +6367,10 @@ function findDuplicatesWithOverlap(records) {
                     }
                 }
             }
-            // If we found overlapping records, add them as a group
             if (overlappingIndices.length > 1) {
                 duplicates.push({
                     mrn,
-                    indices: overlappingIndices.sort((a, b) => a - b) // Sort indices
+                    indices: overlappingIndices.sort((a, b) => a - b)
                 });
             }
         }
