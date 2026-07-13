@@ -4295,17 +4295,26 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                 // Re-find edit button fresh from current page (table may have reloaded)
                 let editButtonId = record.editButtonId;
                 try {
-                    const freshEditId = await page.evaluate((mrn) => {
+                    const freshEditId = await page.evaluate((mrn, billingPeriod) => {
                         const rows = Array.from(document.querySelectorAll('table tbody tr'));
                         for (const row of rows) {
                             const text = row.textContent || '';
                             if (text.includes(mrn)) {
+                                if (billingPeriod && !text.includes(billingPeriod)) continue;
                                 const editBtn = row.querySelector('a[id*="openWorksheet"]') || row.querySelector('a.ui-kinnser-edit');
                                 if (editBtn) return editBtn.id;
                             }
                         }
+                        if (billingPeriod) {
+                            for (const row of rows) {
+                                if ((row.textContent || '').includes(mrn)) {
+                                    const editBtn = row.querySelector('a[id*="openWorksheet"]') || row.querySelector('a.ui-kinnser-edit');
+                                    if (editBtn) return editBtn.id;
+                                }
+                            }
+                        }
                         return null;
-                    }, record.mrn);
+                    }, record.mrn, record.billingPeriodText);
                     if (freshEditId) {
                         editButtonId = freshEditId;
                         console.log(`  Found fresh edit button: ${editButtonId}`);
@@ -4523,16 +4532,28 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                     console.log(`  Step 1: Opening claim edit screen...`);
                     let editButtonId = record.editButtonId;
                     try {
-                        const freshEditId = await page.evaluate((mrn) => {
+                        const freshEditId = await page.evaluate((mrn, billingPeriod) => {
                             const rows = Array.from(document.querySelectorAll('table tbody tr'));
                             for (const row of rows) {
-                                if ((row.textContent || '').includes(mrn)) {
+                                const text = row.textContent || '';
+                                if (text.includes(mrn)) {
+                                    // If billing period provided, also match on it to disambiguate same-MRN records
+                                    if (billingPeriod && !text.includes(billingPeriod)) continue;
                                     const editBtn = row.querySelector('a[id*="openWorksheet"]') || row.querySelector('a.ui-kinnser-edit');
                                     if (editBtn) return editBtn.id;
                                 }
                             }
+                            // Fallback: match by MRN only if billing period match failed
+                            if (billingPeriod) {
+                                for (const row of rows) {
+                                    if ((row.textContent || '').includes(mrn)) {
+                                        const editBtn = row.querySelector('a[id*="openWorksheet"]') || row.querySelector('a.ui-kinnser-edit');
+                                        if (editBtn) return editBtn.id;
+                                    }
+                                }
+                            }
                             return null;
-                        }, record.mrn);
+                        }, record.mrn, record.billingPeriodText);
                         if (freshEditId) editButtonId = freshEditId;
                     } catch (e) {}
                     await page.waitForSelector(`#${editButtonId}`, { timeout: 15000 });
@@ -4543,6 +4564,31 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                     // Handle modal
                     await dismissModal(page);
                     console.log(`  \u2713 Worksheet loaded`);
+                    // CHECK: If Value Codes already set, skip this record
+                    const alreadyHasVC = await page.evaluate(() => {
+                        const vc1 = document.querySelector('#valueCode1');
+                        const vca1 = document.querySelector('#valueCodeAmount1');
+                        if (vc1 && vca1) {
+                            // Check Angular model
+                            if (window.angular) {
+                                try {
+                                    const scope = window.angular.element(vc1).scope();
+                                    if (scope && scope.claim && scope.claim.valueCode1 && scope.claim.valueCodeAmount1) {
+                                        return true;
+                                    }
+                                } catch(e) {}
+                            }
+                            // Fallback: check DOM
+                            if (vc1.value && vc1.value !== '' && vca1.value && vca1.value !== '') return true;
+                        }
+                        return false;
+                    });
+                    if (alreadyHasVC) {
+                        console.log(`  ✓ Value Codes already set - skipping (no changes needed)`);
+                        try { await page.click('#returnBtn'); } catch (e) { try { await page.click('#cancelBtn'); } catch (e2) {} }
+                        await page.waitForTimeout(3000);
+                        continue;
+                    }
                     // STEP 2: Extract patient ZIP code
                     console.log(`  Step 2: Extracting patient ZIP code...`);
                     const patientZip = await extractPatientZip(page);
@@ -4807,16 +4853,26 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                 console.log(`  Step 3: Opening claim edit screen...`);
                 let editButtonId = record.editButtonId;
                 try {
-                    const freshEditId = await page.evaluate((mrn) => {
+                    const freshEditId = await page.evaluate((mrn, billingPeriod) => {
                         const rows = Array.from(document.querySelectorAll('table tbody tr'));
                         for (const row of rows) {
-                            if ((row.textContent || '').includes(mrn)) {
+                            const text = row.textContent || '';
+                            if (text.includes(mrn)) {
+                                if (billingPeriod && !text.includes(billingPeriod)) continue;
                                 const editBtn = row.querySelector('a[id*="openWorksheet"]') || row.querySelector('a.ui-kinnser-edit');
                                 if (editBtn) return editBtn.id;
                             }
                         }
+                        if (billingPeriod) {
+                            for (const row of rows) {
+                                if ((row.textContent || '').includes(mrn)) {
+                                    const editBtn = row.querySelector('a[id*="openWorksheet"]') || row.querySelector('a.ui-kinnser-edit');
+                                    if (editBtn) return editBtn.id;
+                                }
+                            }
+                        }
                         return null;
-                    }, record.mrn);
+                    }, record.mrn, record.billingPeriodText);
                     if (freshEditId) editButtonId = freshEditId;
                 } catch (e) {}
                 await page.waitForSelector(`#${editButtonId}`, { timeout: 15000 });
@@ -4967,7 +5023,7 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
     // Check for Community health Group records (add severity point to remarks)
     console.log("\n=== CHECKING FOR COMMUNITY HEALTH GROUP RECORDS ===");
     const communityHealthRecords = isInsuranceSelected('community health group')
-        ? records.filter(r => r.insurance.toLowerCase().includes('community health group'))
+        ? validRecords.filter(r => r.insurance.toLowerCase().includes('community health group'))
         : [];
     if (communityHealthRecords.length > 0) {
         console.log(`\n⚠️  Found ${communityHealthRecords.length} Community health Group record(s)`);
@@ -4980,118 +5036,176 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
             console.log(`  Insurance: ${record.insurance}`);
             console.log(`  Billing Period: ${record.billingPeriodText}`);
             console.log(`  Billing Period Start: ${record.billingPeriodStart}`);
-            // Find the print icon for this record
-            const printIconId = await page.evaluate((rowIndex) => {
-                const rows = Array.from(document.querySelectorAll('table tbody tr'));
-                const row = rows[rowIndex];
-                if (!row)
-                    return null;
-                const printIcon = row.querySelector('label[id*="openClaimPrintView"]');
-                return (printIcon === null || printIcon === void 0 ? void 0 : printIcon.id) || null;
-            }, record.index);
-            if (!printIconId) {
-                console.log(`  ⚠️  No print icon found for this record - skipping`);
+            console.log(`  Edit Button ID: ${record.editButtonId}`);
+            if (!record.editButtonId) {
+                console.log(`  ⚠️  No edit button found - skipping`);
+                manualReviewRecords.push({ mrn: record.mrn, insurance: record.insurance, billingPeriod: record.billingPeriodText, reason: "No edit button found" });
                 continue;
             }
-            console.log(`  Print Icon ID: ${printIconId}`);
             try {
-                // Set up listener for new page (PDF tab) before clicking
-                const newPagePromise = page.context().waitForEvent('page', { timeout: 30000 });
-                // Click print icon
-                console.log(`  Clicking print icon...`);
-                await page.click(`#${printIconId}`);
-                console.log(`  ✓ Print icon clicked`);
-                // Wait for PDF tab to open
-                console.log(`  Waiting for PDF tab to open...`);
-                const pdfPage = await newPagePromise;
-                console.log(`  ✓ PDF tab opened`);
-                // Wait for PDF to fully load
-                console.log(`  Waiting for PDF content to fully load...`);
-                await pdfPage.waitForLoadState('load', { timeout: 30000 });
-                await pdfPage.waitForTimeout(3000); // Extra time for PDF rendering
-                console.log(`  ✓ PDF content ready`);
-                // Get the PDF URL
-                const pdfUrl = pdfPage.url();
-                console.log(`  PDF URL: ${pdfUrl}`);
-                // Download the PDF content
-                console.log(`  Downloading PDF content...`);
-                const response = await pdfPage.context().request.fetch(pdfUrl);
-                const pdfBuffer = await response.body();
-                console.log(`  ✓ Downloaded PDF (${pdfBuffer.length} bytes)`);
-                // Close the PDF tab
-                await pdfPage.close();
-                console.log(`  ✓ Closed PDF tab`);
-                // Extract date of admission from PDF
-                console.log(`  Extracting date of admission from PDF...`);
-                const dateOfAdmission = await extractDateOfAdmission(pdfBuffer);
-                if (!dateOfAdmission) {
-                    console.log(`  ⚠️  Could not extract date of admission - skipping severity point calculation`);
+                // STEP 1: Get admission date from PDF using the reliable extractPdfFromPrintIcon helper
+                console.log(`  Step 1: Getting admission date from PDF...`);
+                let admissionDate = null;
+                let printIconId = null;
+                try {
+                    printIconId = await page.evaluate((mrn) => {
+                        const rows = Array.from(document.querySelectorAll('table tbody tr'));
+                        for (const row of rows) {
+                            if ((row.textContent || '').includes(mrn)) {
+                                const icon = row.querySelector('label[id*="openClaimPrintView"]');
+                                if (icon) return icon.id;
+                            }
+                        }
+                        return null;
+                    }, record.mrn);
+                } catch (e) {}
+                if (!printIconId) {
+                    const claimNumber = record.editButtonId.replace('openWorksheet', '');
+                    printIconId = `openClaimPrintView${claimNumber}`;
+                    console.log(`  Using derived print icon ID: ${printIconId}`);
+                } else {
+                    console.log(`  Found fresh print icon ID: ${printIconId}`);
+                }
+                try {
+                    const pdfBuffer = await extractPdfFromPrintIcon(page, printIconId);
+                    if (pdfBuffer) {
+                        admissionDate = await extractDateOfAdmission(pdfBuffer);
+                        if (admissionDate) {
+                            console.log(`  ✓ Admission Date: ${admissionDate}`);
+                        } else {
+                            console.log(`  ⚠️  Could not extract admission date from PDF`);
+                        }
+                    } else {
+                        console.log(`  ⚠️  Could not get PDF content`);
+                    }
+                } catch (pdfError) {
+                    console.log(`  ⚠️  Error getting PDF: ${pdfError.message}`);
+                }
+                if (!admissionDate) {
+                    console.log(`  WARNING: No admission date - skipping record (manual review)`);
+                    manualReviewRecords.push({ mrn: record.mrn, insurance: record.insurance, billingPeriod: record.billingPeriodText, reason: "Could not extract admission date from PDF" });
                     continue;
                 }
-                console.log(`  ✓ Date of Admission: ${dateOfAdmission}`);
-                // Calculate severity point based on current date
-                const severityPoint = calculateSeverityPoint(dateOfAdmission);
+                // STEP 2: Calculate severity point
+                const severityPoint = calculateSeverityPoint(admissionDate);
                 const severityRemark = formatSeverityPointRemark(severityPoint);
-                console.log(`  ✓ Severity Point Remark: "${severityRemark}"`);
-                // Now edit the record using the worksheet link
-                if (record.worksheetLinkId) {
-                    console.log(`  Clicking Worksheet Edit link: ${record.worksheetLinkId}`);
-                    await page.click(`#${record.worksheetLinkId}`);
-                    console.log("  ✓ Worksheet link clicked");
-                    // Wait for loading to appear and disappear
-                    console.log("  Waiting for loading to complete...");
-                    await page.waitForTimeout(2000);
-                    await page.waitForSelector('.loading-message', { state: 'hidden', timeout: 60000 });
-                    await page.waitForTimeout(2000);
-                    console.log("  ✓ Loading complete");
-                    // Check if popup appeared and click OK if it exists
-                    try {
-                        const modalButton = await page.waitForSelector('#modal_go', { timeout: 5000 });
-                        if (modalButton) {
-                            console.log("  Popup detected, clicking OK...");
-                            await page.click('#modal_go');
-                            console.log("  ✓ Clicked OK button on popup");
-                            await page.waitForTimeout(2000);
+                console.log(`  ✓ Severity Point: ${severityPoint}, Remark: "${severityRemark}"`);
+                // STEP 3: Open Claim Edit Screen (use edit button, not worksheet link)
+                console.log(`  Step 3: Opening claim edit screen...`);
+                // Re-find edit button fresh from current page (table may have reloaded)
+                let editButtonId = record.editButtonId;
+                try {
+                    const freshEditId = await page.evaluate((mrn, billingPeriod) => {
+                        const rows = Array.from(document.querySelectorAll('table tbody tr'));
+                        for (const row of rows) {
+                            const text = row.textContent || '';
+                            if (text.includes(mrn)) {
+                                if (billingPeriod && !text.includes(billingPeriod)) continue;
+                                const editBtn = row.querySelector('a[id*="openWorksheet"]') || row.querySelector('a.ui-kinnser-edit');
+                                if (editBtn) return editBtn.id;
+                            }
                         }
+                        if (billingPeriod) {
+                            for (const row of rows) {
+                                if ((row.textContent || '').includes(mrn)) {
+                                    const editBtn = row.querySelector('a[id*="openWorksheet"]') || row.querySelector('a.ui-kinnser-edit');
+                                    if (editBtn) return editBtn.id;
+                                }
+                            }
+                        }
+                        return null;
+                    }, record.mrn, record.billingPeriodText);
+                    if (freshEditId) {
+                        editButtonId = freshEditId;
+                        console.log(`  Found fresh edit button: ${editButtonId}`);
                     }
-                    catch (e) {
-                        console.log("  No popup detected, continuing...");
+                } catch (e) {}
+                await page.click(`#${editButtonId}`);
+                console.log(`  ✓ Clicked edit button`);
+                await page.waitForLoadState('domcontentloaded', { timeout: 30000 });
+                await page.waitForTimeout(3000);
+                // STEP 4: Dismiss modal
+                await dismissModal(page);
+                console.log(`  ✓ Worksheet loaded`);
+                // STEP 5: Enter severity point in remarks field
+                console.log(`  Step 5: Entering severity point in remarks...`);
+                const remarksUpdated = await page.evaluate((remark) => {
+                    const remarksField = document.querySelector('#remarks') || document.querySelector('textarea[ng-model*="remark"]');
+                    if (!remarksField) return { success: false, error: 'remarks field not found' };
+                    const currentValue = remarksField.value || '';
+                    // Check if severity point is already there
+                    if (currentValue.toLowerCase().includes('severity point')) {
+                        return { success: true, alreadyPresent: true, value: currentValue };
                     }
-                    // Wait for remarks textarea to be visible
-                    console.log("  Waiting for remarks textarea...");
-                    await page.waitForSelector('#remarks', { timeout: 10000 });
-                    console.log("  ✓ Found remarks textarea");
-                    // Get current value
-                    const currentValue = await page.$eval('#remarks', (el) => el.value || '');
-                    console.log(`  Current remarks: "${currentValue}"`);
-                    // Append severity point remark
-                    const newValue = currentValue ? `${currentValue}\n${severityRemark}` : severityRemark;
-                    // Clear and fill
-                    await page.fill('#remarks', newValue);
-                    console.log(`  ✓ Updated remarks to: "${newValue}"`);
-                    // Track this change
-                    changedRecords.push({
-                        mrn: record.mrn,
-                        billingPeriod: record.billingPeriodText,
-                        reason: `Community health Group - ${severityRemark}`
-                    });
-                    await page.waitForTimeout(1000);
-                    // Click Save and Close
-                    console.log("  Clicking Save and Close button...");
-                    await page.waitForSelector('#submitBtn', { timeout: 10000 });
-                    await page.click('#submitBtn');
-                    console.log("  ✓ Clicked Save and Close");
-                    // Wait for page to reload and return to Pending Approval
-                    await page.waitForSelector('.loading-message', { state: 'hidden', timeout: 60000 });
+                    const newValue = currentValue ? `${currentValue}\n${remark}` : remark;
+                    remarksField.value = newValue;
+                    remarksField.dispatchEvent(new Event('input', { bubbles: true }));
+                    remarksField.dispatchEvent(new Event('change', { bubbles: true }));
+                    // Angular model update
+                    if (window.angular) {
+                        try {
+                            const scope = window.angular.element(remarksField).scope();
+                            if (scope) {
+                                const modelAttr = remarksField.getAttribute('ng-model');
+                                if (modelAttr) {
+                                    scope.$apply(() => {
+                                        // Navigate the model path (e.g., "claim.remarks" or "remarks")
+                                        const parts = modelAttr.split('.');
+                                        let target = scope;
+                                        for (let i = 0; i < parts.length - 1; i++) {
+                                            target = target[parts[i]];
+                                        }
+                                        if (target) {
+                                            target[parts[parts.length - 1]] = newValue;
+                                        }
+                                    });
+                                }
+                            }
+                        } catch(e) {}
+                    }
+                    return { success: true, alreadyPresent: false, value: newValue };
+                }, severityRemark);
+                if (remarksUpdated.success) {
+                    if (remarksUpdated.alreadyPresent) {
+                        console.log(`  ✓ Severity point already present in remarks`);
+                    } else {
+                        console.log(`  ✓ Updated remarks: "${remarksUpdated.value}"`);
+                    }
+                } else {
+                    console.log(`  ⚠️  Could not update remarks: ${remarksUpdated.error}`);
+                    manualReviewRecords.push({ mrn: record.mrn, insurance: record.insurance, billingPeriod: record.billingPeriodText, reason: `Remarks field not found - severity point: ${severityRemark}` });
+                    // Cancel and continue
+                    try { await page.click('#returnBtn'); } catch (e) { try { await page.click('#cancelBtn'); } catch (e2) {} }
                     await page.waitForTimeout(3000);
-                    console.log(`  ✓ Community health Group record processed successfully`);
+                    continue;
                 }
-                else {
-                    console.log(`  ⚠️  No worksheet link found for this record`);
+                // STEP 6: Save and Close
+                console.log(`  Step 6: Clicking Save and Close...`);
+                await page.evaluate(() => {
+                    const btn = document.querySelector('#submitBtn');
+                    if (btn) btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                });
+                await page.waitForTimeout(1000);
+                await page.click('#submitBtn');
+                console.log(`  ✓ Clicked Save and Close`);
+                await page.waitForLoadState('domcontentloaded', { timeout: 30000 });
+                await page.waitForTimeout(3000);
+                try { await page.waitForSelector('.loading-message', { state: 'hidden', timeout: 30000 }); } catch (e) {}
+                await page.waitForTimeout(3000);
+                try { await page.waitForSelector('table tbody tr', { timeout: 15000 }); } catch (e) {}
+                await page.waitForTimeout(2000);
+                // Track change
+                changedRecords.push({
+                    mrn: record.mrn,
+                    billingPeriod: record.billingPeriodText,
+                    reason: `Community health Group - ${severityRemark}`
+                });
+                console.log(`  ✅ Successfully processed Community health Group record`);
+            } catch (error) {
+                console.error(`  ✗ Error processing Community health Group record:`, error.message || error);
+                try { await page.click('#returnBtn'); await page.waitForTimeout(3000); } catch (e) {
+                    try { await page.click('#pendingClaimsApproval'); await page.waitForTimeout(3000); } catch (e2) {}
                 }
-            }
-            catch (error) {
-                console.error(`  ✗ Error processing Community health Group record:`, error);
             }
         }
         console.log(`\n✓ Completed processing ${communityHealthRecords.length} Community health Group records`);
