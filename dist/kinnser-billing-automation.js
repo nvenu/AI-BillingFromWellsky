@@ -485,7 +485,7 @@ async function processOffice(page, office, insuranceHelper, selectedInsurances =
             catch (error) {
                 console.error(`⚠️  Error in Pending Approval/Ready To Send for ${office.name}:`, error.message || error);
             }
-            return { records: [], filename: null, readyToSendFiles, readyToSendCount: readyToSendFiles.length > 0 ? readyToSendFiles.filter(f => f.includes('electronic') || f.includes('paper-claim')).length : 0, changedTo327, snFailures, manualReview: manualReviewFromPA || [] };
+            return { records: [], filename: null, readyToSendFiles, readyToSendCount: readyToSendFiles.length > 0 ? readyToSendFiles.filter(f => f.includes('electronic') || f.includes('paper-claim')).length : 0, pendingApprovalCount: 0, changedTo327, snFailures, manualReview: manualReviewFromPA || [] };
         }
         // 5. Process records ONE BY ONE: select valid record → click create → repeat
         const { selectedCount, selectedRecords, failedRecords } = await processRecordsOneByOne(page, insuranceHelper, selectedInsurances);
@@ -515,6 +515,7 @@ async function processOffice(page, office, insuranceHelper, selectedInsurances =
         let changedTo327 = [];
         let manualReviewFromPA = [];
         let snFailures = [];
+        let pendingApprovalCount = 0;
         try {
             // Browser health check before Pending Approval
             console.log(`\n=== BROWSER HEALTH CHECK ===`);
@@ -567,7 +568,7 @@ async function processOffice(page, office, insuranceHelper, selectedInsurances =
         }
         console.log(`✓ Successfully processed ${office.name}`);
         const readyToSendCount = readyToSendFiles.length > 0 ? readyToSendFiles.filter(f => f.includes('electronic') || f.includes('paper-claim')).length : 0;
-        return { records: selectedRecords, filename, readyToSendFiles, readyToSendCount, changedTo327, snFailures, manualReview: manualReviewFromPA || [] };
+        return { records: selectedRecords, filename, readyToSendFiles, readyToSendCount, pendingApprovalCount, changedTo327, snFailures, manualReview: manualReviewFromPA || [] };
     }
     catch (error) {
         console.error(`✗ Error processing office ${office.name}:`, error);
@@ -754,10 +755,10 @@ async function loginAndProcessOffices(officeValue = 'all', selectedInsurances = 
             // Select the office
             await selectOffice(page, office);
             // Process this office
-            const { records: officeRecords, filename, readyToSendFiles, readyToSendCount, changedTo327, snFailures, manualReview } = await processOffice(page, office, insuranceHelper, selectedInsurances);
+            const { records: officeRecords, filename, readyToSendFiles, readyToSendCount, pendingApprovalCount, changedTo327, snFailures, manualReview } = await processOffice(page, office, insuranceHelper, selectedInsurances);
             allSelectedRecords.push(...officeRecords);
             const totalCount = officeRecords.length + (readyToSendCount || 0);
-            summary.push({ office: office.name, count: officeRecords.length, readyToSendCount: readyToSendCount || 0, changedTo327Count: changedTo327.length });
+            summary.push({ office: office.name, count: officeRecords.length, readyToSendCount: readyToSendCount || 0, pendingApprovalCount: pendingApprovalCount || 0, changedTo327Count: changedTo327.length });
             // Collect all 327 changes with office name
             changedTo327.forEach(change => {
                 all327Changes.push({
@@ -880,8 +881,8 @@ These records remain in Pending Approval and must be reviewed and submitted manu
 ${(allSelectedRecords.length > 0 || allReadyToSendFiles.length > 0) ? `
 WORKFLOW STATUS:
 ✓ Ready tab: ${allSelectedRecords.length} records selected and Create button clicked
-✓ Pending Approval tab: Processed (duplicates fixed if found)
-${allReadyToSendFiles.length > 0 ? '✓ Ready To Send tab: Records processed and submitted' : '⚠️  Ready To Send tab: No records found (may still be in Pending Approval)'}
+✓ Pending Approval tab: ${summary.reduce((sum, s) => sum + (s.pendingApprovalCount || 0), 0)} records processed (duplicates fixed if found)
+${allReadyToSendFiles.length > 0 ? `✓ Ready To Send tab: ${summary.reduce((sum, s) => sum + (s.readyToSendCount || 0), 0)} records processed and submitted` : '⚠️  Ready To Send tab: No records found (may still be in Pending Approval)'}
 
 ATTACHED FILES (${allAttachments.length} total):
 
@@ -2143,6 +2144,8 @@ async function processPendingApproval(page, insuranceHelper, selectedInsurances 
             changedTo327 = pendingResult.changedRecords || pendingResult;
             snFailures = pendingResult.snFailures || [];
             manualReview = pendingResult.manualReviewRecords || [];
+            pendingApprovalCount = pendingResult.totalRecords || 0;
+            console.log(`✓ Pending Approval: ${pendingApprovalCount} records processed`);
             console.log(`✓ Type of Bill changes: ${changedTo327.length} records changed to 327`);
             if (manualReview.length > 0) {
                 console.log(`⚠️  Manual Review: ${manualReview.length} records skipped`);
@@ -5426,7 +5429,7 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
     console.log(`  Records in Pending Approval table: ${totalRecordsInTable}`);
     if (totalRecordsInTable === 0) {
         console.log("  ✓ No records in Pending Approval - nothing to approve");
-        return { changedRecords, manualReviewRecords, snFailures: recordsFailingSNCheck.map(idx => {
+        return { changedRecords, manualReviewRecords, totalRecords: validRecords.length, snFailures: recordsFailingSNCheck.map(idx => {
             const record = validRecords[idx];
             return { mrn: record ? record.mrn : 'Unknown', billingPeriod: record ? record.billingPeriodText : 'Unknown', insurance: record ? record.insurance : 'Unknown' };
         })};
@@ -5501,7 +5504,7 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
         console.log("⚠️  'Select All' checkbox not found with any selector");
         console.log("⚠️  This is unexpected - Pending Approval should have a Select All checkbox");
         console.log("⚠️  Skipping approval to avoid errors");
-        return { changedRecords, manualReviewRecords, snFailures: recordsFailingSNCheck.map(idx => {
+        return { changedRecords, manualReviewRecords, totalRecords: validRecords.length, snFailures: recordsFailingSNCheck.map(idx => {
             const record = records[idx];
             return { mrn: record ? record.mrn : 'Unknown', billingPeriod: record ? record.billingPeriodText : 'Unknown', insurance: record ? record.insurance : 'Senior whole Health (BID)' };
         })};
@@ -5681,7 +5684,7 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
         console.log("✗ Failed to click Approve button - skipping approval");
     }
     // Return the list of changed records and SN failures
-    return { changedRecords, manualReviewRecords, snFailures: recordsFailingSNCheck.map(idx => {
+    return { changedRecords, manualReviewRecords, totalRecords: validRecords.length, snFailures: recordsFailingSNCheck.map(idx => {
         const record = records[idx];
         return { mrn: record ? record.mrn : 'Unknown', billingPeriod: record ? record.billingPeriodText : 'Unknown', insurance: record ? record.insurance : 'Senior whole Health (BID)' };
     })};
