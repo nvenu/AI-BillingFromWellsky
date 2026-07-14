@@ -5507,6 +5507,17 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
         }
         console.log(`  Total Fallon records excluded: ${fallonSkipRecords.length}`);
     }
+    // Exclude ALL Sharp insurance records from approval (they stay in Pending Approval)
+    const sharpInsuranceNames = ['sharp community comm', 'sharp community ma', 'sharp rees-stealy ma', 'sharp rees-stealy comm'];
+    const sharpRecords = validRecords.filter(r => sharpInsuranceNames.includes(r.insurance.toLowerCase().trim()));
+    if (sharpRecords.length > 0) {
+        console.log(`\n=== SHARP RECORDS EXCLUDED FROM APPROVAL (stay in Pending Approval) ===`);
+        for (const record of sharpRecords) {
+            recordsFailingSNCheck.push(record.index);
+            console.log(`  ⊘ Record [${record.index}] MRN: ${record.mrn}, Insurance: ${record.insurance}, Period: ${record.billingPeriodText} - will NOT be approved`);
+        }
+        console.log(`  Total Sharp records excluded: ${sharpRecords.length}`);
+    }
     console.log("\n=== SELECTING ALL RECORDS FOR APPROVAL ===");
     // Ensure we're on the Pending Approval page with fresh data
     console.log("Verifying we are on Pending Approval page...");

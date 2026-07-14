@@ -128,6 +128,11 @@ class InsuranceHelper {
                     this.noChangesInsurances.add(nameLower);
                     console.log(`  ℹ️  Added special handling insurance: ${instruction.Name}`);
                 }
+                // Special handling: Sharp insurances - duplicate TOB 327 only, no auto-approve
+                else if (nameLower === "sharp community comm" || nameLower === "sharp community ma" || nameLower === "sharp rees-stealy ma" || nameLower === "sharp rees-stealy comm") {
+                    this.noChangesInsurances.add(nameLower);
+                    console.log(`  ℹ️  Added special handling insurance: ${instruction.Name}`);
+                }
             }
         });
         console.log(`Loaded ${this.instructions.length} insurance instructions`);
@@ -178,6 +183,14 @@ class InsuranceHelper {
         if (!this.noChangesInsurances.has("northcoast -aetna")) {
             this.noChangesInsurances.add("northcoast -aetna");
             console.log(`  ℹ️  Added Northcoast -Aetna to processable list (hardcoded)`);
+        }
+        // Ensure Sharp insurances are always in the processable list
+        const sharpInsurances = ["sharp community comm", "sharp community ma", "sharp rees-stealy ma", "sharp rees-stealy comm"];
+        for (const sharp of sharpInsurances) {
+            if (!this.noChangesInsurances.has(sharp)) {
+                this.noChangesInsurances.add(sharp);
+                console.log(`  ℹ️  Added ${sharp} to processable list (hardcoded)`);
+            }
         }
         // EXCLUSION LIST: Remove specific insurances from automation by location
         this.excludedInsurances = new Map();
