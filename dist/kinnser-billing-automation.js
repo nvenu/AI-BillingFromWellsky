@@ -274,6 +274,119 @@ async function extractPatientZip(page) {
         return null;
     });
 }
+// Shared helper: Expand the Visits accordion section on a claim worksheet
+// Uses Angular scope to set isOpen = true (ng-click="isOpen = !isOpen")
+// If already expanded, does nothing.
+async function expandVisitsSection(page) {
+    const result = await page.evaluate(() => {
+        const links = Array.from(document.querySelectorAll('a.accordion-toggle'));
+        const visitsLink = links.find(a => a.textContent.trim() === 'Visits') ||
+                           links.find(a => a.textContent.trim().includes('Visits'));
+        if (!visitsLink) return { success: false, error: 'Visits link not found', linksFound: links.map(a => a.textContent.trim()) };
+        // Check if already expanded via Angular scope
+        if (window.angular) {
+            try {
+                const scope = window.angular.element(visitsLink).scope();
+                if (scope) {
+                    if (scope.isOpen === true) {
+                        return { success: true, method: 'already-open' };
+                    }
+                    // Not open — set isOpen = true
+                    scope.$apply(() => { scope.isOpen = true; });
+                    return { success: true, method: 'angular-scope-set' };
+                }
+            } catch(e) {}
+        }
+        // Fallback: check if the accordion body is visible (non-Angular check)
+        const group = visitsLink.closest('.accordion-group') || visitsLink.parentElement.parentElement;
+        if (group) {
+            const body = group.querySelector('.accordion-body');
+            if (body && body.classList.contains('in') && body.offsetHeight > 0) {
+                return { success: true, method: 'already-visible' };
+            }
+        }
+        // Not expanded — click to open
+        visitsLink.click();
+        return { success: true, method: 'dom-click' };
+    });
+    if (result.success) {
+        if (result.method === 'already-open' || result.method === 'already-visible') {
+            console.log(`  ✓ Visits section already expanded`);
+        } else {
+            console.log(`  ✓ Expanded Visits (${result.method})`);
+            await page.waitForTimeout(2000); // Wait for animation/render
+        }
+    } else {
+        console.log(`  ⚠️  Could not expand Visits: ${result.error}`);
+        if (result.linksFound) console.log(`    Available toggles: ${result.linksFound.join(', ')}`);
+        // Last resort: Playwright native click
+        try {
+            await page.locator('a.accordion-toggle', { hasText: 'Visits' }).first().click({ timeout: 5000 });
+            console.log(`  ✓ Expanded Visits (playwright-click)`);
+            await page.waitForTimeout(2000);
+        } catch (e) {
+            console.log(`  ⚠️  Playwright click also failed`);
+        }
+    }
+    return result.success;
+}
+// Shared helper: Ensure we are on the Pending Approval page with records visible
+// Call this before each insurance-specific processing block to recover from navigation failures
+async function ensureOnPendingApproval(page) {
+    try {
+        const currentUrl = page.url();
+        if (currentUrl.includes('approve-claims')) {
+            // Already on Pending Approval - check if table is visible
+            const hasTable = await page.evaluate(() => {
+                return document.querySelectorAll('table tbody tr').length > 0;
+            }).catch(() => false);
+            if (hasTable) return true;
+            // Table not visible, wait for it
+            try {
+                await page.waitForSelector('table tbody tr', { timeout: 10000 });
+                return true;
+            } catch (e) {}
+        }
+        // Not on Pending Approval - navigate there
+        console.log(`  ⚠️  Not on Pending Approval page, navigating...`);
+        // Method 1: Click the Pending Approval tab
+        try {
+            await page.click('#pendingClaimsApproval', { timeout: 5000 });
+            await page.waitForLoadState('domcontentloaded', { timeout: 30000 });
+            await page.waitForTimeout(3000);
+            const newUrl = page.url();
+            if (newUrl.includes('approve-claims')) {
+                console.log(`  ✓ Navigated to Pending Approval via tab click`);
+                // Wait for table to load
+                try { await page.waitForSelector('table tbody tr', { timeout: 15000 }); } catch (e) {}
+                return true;
+            }
+        } catch (e) {}
+        // Method 2: Direct URL navigation
+        try {
+            await page.goto('https://kinnser.net/EHR/#/AM/billing/claims-manager/managed-care/approve-claims', { waitUntil: 'domcontentloaded', timeout: 30000 });
+            await page.waitForTimeout(5000);
+            // Wait for table
+            try { await page.waitForSelector('table tbody tr', { timeout: 15000 }); } catch (e) {}
+            console.log(`  ✓ Navigated to Pending Approval via direct URL`);
+            return true;
+        } catch (e) {}
+        // Method 3: Navigate to billing first, then click Pending Approval
+        try {
+            await page.goto('https://kinnser.net/EHR/#/AM/billing', { waitUntil: 'domcontentloaded', timeout: 30000 });
+            await page.waitForTimeout(3000);
+            await page.click('#pendingClaimsApproval', { timeout: 10000 });
+            await page.waitForTimeout(5000);
+            console.log(`  ✓ Navigated to Pending Approval via billing page`);
+            return true;
+        } catch (e) {}
+        console.log(`  ⚠️  Could not navigate to Pending Approval`);
+        return false;
+    } catch (e) {
+        console.log(`  ⚠️  ensureOnPendingApproval error: ${e.message}`);
+        return false;
+    }
+}
 // Shared helper: Dismiss the "Helpful Suggestion" modal that appears on claim edit screens
 // Waits up to 10 seconds for modal to appear, then clicks OK
 async function dismissModal(page) {
@@ -2626,21 +2739,41 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
             console.log(`✓ Changed ${recordsNeedingTOB327.length} record(s) from TOB 323 to TOB 327`);
             console.log(`✓ All duplicate records with TOB 323 now have TOB 327`);
             console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-            // Reload the page to get fresh data with updated TOB values
-            console.log(`\nReloading Pending Approval page to refresh data...`);
-            await page.reload();
-            await page.waitForLoadState('domcontentloaded', { timeout: 30000 });
-            await page.waitForTimeout(3000);
-            // Re-select All Insurances after reload (dropdown resets to None)
+            // Navigate back to Pending Approval with fresh data (DO NOT reload - it kills the browser)
+            console.log(`\nNavigating back to Pending Approval for fresh data...`);
             try {
-                await page.waitForSelector('select[ng-model="insuranceKey"]', { timeout: 10000 });
-                await page.selectOption('select[ng-model="insuranceKey"]', '1');
-                console.log(`✓ Re-selected 'All Insurances' after reload`);
+                // Click Ready To Send first (to force Angular to re-fetch when we go back to PA)
+                const rtsTab = await page.$('#readyToSendClaims');
+                if (rtsTab) {
+                    await page.click('#readyToSendClaims');
+                    await page.waitForTimeout(2000);
+                }
+                // Now click Pending Approval tab
+                await page.click('#pendingClaimsApproval');
+                await page.waitForLoadState('domcontentloaded', { timeout: 30000 });
                 await page.waitForTimeout(3000);
-            } catch (reloadError) {
-                console.log(`⚠️  Could not re-select insurances after reload`);
+                console.log(`✓ Navigated to Pending Approval tab`);
+                // Re-select insurances
+                try {
+                    await page.waitForSelector('select[ng-model="insuranceKey"]', { timeout: 10000 });
+                    await page.selectOption('select[ng-model="insuranceKey"]', '1');
+                    console.log(`✓ Re-selected 'All Insurances'`);
+                    await page.waitForTimeout(3000);
+                } catch (e) {
+                    console.log(`⚠️  Could not re-select insurances`);
+                }
+            } catch (navError) {
+                console.log(`⚠️  Navigation error: ${navError.message}`);
+                // Try direct URL as last resort
+                try {
+                    await page.goto('https://kinnser.net/EHR/#/AM/billing/claims-manager/managed-care/approve-claims', { waitUntil: 'domcontentloaded', timeout: 30000 });
+                    await page.waitForTimeout(5000);
+                    console.log(`✓ Navigated via direct URL`);
+                } catch (e) {
+                    console.log(`⚠️  Direct URL also failed`);
+                }
             }
-            console.log(`✓ Page reloaded with updated data`);
+            console.log(`✓ Page refreshed with updated data`);
         }
     }
     else {
@@ -2648,6 +2781,7 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
     }
     // PROCESS UNITED HEALTH CARE MA RECORDS (UD modifier + SN visit check)
     // This runs ALWAYS for UHC MA records, regardless of whether duplicates exist
+    await ensureOnPendingApproval(page);
     const uhcMARecords = isInsuranceSelected('united health care ma')
         ? validRecords.filter(r => r.insurance.toLowerCase().trim() === 'united health care ma')
         : [];
@@ -2723,17 +2857,7 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                 await dismissModal(page);
                 // Step 5: Expand Visits section
                 console.log(`  Step 4: Expanding Visits section...`);
-                try {
-                    await page.evaluate(() => {
-                        const links = Array.from(document.querySelectorAll('a.accordion-toggle'));
-                        const visitsLink = links.find(a => a.textContent.trim() === 'Visits');
-                        if (visitsLink) visitsLink.click();
-                    });
-                    console.log(`  ✓ Expanded Visits`);
-                    await page.waitForTimeout(2000);
-                } catch (e) {
-                    console.log(`  ⚠️  Could not expand Visits section`);
-                }
+                await expandVisitsSection(page);
                 // Step 6: Process SN visits - add UD modifier and check for multiples
                 console.log(`  Step 5: Processing Skilled Nursing visits...`);
                 let needsTOB327 = false;
@@ -2927,6 +3051,8 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
     }
     // PROCESS COMMONWEALTH CARE ALLIANCE RECORDS (UD modifier + Occurrence Code 50)
     // This runs ALWAYS for CCA records, regardless of whether duplicates exist
+    // Ensure we're on Pending Approval page before processing
+    await ensureOnPendingApproval(page);
     const ccaRecords = isInsuranceSelected('commonwealth care alliance')
         ? validRecords.filter(r => r.insurance.toLowerCase().trim() === 'commonwealth care alliance')
         : [];
@@ -3019,17 +3145,7 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                 }
                 // Step 5: Expand Visits section and add UD modifier
                 console.log(`  Step 4: Expanding Visits section...`);
-                try {
-                    await page.evaluate(() => {
-                        const links = Array.from(document.querySelectorAll('a.accordion-toggle'));
-                        const visitsLink = links.find(a => a.textContent.trim() === 'Visits');
-                        if (visitsLink) visitsLink.click();
-                    });
-                    console.log(`  ✓ Expanded Visits`);
-                    await page.waitForTimeout(2000);
-                } catch (e) {
-                    console.log(`  ⚠️  Could not expand Visits section`);
-                }
+                await expandVisitsSection(page);
                 // Step 6: Process SN visits - add UD modifier for visits > 30 days from admission
                 // Also check: if any date has > 2 SN visits, skip the claim
                 console.log(`  Step 5: Processing Skilled Nursing visits for UD modifier...`);
@@ -4360,18 +4476,9 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                     console.log(`  Step 4: No auth code \u2192 TOB unchanged`);
                 }
                 // STEP 5: Expand Visits and add UD modifier for SN visits >30 days from admission
-                console.log(`  Step 5: Processing Skilled Nursing visits for UD modifier...`);
-                try {
-                    await page.evaluate(() => {
-                        const links = Array.from(document.querySelectorAll('a.accordion-toggle'));
-                        const visitsLink = links.find(a => a.textContent.trim() === 'Visits');
-                        if (visitsLink) visitsLink.click();
-                    });
-                    console.log(`  \u2713 Expanded Visits`);
-                    await page.waitForTimeout(2000);
-                } catch (e) {
-                    console.log(`  \u26a0\ufe0f  Could not expand Visits section`);
-                }
+                console.log(`  Step 5: Expanding Visits section...`);
+                await expandVisitsSection(page);
+                console.log(`  Processing Skilled Nursing visits for UD modifier...`);
                 const visitResult = await page.evaluate((admDateStr) => {
                     // Find the Visits table specifically
                     let rows = [];
@@ -5256,24 +5363,7 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                 await dismissModal(page);
                 // Step 4: Click "+ Visits" accordion to expand
                 console.log(`  Step 4: Expanding Visits section...`);
-                try {
-                    await page.click('a.accordion-toggle:has-text("Visits")');
-                    console.log(`  ✓ Clicked Visits accordion`);
-                    await page.waitForTimeout(2000);
-                } catch (visitsError) {
-                    // Try alternative selector
-                    try {
-                        await page.evaluate(() => {
-                            const links = Array.from(document.querySelectorAll('a.accordion-toggle'));
-                            const visitsLink = links.find(a => a.textContent.trim() === 'Visits');
-                            if (visitsLink) visitsLink.click();
-                        });
-                        console.log(`  ✓ Clicked Visits accordion via evaluate`);
-                        await page.waitForTimeout(2000);
-                    } catch (e) {
-                        console.log(`  ⚠️  Could not expand Visits section`);
-                    }
-                }
+                await expandVisitsSection(page);
                 // Step 5: Extract Skilled Nursing visits and count per day
                 console.log(`  Step 5: Checking Skilled Nursing visits...`);
                 const snVisitCheck = await page.evaluate(() => {
