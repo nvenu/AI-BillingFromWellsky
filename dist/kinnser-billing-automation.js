@@ -701,10 +701,12 @@ async function processOffice(page, office, insuranceHelper, selectedInsurances =
                 const downloadsPath = path.join(process.cwd(), 'downloads');
                 if (fs.existsSync(downloadsPath)) {
                     const dlFiles = fs.readdirSync(downloadsPath);
-                    const pdfFiles = dlFiles.filter(f => f.startsWith('paper-claim-')).map(f => path.join(downloadsPath, f));
+                    // Only attach PDFs from today's run (not old historical files)
+                    const today = (0, date_fns_1.format)(new Date(), 'yyyy-MM-dd');
+                    const pdfFiles = dlFiles.filter(f => f.startsWith('paper-claim-') && f.includes(today)).map(f => path.join(downloadsPath, f));
                     if (pdfFiles.length > 0) {
                         readyToSendFiles.push(...pdfFiles);
-                        console.log(`✓ Found ${pdfFiles.length} PDF file(s) in downloads`);
+                        console.log(`✓ Found ${pdfFiles.length} PDF file(s) from today in downloads`);
                     }
                 }
             } catch (fsError) {
