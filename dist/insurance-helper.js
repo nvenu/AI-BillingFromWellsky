@@ -319,7 +319,11 @@ class InsuranceHelper {
                 (nameLower === "northcost pps- anthem") ||
                 (nameLower === "northcoast - aetna") ||
                 (nameLower === "northcoast – aetna") ||
-                (nameLower === "northcoast -aetna");
+                (nameLower === "northcoast -aetna") ||
+                (nameLower === "sharp community comm") ||
+                (nameLower === "sharp community ma") ||
+                (nameLower === "sharp rees-stealy ma") ||
+                (nameLower === "sharp rees-stealy comm");
         })
             .map(instruction => instruction.Name)
             .filter(name => {
