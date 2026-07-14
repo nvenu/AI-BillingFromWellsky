@@ -275,60 +275,92 @@ async function extractPatientZip(page) {
     });
 }
 // Shared helper: Expand the Visits accordion section on a claim worksheet
-// Uses Angular scope to set isOpen = true (ng-click="isOpen = !isOpen")
-// If already expanded, does nothing.
+// The accordion uses ng-click="isOpen = !isOpen" on an <a class="accordion-toggle">
+// We use Playwright's native click to simulate real user interaction
 async function expandVisitsSection(page) {
-    const result = await page.evaluate(() => {
+    // First check if Visits is already expanded (table rows visible inside it)
+    const alreadyExpanded = await page.evaluate(() => {
         const links = Array.from(document.querySelectorAll('a.accordion-toggle'));
         const visitsLink = links.find(a => a.textContent.trim() === 'Visits') ||
                            links.find(a => a.textContent.trim().includes('Visits'));
-        if (!visitsLink) return { success: false, error: 'Visits link not found', linksFound: links.map(a => a.textContent.trim()) };
-        // Check if already expanded via Angular scope
-        if (window.angular) {
-            try {
-                const scope = window.angular.element(visitsLink).scope();
-                if (scope) {
-                    if (scope.isOpen === true) {
-                        return { success: true, method: 'already-open' };
-                    }
-                    // Not open — set isOpen = true
-                    scope.$apply(() => { scope.isOpen = true; });
-                    return { success: true, method: 'angular-scope-set' };
+        if (!visitsLink) return { found: false };
+        // Check if the accordion body has height (is visible/expanded)
+        const heading = visitsLink.closest('.accordion-heading');
+        if (heading) {
+            const group = heading.parentElement;
+            if (group) {
+                const body = group.querySelector('.accordion-body');
+                if (body && body.offsetHeight > 50) {
+                    return { found: true, expanded: true };
                 }
-            } catch(e) {}
-        }
-        // Fallback: check if the accordion body is visible (non-Angular check)
-        const group = visitsLink.closest('.accordion-group') || visitsLink.parentElement.parentElement;
-        if (group) {
-            const body = group.querySelector('.accordion-body');
-            if (body && body.classList.contains('in') && body.offsetHeight > 0) {
-                return { success: true, method: 'already-visible' };
             }
         }
-        // Not expanded — click to open
-        visitsLink.click();
-        return { success: true, method: 'dom-click' };
+        return { found: true, expanded: false };
     });
-    if (result.success) {
-        if (result.method === 'already-open' || result.method === 'already-visible') {
-            console.log(`  ✓ Visits section already expanded`);
-        } else {
-            console.log(`  ✓ Expanded Visits (${result.method})`);
-            await page.waitForTimeout(2000); // Wait for animation/render
-        }
-    } else {
-        console.log(`  ⚠️  Could not expand Visits: ${result.error}`);
-        if (result.linksFound) console.log(`    Available toggles: ${result.linksFound.join(', ')}`);
-        // Last resort: Playwright native click
-        try {
-            await page.locator('a.accordion-toggle', { hasText: 'Visits' }).first().click({ timeout: 5000 });
-            console.log(`  ✓ Expanded Visits (playwright-click)`);
-            await page.waitForTimeout(2000);
-        } catch (e) {
-            console.log(`  ⚠️  Playwright click also failed`);
-        }
+    if (!alreadyExpanded.found) {
+        console.log(`  ⚠️  Visits accordion not found on page`);
+        return false;
     }
-    return result.success;
+    if (alreadyExpanded.expanded) {
+        console.log(`  ✓ Visits section already expanded`);
+        return true;
+    }
+    // Not expanded — click it using Playwright's native click (real mouse events)
+    try {
+        // Get the element handle for precise clicking
+        const visitsHandle = await page.evaluateHandle(() => {
+            const links = Array.from(document.querySelectorAll('a.accordion-toggle'));
+            return links.find(a => a.textContent.trim() === 'Visits') ||
+                   links.find(a => a.textContent.trim().includes('Visits')) || null;
+        });
+        if (visitsHandle && visitsHandle.asElement()) {
+            // Scroll into view first
+            await visitsHandle.asElement().scrollIntoViewIfNeeded();
+            await page.waitForTimeout(500);
+            // Native Playwright click — generates real mousedown/mouseup/click events
+            await visitsHandle.asElement().click();
+            console.log(`  ✓ Expanded Visits (native click)`);
+            await page.waitForTimeout(2000);
+            return true;
+        }
+    } catch (e) {
+        console.log(`  ⚠️  Native click failed: ${e.message}`);
+    }
+    // Fallback: try Angular scope approach
+    try {
+        await page.evaluate(() => {
+            const links = Array.from(document.querySelectorAll('a.accordion-toggle'));
+            const visitsLink = links.find(a => a.textContent.trim() === 'Visits') ||
+                               links.find(a => a.textContent.trim().includes('Visits'));
+            if (visitsLink && window.angular) {
+                const scope = window.angular.element(visitsLink).scope();
+                if (scope) {
+                    scope.$apply(() => { scope.isOpen = true; });
+                }
+            }
+        });
+        console.log(`  ✓ Expanded Visits (angular scope fallback)`);
+        await page.waitForTimeout(2000);
+        return true;
+    } catch (e) {}
+    // Last resort: direct DOM click with all event types
+    try {
+        await page.evaluate(() => {
+            const links = Array.from(document.querySelectorAll('a.accordion-toggle'));
+            const visitsLink = links.find(a => a.textContent.trim() === 'Visits') ||
+                               links.find(a => a.textContent.trim().includes('Visits'));
+            if (visitsLink) {
+                visitsLink.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+                visitsLink.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+                visitsLink.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+            }
+        });
+        console.log(`  ✓ Expanded Visits (mousedown/up/click fallback)`);
+        await page.waitForTimeout(2000);
+        return true;
+    } catch (e) {}
+    console.log(`  ⚠️  All Visits expand methods failed`);
+    return false;
 }
 // Shared helper: Ensure we are on the Pending Approval page with records visible
 // Call this before each insurance-specific processing block to recover from navigation failures
