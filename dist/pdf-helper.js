@@ -37,10 +37,24 @@ const { PDFParse } = require("pdf-parse");
  */
 async function extractDateOfAdmission(pdfBuffer) {
     try {
+        // Suppress pdf-parse debug logging (it dumps entire PDF binary as base64)
+        const originalConsoleLog = console.log;
+        const originalConsoleDebug = console.debug;
+        let suppressLogs = true;
+        console.log = (...args) => {
+            if (suppressLogs && args.length > 0 && typeof args[0] === 'string' && 
+                (args[0].includes('DEBUG') || args[0].includes('%s'))) return;
+            originalConsoleLog.apply(console, args);
+        };
+        console.debug = () => {};
         const parser = new PDFParse({ data: pdfBuffer });
         const result = await parser.getText();
+        // Restore console
+        suppressLogs = false;
+        console.log = originalConsoleLog;
+        console.debug = originalConsoleDebug;
         const text = result.text;
-        console.log("  DEBUG: PDF text length:", text.length);
+        console.log("  PDF text extracted, length:", text.length);
         // Find all 8-digit dates in the PDF
         const allDatesPattern = /\b(\d{8})\b/g;
         const allDates = text.match(allDatesPattern);
