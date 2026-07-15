@@ -688,30 +688,7 @@ async function processOffice(page, office, insuranceHelper, selectedInsurances =
         }
         catch (error) {
             console.error(`⚠️  Error in Pending Approval/Ready To Send for ${office.name}:`, error);
-            console.log(`Continuing anyway...`);
-            // Try to find any ready-to-send files that were created despite the error
-            try {
-                const allFiles = fs.readdirSync(process.cwd());
-                const rtsFiles = allFiles.filter(f => f.startsWith('ready-to-send-'));
-                if (rtsFiles.length > 0) {
-                    readyToSendFiles = rtsFiles;
-                    console.log(`✓ Found ${rtsFiles.length} ready-to-send file(s) on disk despite error`);
-                }
-                // Also check downloads folder for PDFs
-                const downloadsPath = path.join(process.cwd(), 'downloads');
-                if (fs.existsSync(downloadsPath)) {
-                    const dlFiles = fs.readdirSync(downloadsPath);
-                    // Only attach PDFs from today's run (not old historical files)
-                    const today = (0, date_fns_1.format)(new Date(), 'yyyy-MM-dd');
-                    const pdfFiles = dlFiles.filter(f => f.startsWith('paper-claim-') && f.includes(today)).map(f => path.join(downloadsPath, f));
-                    if (pdfFiles.length > 0) {
-                        readyToSendFiles.push(...pdfFiles);
-                        console.log(`✓ Found ${pdfFiles.length} PDF file(s) from today in downloads`);
-                    }
-                }
-            } catch (fsError) {
-                // Ignore file system errors
-            }
+            console.log(`Continuing without Ready To Send files...`);
         }
         console.log(`✓ Successfully processed ${office.name}`);
         const readyToSendCount = readyToSendFiles.length > 0 ? readyToSendFiles.filter(f => f.includes('electronic') || f.includes('paper-claim')).length : 0;
