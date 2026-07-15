@@ -620,7 +620,7 @@ async function processOffice(page, office, insuranceHelper, selectedInsurances =
             let snFailures = [];
             let manualReviewFromPA = [];
             try {
-                const result = await processPendingApproval(page, insuranceHelper, selectedInsurances, []);
+                const result = await processPendingApproval(page, insuranceHelper, selectedInsurances, [], { stateCode: office.stateCode, name: office.name });
                 readyToSendFiles = result.files;
                 changedTo327 = result.changedTo327;
                 snFailures = result.snFailures || [];
@@ -679,7 +679,7 @@ async function processOffice(page, office, insuranceHelper, selectedInsurances =
                 console.error(`  ⚠️  Browser health check failed: ${healthError.message}`);
                 console.error(`  ⚠️  CRITICAL: Browser context may be dead. Pending Approval processing may fail.`);
             }
-            const result = await processPendingApproval(page, insuranceHelper, selectedInsurances, selectedRecords);
+            const result = await processPendingApproval(page, insuranceHelper, selectedInsurances, selectedRecords, { stateCode: office.stateCode, name: office.name });
             readyToSendFiles = result.files;
             changedTo327 = result.changedTo327;
             snFailures = result.snFailures || [];
@@ -864,6 +864,28 @@ async function loginAndProcessOffices(officeValue = 'all', selectedInsurances = 
         console.log(`STARTING PROCESSING`);
         console.log(`Offices to process: ${officesToProcess.length}`);
         officesToProcess.forEach(o => console.log(`  - ${o.name} (${o.stateCode})`));
+        // Auto-cleanup: delete old ready-to-send and paper-claim files from previous days
+        const today = (0, date_fns_1.format)(new Date(), 'yyyy-MM-dd');
+        try {
+            const cwd = process.cwd();
+            const allFiles = fs.readdirSync(cwd);
+            const oldRtsFiles = allFiles.filter(f => f.startsWith('ready-to-send-') && !f.includes(today));
+            if (oldRtsFiles.length > 0) {
+                oldRtsFiles.forEach(f => { try { fs.unlinkSync(path.join(cwd, f)); } catch(e) {} });
+                console.log(`🗑️  Cleaned up ${oldRtsFiles.length} old ready-to-send file(s) from previous days`);
+            }
+            const downloadsPath = path.join(cwd, 'downloads');
+            if (fs.existsSync(downloadsPath)) {
+                const dlFiles = fs.readdirSync(downloadsPath);
+                const oldPdfs = dlFiles.filter(f => f.startsWith('paper-claim-') && !f.includes(today));
+                if (oldPdfs.length > 0) {
+                    oldPdfs.forEach(f => { try { fs.unlinkSync(path.join(downloadsPath, f)); } catch(e) {} });
+                    console.log(`🗑️  Cleaned up ${oldPdfs.length} old paper-claim PDF(s) from previous days`);
+                }
+            }
+        } catch (cleanupError) {
+            // Non-critical - don't fail the run
+        }
         console.log(`${'='.repeat(80)}`);
         const allSelectedRecords = [];
         const summary = [];
@@ -2168,7 +2190,7 @@ async function clickCreateButton(page) {
         throw error;
     }
 }
-async function processPendingApproval(page, insuranceHelper, selectedInsurances = null, readyTabRecords = []) {
+async function processPendingApproval(page, insuranceHelper, selectedInsurances = null, readyTabRecords = [], officeInfo = {}) {
     console.log("\n=== PROCESSING PENDING APPROVAL ===");
     // Check if stop was requested before starting
     if (isStopRequested()) {
@@ -2301,7 +2323,7 @@ async function processPendingApproval(page, insuranceHelper, selectedInsurances 
             throw error;
         }
         // Process Ready To Send workflow
-        const readyToSendFiles = await processReadyToSend(page, insuranceHelper, selectedInsurances);
+        const readyToSendFiles = await processReadyToSend(page, insuranceHelper, selectedInsurances, officeInfo);
         console.log(`✓ Ready To Send completed with ${readyToSendFiles.length} files`);
         // Return files and 327 changes and SN failures for email
         return { files: readyToSendFiles, changedTo327, snFailures: snFailures || [], manualReview: manualReview || [] };
@@ -5801,7 +5823,7 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
         return { mrn: record ? record.mrn : 'Unknown', billingPeriod: record ? record.billingPeriodText : 'Unknown', insurance: record ? record.insurance : 'Senior whole Health (BID)' };
     })};
 }
-async function processReadyToSend(page, insuranceHelper, selectedInsurances = null) {
+async function processReadyToSend(page, insuranceHelper, selectedInsurances = null, officeInfo = {}) {
     console.log("\n=== PROCESSING READY TO SEND ===");
     // Check if stop was requested before starting
     if (isStopRequested()) {
@@ -6009,7 +6031,8 @@ async function processReadyToSend(page, insuranceHelper, selectedInsurances = nu
         console.log(`"Paper" insurances: ${paperRecords.length} records`);
         // Create comprehensive summary Excel with all records
         const timestamp = (0, date_fns_1.format)(new Date(), 'yyyy-MM-dd_HH-mm-ss');
-        const summaryFilename = `ready-to-send-summary-${timestamp}.xlsx`;
+        const officeTag = officeInfo.stateCode && officeInfo.name ? `${officeInfo.stateCode}-${officeInfo.name.replace(/[^a-zA-Z0-9]/g, '_')}-` : '';
+        const summaryFilename = `ready-to-send-summary-${officeTag}${timestamp}.xlsx`;
         const columnNames = ['#', 'Checkbox', 'Patient Name', 'MRN', 'Branch', 'Insurance', 'Billing Period', 'SOC Date', 'Claim #', 'Status', 'TOB', 'Amount', 'Col 13', 'Col 14', 'Col 15'];
         const allRecordsData = [
             ...noChangesRecords.map((record, idx) => ({
@@ -6141,7 +6164,8 @@ async function processReadyToSend(page, insuranceHelper, selectedInsurances = nu
             // Save to Excel before sending
             console.log("\nSaving 'No changes' records to Excel...");
             const timestamp = (0, date_fns_1.format)(new Date(), 'yyyy-MM-dd_HH-mm-ss');
-            const filename = `ready-to-send-electronic-${timestamp}.xlsx`;
+            const officeTag2 = officeInfo.stateCode && officeInfo.name ? `${officeInfo.stateCode}-${officeInfo.name.replace(/[^a-zA-Z0-9]/g, '_')}-` : '';
+            const filename = `ready-to-send-electronic-${officeTag2}${timestamp}.xlsx`;
             // Create workbook with records
             const excelData = noChangesRecords.map((record, idx) => ({
                 'Record #': idx + 1,
