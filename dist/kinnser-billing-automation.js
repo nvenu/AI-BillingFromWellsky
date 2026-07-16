@@ -2286,23 +2286,35 @@ async function processPendingApproval(page, insuranceHelper, selectedInsurances 
         }
         else {
             // Process Pending Approval records and capture 327 changes
-            const pendingResult = await processPendingApprovalRecords(page, insuranceHelper, selectedInsurances, readyTabRecords);
-            changedTo327 = pendingResult.changedRecords || pendingResult;
-            snFailures = pendingResult.snFailures || [];
-            manualReview = pendingResult.manualReviewRecords || [];
-            pendingApprovalCount = pendingResult.totalRecords || 0;
-            console.log(`✓ Pending Approval: ${pendingApprovalCount} records processed`);
-            console.log(`✓ Type of Bill changes: ${changedTo327.length} records changed to 327`);
-            if (manualReview.length > 0) {
-                console.log(`⚠️  Manual Review: ${manualReview.length} records skipped`);
-            }
-            if (snFailures.length > 0) {
-                console.log(`✓ SN Visit failures: ${snFailures.length} records not approved (> 2 SN/day)`);
+            try {
+                const pendingResult = await processPendingApprovalRecords(page, insuranceHelper, selectedInsurances, readyTabRecords);
+                changedTo327 = pendingResult.changedRecords || pendingResult;
+                snFailures = pendingResult.snFailures || [];
+                manualReview = pendingResult.manualReviewRecords || [];
+                pendingApprovalCount = pendingResult.totalRecords || 0;
+                console.log(`✓ Pending Approval: ${pendingApprovalCount} records processed`);
+                console.log(`✓ Type of Bill changes: ${changedTo327.length} records changed to 327`);
+                if (manualReview.length > 0) {
+                    console.log(`⚠️  Manual Review: ${manualReview.length} records skipped`);
+                }
+                if (snFailures.length > 0) {
+                    console.log(`✓ SN Visit failures: ${snFailures.length} records not approved (> 2 SN/day)`);
+                }
+            } catch (paError) {
+                console.error(`⚠️  Error in Pending Approval record processing: ${paError.message}`);
+                console.log(`⚠️  Continuing to Ready To Send despite error...`);
             }
         }
         // ALWAYS navigate to Ready To Send tab
         console.log("\n=== Navigating to Ready To Send ===");
         try {
+            // First ensure we're on the billing claims manager page
+            const currentUrlBeforeRTS = page.url();
+            if (!currentUrlBeforeRTS.includes('claims-manager') && !currentUrlBeforeRTS.includes('billing')) {
+                console.log(`  ⚠️  Not on billing page (${currentUrlBeforeRTS}), navigating...`);
+                await page.goto('https://kinnser.net/EHR/#/AM/billing/claims-manager/managed-care/approve-claims', { waitUntil: 'domcontentloaded', timeout: 30000 });
+                await page.waitForTimeout(3000);
+            }
             await page.waitForSelector('#readyToSendClaims', { timeout: 10000 });
             await page.click('#readyToSendClaims');
             console.log("✓ Clicked Ready To Send tab");
