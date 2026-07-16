@@ -277,89 +277,137 @@ async function extractPatientZip(page) {
 // Shared helper: Expand the Visits accordion section on a claim worksheet
 // The accordion uses ng-click="isOpen = !isOpen" on an <a class="accordion-toggle">
 // We use Playwright's native click to simulate real user interaction
+// Includes retry logic and row-verification to ensure table rows are actually rendered
 async function expandVisitsSection(page) {
-    // First check if Visits is already expanded (table rows visible inside it)
-    const alreadyExpanded = await page.evaluate(() => {
-        const links = Array.from(document.querySelectorAll('a.accordion-toggle'));
-        const visitsLink = links.find(a => a.textContent.trim() === 'Visits') ||
-                           links.find(a => a.textContent.trim().includes('Visits'));
-        if (!visitsLink) return { found: false };
-        // Check if the accordion body has height (is visible/expanded)
-        const heading = visitsLink.closest('.accordion-heading');
-        if (heading) {
-            const group = heading.parentElement;
-            if (group) {
-                const body = group.querySelector('.accordion-body');
-                if (body && body.offsetHeight > 50) {
-                    return { found: true, expanded: true };
+    const MAX_RETRIES = 3;
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        if (attempt > 1) {
+            console.log(`  ⟳ Retry attempt ${attempt}/${MAX_RETRIES} for Visits expansion...`);
+            await page.waitForTimeout(2000);
+        }
+        // First check if Visits is already expanded (table rows visible inside it)
+        const alreadyExpanded = await page.evaluate(() => {
+            const links = Array.from(document.querySelectorAll('a.accordion-toggle'));
+            const visitsLink = links.find(a => a.textContent.trim() === 'Visits') ||
+                               links.find(a => a.textContent.trim().includes('Visits'));
+            if (!visitsLink) return { found: false };
+            // Check if the accordion body has height (is visible/expanded)
+            const heading = visitsLink.closest('.accordion-heading');
+            if (heading) {
+                const group = heading.parentElement;
+                if (group) {
+                    const body = group.querySelector('.accordion-body');
+                    if (body && body.offsetHeight > 50) {
+                        return { found: true, expanded: true };
+                    }
                 }
             }
-        }
-        return { found: true, expanded: false };
-    });
-    if (!alreadyExpanded.found) {
-        console.log(`  ⚠️  Visits accordion not found on page`);
-        return false;
-    }
-    if (alreadyExpanded.expanded) {
-        console.log(`  ✓ Visits section already expanded`);
-        return true;
-    }
-    // Not expanded — click it using Playwright's native click (real mouse events)
-    try {
-        // Get the element handle for precise clicking
-        const visitsHandle = await page.evaluateHandle(() => {
-            const links = Array.from(document.querySelectorAll('a.accordion-toggle'));
-            return links.find(a => a.textContent.trim() === 'Visits') ||
-                   links.find(a => a.textContent.trim().includes('Visits')) || null;
+            return { found: true, expanded: false };
         });
-        if (visitsHandle && visitsHandle.asElement()) {
-            // Scroll into view first
-            await visitsHandle.asElement().scrollIntoViewIfNeeded();
-            await page.waitForTimeout(500);
-            // Native Playwright click — generates real mousedown/mouseup/click events
-            await visitsHandle.asElement().click();
-            console.log(`  ✓ Expanded Visits (native click)`);
-            await page.waitForTimeout(2000);
+        if (!alreadyExpanded.found) {
+            console.log(`  ⚠️  Visits accordion not found on page`);
+            if (attempt < MAX_RETRIES) continue;
+            return false;
+        }
+        if (!alreadyExpanded.expanded) {
+            // Not expanded — click it using Playwright's native click (real mouse events)
+            let expanded = false;
+            try {
+                // Get the element handle for precise clicking
+                const visitsHandle = await page.evaluateHandle(() => {
+                    const links = Array.from(document.querySelectorAll('a.accordion-toggle'));
+                    return links.find(a => a.textContent.trim() === 'Visits') ||
+                           links.find(a => a.textContent.trim().includes('Visits')) || null;
+                });
+                if (visitsHandle && visitsHandle.asElement()) {
+                    // Scroll into view first
+                    await visitsHandle.asElement().scrollIntoViewIfNeeded();
+                    await page.waitForTimeout(500);
+                    // Native Playwright click — generates real mousedown/mouseup/click events
+                    await visitsHandle.asElement().click();
+                    console.log(`  ✓ Expanded Visits (native click)`);
+                    expanded = true;
+                }
+            } catch (e) {
+                console.log(`  ⚠️  Native click failed: ${e.message}`);
+            }
+            if (!expanded) {
+                // Fallback: try Angular scope approach
+                try {
+                    await page.evaluate(() => {
+                        const links = Array.from(document.querySelectorAll('a.accordion-toggle'));
+                        const visitsLink = links.find(a => a.textContent.trim() === 'Visits') ||
+                                           links.find(a => a.textContent.trim().includes('Visits'));
+                        if (visitsLink && window.angular) {
+                            const scope = window.angular.element(visitsLink).scope();
+                            if (scope) {
+                                scope.$apply(() => { scope.isOpen = true; });
+                            }
+                        }
+                    });
+                    console.log(`  ✓ Expanded Visits (angular scope fallback)`);
+                    expanded = true;
+                } catch (e) {}
+            }
+            if (!expanded) {
+                // Last resort: direct DOM click with all event types
+                try {
+                    await page.evaluate(() => {
+                        const links = Array.from(document.querySelectorAll('a.accordion-toggle'));
+                        const visitsLink = links.find(a => a.textContent.trim() === 'Visits') ||
+                                           links.find(a => a.textContent.trim().includes('Visits'));
+                        if (visitsLink) {
+                            visitsLink.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+                            visitsLink.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+                            visitsLink.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+                        }
+                    });
+                    console.log(`  ✓ Expanded Visits (mousedown/up/click fallback)`);
+                    expanded = true;
+                } catch (e) {}
+            }
+            if (!expanded) {
+                console.log(`  ⚠️  All Visits expand methods failed on attempt ${attempt}`);
+                if (attempt < MAX_RETRIES) continue;
+                return false;
+            }
+        } else {
+            console.log(`  ✓ Visits section already expanded`);
+        }
+        // VERIFICATION: Wait for table rows to actually render after expansion
+        // This is critical — Angular needs time to render the visit rows after accordion opens
+        await page.waitForTimeout(3000);
+        // Verify rows are actually visible
+        const rowCount = await page.evaluate(() => {
+            let rows = [];
+            const accordionToggles = Array.from(document.querySelectorAll('a.accordion-toggle'));
+            const visitsToggle = accordionToggles.find(a => a.textContent.trim() === 'Visits');
+            if (visitsToggle) {
+                const accordionGroup = visitsToggle.closest('.accordion-group') || visitsToggle.closest('[class*="accordion"]');
+                if (accordionGroup) {
+                    rows = Array.from(accordionGroup.querySelectorAll('table tbody tr'));
+                }
+            }
+            if (rows.length === 0) {
+                const allTables = document.querySelectorAll('table.table-striped');
+                if (allTables.length > 0) {
+                    const lastTable = allTables[allTables.length - 1];
+                    rows = Array.from(lastTable.querySelectorAll('tbody tr'));
+                }
+            }
+            return rows.length;
+        });
+        if (rowCount > 0) {
+            console.log(`  ✓ Visits table verified: ${rowCount} rows visible`);
             return true;
         }
-    } catch (e) {
-        console.log(`  ⚠️  Native click failed: ${e.message}`);
+        console.log(`  ⚠️  Visits expanded but 0 rows found (attempt ${attempt}/${MAX_RETRIES})`);
+        if (attempt < MAX_RETRIES) {
+            // Wait longer before retry — Angular may need more time
+            await page.waitForTimeout(3000);
+        }
     }
-    // Fallback: try Angular scope approach
-    try {
-        await page.evaluate(() => {
-            const links = Array.from(document.querySelectorAll('a.accordion-toggle'));
-            const visitsLink = links.find(a => a.textContent.trim() === 'Visits') ||
-                               links.find(a => a.textContent.trim().includes('Visits'));
-            if (visitsLink && window.angular) {
-                const scope = window.angular.element(visitsLink).scope();
-                if (scope) {
-                    scope.$apply(() => { scope.isOpen = true; });
-                }
-            }
-        });
-        console.log(`  ✓ Expanded Visits (angular scope fallback)`);
-        await page.waitForTimeout(2000);
-        return true;
-    } catch (e) {}
-    // Last resort: direct DOM click with all event types
-    try {
-        await page.evaluate(() => {
-            const links = Array.from(document.querySelectorAll('a.accordion-toggle'));
-            const visitsLink = links.find(a => a.textContent.trim() === 'Visits') ||
-                               links.find(a => a.textContent.trim().includes('Visits'));
-            if (visitsLink) {
-                visitsLink.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-                visitsLink.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
-                visitsLink.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-            }
-        });
-        console.log(`  ✓ Expanded Visits (mousedown/up/click fallback)`);
-        await page.waitForTimeout(2000);
-        return true;
-    } catch (e) {}
-    console.log(`  ⚠️  All Visits expand methods failed`);
+    console.log(`  ⚠️  Visits section: could not verify rows after ${MAX_RETRIES} attempts`);
     return false;
 }
 // Shared helper: Ensure we are on the Pending Approval page with records visible
@@ -2831,6 +2879,7 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
         ? validRecords.filter(r => r.insurance.toLowerCase().trim() === 'united health care ma')
         : [];
     const recordsNeedingTOB327ForUHC = [];
+    const uhcMAFailedUDRecords = []; // Track records where UD was expected but could not be added
     if (uhcMARecords.length > 0) {
         console.log(`\n=== PROCESSING UNITED HEALTH CARE MA RECORDS ===`);
         console.log(`Found ${uhcMARecords.length} United health care MA record(s)`);
@@ -3028,6 +3077,199 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                     visitResult.debugInfo.forEach(d => console.log(`    ${d}`));
                 }
                 console.log(`  Total rows in visits table: ${visitResult.totalRows}`);
+                // VERIFICATION: Check if UD was expected but not added
+                // Calculate if admission date means visits SHOULD have UD
+                let udExpected = false;
+                if (admissionDate) {
+                    const admMonth = parseInt(admissionDate.substring(0, 2)) - 1;
+                    const admDay = parseInt(admissionDate.substring(2, 4));
+                    const admYear = parseInt(admissionDate.substring(4, 8));
+                    const admDate = new Date(admYear, admMonth, admDay);
+                    const endParts = record.billingPeriodEnd ? record.billingPeriodEnd.split('/') : [];
+                    if (endParts.length === 3) {
+                        const endDate = new Date(parseInt(endParts[2]), parseInt(endParts[0]) - 1, parseInt(endParts[1]));
+                        const diffDays = Math.floor((endDate - admDate) / (1000 * 60 * 60 * 24));
+                        if (diffDays > 30) {
+                            udExpected = true;
+                        }
+                    }
+                }
+                // If UD was expected but 0 modifiers were added AND there are SN visits, this is a failure
+                if (udExpected && visitResult.udModifiersAdded === 0 && Object.keys(visitResult.snVisitsByDate).length > 0) {
+                    console.log(`  ⚠️  UD MODIFIER EXPECTED but not added! (${Object.keys(visitResult.snVisitsByDate).length} SN visits found)`);
+                    console.log(`  ⚠️  Attempting retry: re-reading modifier fields...`);
+                    // Wait for Angular digest
+                    await page.waitForTimeout(2000);
+                    // Retry: try setting UD again with a fresh evaluate
+                    const retryResult = await page.evaluate((admDateStr) => {
+                        let rows = [];
+                        const accordionToggles = Array.from(document.querySelectorAll('a.accordion-toggle'));
+                        const visitsToggle = accordionToggles.find(a => a.textContent.trim() === 'Visits');
+                        if (visitsToggle) {
+                            const accordionGroup = visitsToggle.closest('.accordion-group') || visitsToggle.closest('[class*="accordion"]');
+                            if (accordionGroup) {
+                                rows = Array.from(accordionGroup.querySelectorAll('table tbody tr'));
+                            }
+                        }
+                        if (rows.length === 0) {
+                            const allTables = document.querySelectorAll('table.table-striped');
+                            if (allTables.length > 0) {
+                                const lastTable = allTables[allTables.length - 1];
+                                rows = Array.from(lastTable.querySelectorAll('tbody tr'));
+                            }
+                        }
+                        let udAdded = 0;
+                        let admDate = null;
+                        if (admDateStr && admDateStr.length === 8) {
+                            const month = parseInt(admDateStr.substring(0, 2)) - 1;
+                            const day = parseInt(admDateStr.substring(2, 4));
+                            const year = parseInt(admDateStr.substring(4, 8));
+                            admDate = new Date(year, month, day);
+                        }
+                        rows.forEach((row) => {
+                            const cells = row.querySelectorAll('td');
+                            if (cells.length >= 2) {
+                                const dateStr = cells[0].textContent.trim();
+                                const visitType = cells[1].textContent.trim();
+                                const isSN = visitType.toLowerCase().includes('skilled nursing');
+                                if (isSN && admDate && dateStr) {
+                                    const parts = dateStr.split('/');
+                                    if (parts.length === 3) {
+                                        const visitDate = new Date(parseInt(parts[2]), parseInt(parts[0]) - 1, parseInt(parts[1]));
+                                        const diffDays = Math.floor((visitDate - admDate) / (1000 * 60 * 60 * 24));
+                                        if (diffDays > 30) {
+                                            const modifier1 = row.querySelector('input[ng-model="lineItem.modifier1"]');
+                                            const modifier2 = row.querySelector('input[ng-model="lineItem.modifier2"]');
+                                            // Check if UD already set
+                                            if (modifier1 && modifier1.value.trim().toUpperCase() === 'UD') return;
+                                            if (modifier2 && modifier2.value.trim().toUpperCase() === 'UD') return;
+                                            // Try to set it
+                                            if (modifier1 && (!modifier1.value.trim() || modifier1.value.trim() === '')) {
+                                                modifier1.value = 'UD';
+                                                modifier1.dispatchEvent(new Event('input', { bubbles: true }));
+                                                modifier1.dispatchEvent(new Event('change', { bubbles: true }));
+                                                if (window.angular) {
+                                                    try {
+                                                        const scope = window.angular.element(modifier1).scope();
+                                                        if (scope && scope.lineItem) {
+                                                            scope.$apply(() => { scope.lineItem.modifier1 = 'UD'; });
+                                                        }
+                                                    } catch(e) {}
+                                                }
+                                                udAdded++;
+                                            } else if (modifier2 && (!modifier2.value.trim() || modifier2.value.trim() === '')) {
+                                                modifier2.value = 'UD';
+                                                modifier2.dispatchEvent(new Event('input', { bubbles: true }));
+                                                modifier2.dispatchEvent(new Event('change', { bubbles: true }));
+                                                if (window.angular) {
+                                                    try {
+                                                        const scope = window.angular.element(modifier2).scope();
+                                                        if (scope && scope.lineItem) {
+                                                            scope.$apply(() => { scope.lineItem.modifier2 = 'UD'; });
+                                                        }
+                                                    } catch(e) {}
+                                                }
+                                                udAdded++;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        });
+                        return { udAdded, rowCount: rows.length };
+                    }, admissionDate);
+                    if (retryResult.udAdded > 0) {
+                        console.log(`  ✓ RETRY SUCCESS: Added ${retryResult.udAdded} UD modifier(s) on second attempt`);
+                        // Update the count
+                        visitResult.udModifiersAdded = retryResult.udAdded;
+                    } else {
+                        console.log(`  ❌ RETRY FAILED: Still could not add UD modifier (rows: ${retryResult.rowCount})`);
+                    }
+                }
+                // If UD was expected but STILL not added after retry, mark for manual review
+                if (udExpected && visitResult.udModifiersAdded === 0 && Object.keys(visitResult.snVisitsByDate).length > 0) {
+                    console.log(`  ❌ CRITICAL: UD modifier could not be added - record will NOT be approved`);
+                    console.log(`  Adding to manual review list and clicking Return...`);
+                    uhcMAFailedUDRecords.push({
+                        mrn: record.mrn,
+                        insurance: record.insurance,
+                        billingPeriod: record.billingPeriodText,
+                        reason: "UD modifier expected (>30 days from admission) but could not be set - Visits table rows: " + visitResult.totalRows
+                    });
+                    // Click Return (don't save without UD)
+                    try { await page.click('#returnBtn'); await page.waitForTimeout(3000); } catch (e) {
+                        try { await page.click('#pendingClaimsApproval'); await page.waitForTimeout(3000); } catch (e2) {}
+                    }
+                    continue; // Skip save, move to next record
+                }
+                // If UD modifiers were added, VERIFY they persisted in the DOM
+                if (visitResult.udModifiersAdded > 0) {
+                    // Wait for Angular digest cycle to complete
+                    await page.waitForTimeout(2000);
+                    // Verify: re-read modifier values from DOM
+                    const verifyResult = await page.evaluate(() => {
+                        let rows = [];
+                        const accordionToggles = Array.from(document.querySelectorAll('a.accordion-toggle'));
+                        const visitsToggle = accordionToggles.find(a => a.textContent.trim() === 'Visits');
+                        if (visitsToggle) {
+                            const accordionGroup = visitsToggle.closest('.accordion-group') || visitsToggle.closest('[class*="accordion"]');
+                            if (accordionGroup) {
+                                rows = Array.from(accordionGroup.querySelectorAll('table tbody tr'));
+                            }
+                        }
+                        if (rows.length === 0) {
+                            const allTables = document.querySelectorAll('table.table-striped');
+                            if (allTables.length > 0) {
+                                const lastTable = allTables[allTables.length - 1];
+                                rows = Array.from(lastTable.querySelectorAll('tbody tr'));
+                            }
+                        }
+                        let udFound = 0;
+                        let modifierValues = [];
+                        rows.forEach((row) => {
+                            const modifier1 = row.querySelector('input[ng-model="lineItem.modifier1"]');
+                            const modifier2 = row.querySelector('input[ng-model="lineItem.modifier2"]');
+                            const m1 = modifier1 ? modifier1.value.trim() : '';
+                            const m2 = modifier2 ? modifier2.value.trim() : '';
+                            if (m1.toUpperCase() === 'UD' || m2.toUpperCase() === 'UD') {
+                                udFound++;
+                            }
+                            if (m1 || m2) {
+                                modifierValues.push({ m1, m2 });
+                            }
+                        });
+                        // Also check Angular model directly
+                        let angularConfirmed = 0;
+                        rows.forEach((row) => {
+                            const modifier1 = row.querySelector('input[ng-model="lineItem.modifier1"]');
+                            if (modifier1 && window.angular) {
+                                try {
+                                    const scope = window.angular.element(modifier1).scope();
+                                    if (scope && scope.lineItem && scope.lineItem.modifier1 === 'UD') {
+                                        angularConfirmed++;
+                                    }
+                                } catch(e) {}
+                            }
+                        });
+                        return { udFound, angularConfirmed, modifierValues };
+                    });
+                    console.log(`  VERIFICATION: UD in DOM: ${verifyResult.udFound}, Angular model confirmed: ${verifyResult.angularConfirmed}`);
+                    if (verifyResult.udFound === 0) {
+                        console.log(`  ❌ VERIFICATION FAILED: UD not found in DOM after setting!`);
+                        console.log(`  Modifier values found: ${JSON.stringify(verifyResult.modifierValues)}`);
+                        // Mark for manual review - don't save without UD
+                        uhcMAFailedUDRecords.push({
+                            mrn: record.mrn,
+                            insurance: record.insurance,
+                            billingPeriod: record.billingPeriodText,
+                            reason: "UD modifier was set but verification failed - not persisted in DOM"
+                        });
+                        try { await page.click('#returnBtn'); await page.waitForTimeout(3000); } catch (e) {
+                            try { await page.click('#pendingClaimsApproval'); await page.waitForTimeout(3000); } catch (e2) {}
+                        }
+                        continue; // Skip save
+                    }
+                }
                 // Check if multiple SN visits on same date → TOB 327
                 if (visitResult.hasMultipleSNSameDate) {
                     console.log(`  ❌ More than 1 SN visit on same date → TOB 327:`);
@@ -3064,7 +3306,19 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                     console.log(`  ✓ Changed TOB to 327`);
                     recordsNeedingTOB327ForUHC.push(record.index);
                 }
-                // Step 8: Save and Close
+                // Step 8: Wait for Angular to fully digest before saving
+                await page.waitForTimeout(2000);
+                // Trigger a final Angular digest to ensure all model changes are committed
+                await page.evaluate(() => {
+                    if (window.angular) {
+                        try {
+                            const rootScope = window.angular.element(document.body).injector().get('$rootScope');
+                            rootScope.$apply();
+                        } catch(e) {}
+                    }
+                });
+                await page.waitForTimeout(1000);
+                // Step 9: Save and Close
                 console.log(`  Step 7: Clicking Save and Close...`);
                 await page.evaluate(() => { const btn = document.querySelector('#submitBtn'); if (btn) btn.scrollIntoView({ behavior: 'smooth', block: 'center' }); });
                 await page.waitForTimeout(1000);
@@ -3091,8 +3345,16 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
             }
         }
         console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-        console.log(`UHC MA SUMMARY: ${uhcMARecords.length} processed, ${recordsNeedingTOB327ForUHC.length} changed to TOB 327`);
+        console.log(`UHC MA SUMMARY: ${uhcMARecords.length} processed, ${recordsNeedingTOB327ForUHC.length} changed to TOB 327, ${uhcMAFailedUDRecords.length} failed UD modifier`);
+        if (uhcMAFailedUDRecords.length > 0) {
+            console.log(`  ⚠️  Records that FAILED UD modifier (will NOT be approved):`);
+            uhcMAFailedUDRecords.forEach(r => console.log(`    - MRN: ${r.mrn}, Billing: ${r.billingPeriod}, Reason: ${r.reason}`));
+        }
         console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+    }
+    // Add UHC MA failed UD records to manual review
+    if (uhcMAFailedUDRecords.length > 0) {
+        manualReviewRecords.push(...uhcMAFailedUDRecords);
     }
     // PROCESS COMMONWEALTH CARE ALLIANCE RECORDS (UD modifier + Occurrence Code 50)
     // This runs ALWAYS for CCA records, regardless of whether duplicates exist
@@ -5693,6 +5955,36 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
     }
     // Note: Records needing TOB 327 have already been changed automatically above
     // All records should now have correct Type of Bill, so we can proceed with approval
+    // Deselect UHC MA records that failed UD modifier (they were not saved, still in PA)
+    if (uhcMAFailedUDRecords.length > 0) {
+        console.log(`\n=== DESELECTING ${uhcMAFailedUDRecords.length} UHC MA RECORDS THAT FAILED UD MODIFIER ===`);
+        console.log(`These records need manual UD modifier addition and will stay in Pending Approval`);
+        for (const failedRecord of uhcMAFailedUDRecords) {
+            try {
+                const deselected = await page.evaluate((mrn) => {
+                    const rows = Array.from(document.querySelectorAll('table tbody tr'));
+                    for (const row of rows) {
+                        if ((row.textContent || '').includes(mrn)) {
+                            const checkbox = row.querySelector('input[type="checkbox"]');
+                            if (checkbox && checkbox.checked) {
+                                checkbox.click();
+                                return true;
+                            }
+                        }
+                    }
+                    return false;
+                }, failedRecord.mrn);
+                if (deselected) {
+                    console.log(`  ✓ Deselected MRN: ${failedRecord.mrn} (failed UD modifier)`);
+                } else {
+                    console.log(`  ⚠️  MRN ${failedRecord.mrn} not found or already unchecked`);
+                }
+            } catch (error) {
+                console.log(`  ⚠️  Could not deselect MRN ${failedRecord.mrn}: ${error.message}`);
+            }
+        }
+        await page.waitForTimeout(1000);
+    }
     // Wait for any "checking" state to complete
     console.log("\nWaiting for any 'checking' state to complete...");
     await page.waitForTimeout(3000);

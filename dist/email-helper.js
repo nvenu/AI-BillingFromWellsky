@@ -69,8 +69,8 @@ async function sendEmail(config) {
         connectionTimeout: 10000, // 10 seconds
         greetingTimeout: 10000,
         socketTimeout: 10000,
-        debug: true, // Enable debug output
-        logger: true // Enable logger
+        debug: false, // Disabled - was flooding console with base64 content
+        logger: false // Disabled - was flooding console/WebSocket with email data
     });
     // Verify connection
     console.log('\nVerifying SMTP connection...');
