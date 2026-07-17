@@ -2951,26 +2951,64 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                 await dismissModal(page);
                 // Step 5: Expand Visits section
                 console.log(`  Step 4: Expanding Visits section...`);
-                await expandVisitsSection(page);
+                // Use Angular scope to expand + Playwright native click for reliability
+                await page.evaluate(() => {
+                    const links = Array.from(document.querySelectorAll('a.accordion-toggle'));
+                    const visitsLink = links.find(a => a.textContent.trim() === 'Visits') ||
+                                       links.find(a => a.textContent.trim().includes('Visits'));
+                    if (visitsLink && window.angular) {
+                        try {
+                            const scope = window.angular.element(visitsLink).scope();
+                            if (scope) { scope.$apply(() => { scope.isOpen = true; }); }
+                        } catch(e) {}
+                    }
+                });
+                await page.waitForTimeout(2000);
+                try {
+                    const visitsHandle = await page.evaluateHandle(() => {
+                        const links = Array.from(document.querySelectorAll('a.accordion-toggle'));
+                        return links.find(a => a.textContent.trim() === 'Visits') ||
+                               links.find(a => a.textContent.trim().includes('Visits')) || null;
+                    });
+                    if (visitsHandle && visitsHandle.asElement()) {
+                        await visitsHandle.asElement().scrollIntoViewIfNeeded();
+                        await page.waitForTimeout(500);
+                        await visitsHandle.asElement().click();
+                        await page.waitForTimeout(2000);
+                    }
+                } catch (e) {}
+                console.log(`  ✓ Visits expansion attempted`);
                 // Step 6: Process SN visits - add UD modifier and check for multiples
                 console.log(`  Step 5: Processing Skilled Nursing visits...`);
                 let needsTOB327 = false;
                 const visitResult = await page.evaluate((admDateStr) => {
-                    // Find the Visits table specifically (not other tables on the page)
+                    // Find the Visits table - multiple strategies
                     let rows = [];
-                    const accordionToggles = Array.from(document.querySelectorAll('a.accordion-toggle'));
-                    const visitsToggle = accordionToggles.find(a => a.textContent.trim() === 'Visits');
-                    if (visitsToggle) {
-                        const accordionGroup = visitsToggle.closest('.accordion-group') || visitsToggle.closest('[class*="accordion"]');
-                        if (accordionGroup) {
-                            rows = Array.from(accordionGroup.querySelectorAll('table tbody tr'));
+                    // Strategy 1: Find table containing modifier inputs (most reliable)
+                    const allTables = document.querySelectorAll('table');
+                    for (const table of allTables) {
+                        const modInputs = table.querySelectorAll('input[ng-model="lineItem.modifier1"]');
+                        if (modInputs.length > 0) {
+                            rows = Array.from(table.querySelectorAll('tbody tr'));
+                            break;
                         }
                     }
-                    // Fallback: if accordion approach failed, try last table.table-striped (Visits is usually last)
+                    // Strategy 2: Accordion group approach
                     if (rows.length === 0) {
-                        const allTables = document.querySelectorAll('table.table-striped');
-                        if (allTables.length > 0) {
-                            const lastTable = allTables[allTables.length - 1];
+                        const accordionToggles = Array.from(document.querySelectorAll('a.accordion-toggle'));
+                        const visitsToggle = accordionToggles.find(a => a.textContent.trim() === 'Visits');
+                        if (visitsToggle) {
+                            const accordionGroup = visitsToggle.closest('.accordion-group') || visitsToggle.closest('[class*="accordion"]');
+                            if (accordionGroup) {
+                                rows = Array.from(accordionGroup.querySelectorAll('table tbody tr'));
+                            }
+                        }
+                    }
+                    // Strategy 3: Last table.table-striped
+                    if (rows.length === 0) {
+                        const stripedTables = document.querySelectorAll('table.table-striped');
+                        if (stripedTables.length > 0) {
+                            const lastTable = stripedTables[stripedTables.length - 1];
                             rows = Array.from(lastTable.querySelectorAll('tbody tr'));
                         }
                     }
@@ -3452,32 +3490,125 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                 }
                 // Step 5: Expand Visits section and add UD modifier
                 console.log(`  Step 4: Expanding Visits section...`);
-                await expandVisitsSection(page);
+                // Custom expansion for CCA: use Angular scope directly + verify table is visible
+                const expandResult = await page.evaluate(() => {
+                    const links = Array.from(document.querySelectorAll('a.accordion-toggle'));
+                    const visitsLink = links.find(a => a.textContent.trim() === 'Visits') ||
+                                       links.find(a => a.textContent.trim().includes('Visits'));
+                    if (!visitsLink) return { found: false, method: 'none', error: 'No Visits toggle found' };
+                    // Method 1: Angular scope - set isOpen = true
+                    if (window.angular) {
+                        try {
+                            const scope = window.angular.element(visitsLink).scope();
+                            if (scope) {
+                                scope.$apply(() => { scope.isOpen = true; });
+                                return { found: true, method: 'angular-scope' };
+                            }
+                        } catch(e) {}
+                    }
+                    // Method 2: Direct click with all event types
+                    visitsLink.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+                    visitsLink.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+                    visitsLink.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+                    return { found: true, method: 'click-events' };
+                });
+                console.log(`  Expand result: found=${expandResult.found}, method=${expandResult.method}`);
+                if (!expandResult.found) {
+                    console.log(`  ⚠️  ${expandResult.error}`);
+                }
+                // Wait for Angular to render the table rows
+                await page.waitForTimeout(3000);
+                // Also try Playwright native click as backup
+                try {
+                    const visitsHandle = await page.evaluateHandle(() => {
+                        const links = Array.from(document.querySelectorAll('a.accordion-toggle'));
+                        return links.find(a => a.textContent.trim() === 'Visits') ||
+                               links.find(a => a.textContent.trim().includes('Visits')) || null;
+                    });
+                    if (visitsHandle && visitsHandle.asElement()) {
+                        await visitsHandle.asElement().scrollIntoViewIfNeeded();
+                        await page.waitForTimeout(500);
+                        await visitsHandle.asElement().click();
+                        console.log(`  ✓ Also sent Playwright native click`);
+                        await page.waitForTimeout(2000);
+                    }
+                } catch (e) {
+                    console.log(`  Native click skipped: ${e.message}`);
+                }
+                // Verify: check if modifier inputs are now visible on the page
+                const modifierCheck = await page.evaluate(() => {
+                    const inputs = document.querySelectorAll('input[ng-model="lineItem.modifier1"]');
+                    return { count: inputs.length, visible: inputs.length > 0 && inputs[0].offsetParent !== null };
+                });
+                console.log(`  Modifier inputs found: ${modifierCheck.count}, visible: ${modifierCheck.visible}`);
+                if (modifierCheck.count === 0) {
+                    // Last resort: try clicking via Angular's ng-click directly
+                    console.log(`  ⚠️  No modifier inputs visible, trying ng-click trigger...`);
+                    await page.evaluate(() => {
+                        const links = Array.from(document.querySelectorAll('a.accordion-toggle'));
+                        const visitsLink = links.find(a => a.textContent.trim() === 'Visits');
+                        if (visitsLink && window.angular) {
+                            const scope = window.angular.element(visitsLink).scope();
+                            if (scope) {
+                                scope.$apply(() => { scope.isOpen = !scope.isOpen; });
+                            }
+                        }
+                    });
+                    await page.waitForTimeout(3000);
+                }
                 // Step 6: Process SN visits - add UD modifier for visits > 30 days from admission
                 // Also check: if any date has > 2 SN visits, skip the claim
                 console.log(`  Step 5: Processing Skilled Nursing visits for UD modifier...`);
                 const visitResult = await page.evaluate((admDateStr) => {
-                    // Find the Visits table specifically (not other tables on the page)
+                    // Find the Visits table - multiple strategies
                     let rows = [];
-                    const accordionToggles = Array.from(document.querySelectorAll('a.accordion-toggle'));
-                    const visitsToggle = accordionToggles.find(a => a.textContent.trim() === 'Visits');
-                    if (visitsToggle) {
-                        const accordionGroup = visitsToggle.closest('.accordion-group') || visitsToggle.closest('[class*="accordion"]');
-                        if (accordionGroup) {
-                            rows = Array.from(accordionGroup.querySelectorAll('table tbody tr'));
+                    const debugInfo = [];
+                    // Strategy 1: Find table containing modifier inputs (most reliable)
+                    const allTables = document.querySelectorAll('table');
+                    for (const table of allTables) {
+                        const modInputs = table.querySelectorAll('input[ng-model="lineItem.modifier1"]');
+                        if (modInputs.length > 0) {
+                            rows = Array.from(table.querySelectorAll('tbody tr'));
+                            debugInfo.push(`Strategy 1 (modifier inputs): ${rows.length} rows`);
+                            break;
                         }
                     }
+                    // Strategy 2: Accordion group approach
                     if (rows.length === 0) {
-                        const allTables = document.querySelectorAll('table.table-striped');
-                        if (allTables.length > 0) {
-                            const lastTable = allTables[allTables.length - 1];
+                        const accordionToggles = Array.from(document.querySelectorAll('a.accordion-toggle'));
+                        const visitsToggle = accordionToggles.find(a => a.textContent.trim() === 'Visits');
+                        if (visitsToggle) {
+                            const accordionGroup = visitsToggle.closest('.accordion-group') || visitsToggle.closest('[class*="accordion"]');
+                            if (accordionGroup) {
+                                rows = Array.from(accordionGroup.querySelectorAll('table tbody tr'));
+                                debugInfo.push(`Strategy 2 (accordion-group): ${rows.length} rows`);
+                            }
+                        }
+                    }
+                    // Strategy 3: Table with "Visit Type" header
+                    if (rows.length === 0) {
+                        for (const table of allTables) {
+                            const headers = Array.from(table.querySelectorAll('th'));
+                            if (headers.some(h => h.textContent.trim() === 'Visit Type') &&
+                                headers.some(h => h.textContent.trim() === 'Modifiers')) {
+                                rows = Array.from(table.querySelectorAll('tbody tr'));
+                                debugInfo.push(`Strategy 3 (header match): ${rows.length} rows`);
+                                break;
+                            }
+                        }
+                    }
+                    // Strategy 4: Last table.table-striped
+                    if (rows.length === 0) {
+                        const stripedTables = document.querySelectorAll('table.table-striped');
+                        if (stripedTables.length > 0) {
+                            const lastTable = stripedTables[stripedTables.length - 1];
                             rows = Array.from(lastTable.querySelectorAll('tbody tr'));
+                            debugInfo.push(`Strategy 4 (last striped): ${rows.length} rows`);
                         }
                     }
                     let udModifiersAdded = 0;
                     const snVisitsByDate = {};
                     let admDate = null;
-                    const debugInfo = [];
                     if (admDateStr && admDateStr.length === 8) {
                         const month = parseInt(admDateStr.substring(0, 2)) - 1;
                         const day = parseInt(admDateStr.substring(2, 4));
@@ -3722,6 +3853,105 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                                     // Handle modal
                                     await dismissModal(page);
                                     console.log(`  ✓ Re-opened claim worksheet`);
+                                    // CRITICAL: Re-apply UD modifier (was lost when we clicked Return earlier)
+                                    console.log(`  Re-expanding Visits and re-applying UD modifier...`);
+                                    // Expand visits via Angular scope
+                                    await page.evaluate(() => {
+                                        const links = Array.from(document.querySelectorAll('a.accordion-toggle'));
+                                        const visitsLink = links.find(a => a.textContent.trim() === 'Visits') ||
+                                                           links.find(a => a.textContent.trim().includes('Visits'));
+                                        if (visitsLink && window.angular) {
+                                            try {
+                                                const scope = window.angular.element(visitsLink).scope();
+                                                if (scope) { scope.$apply(() => { scope.isOpen = true; }); }
+                                            } catch(e) {}
+                                        }
+                                    });
+                                    await page.waitForTimeout(2000);
+                                    // Native click backup
+                                    try {
+                                        const vh = await page.evaluateHandle(() => {
+                                            const links = Array.from(document.querySelectorAll('a.accordion-toggle'));
+                                            return links.find(a => a.textContent.trim() === 'Visits') ||
+                                                   links.find(a => a.textContent.trim().includes('Visits')) || null;
+                                        });
+                                        if (vh && vh.asElement()) {
+                                            await vh.asElement().scrollIntoViewIfNeeded();
+                                            await page.waitForTimeout(500);
+                                            await vh.asElement().click();
+                                            await page.waitForTimeout(2000);
+                                        }
+                                    } catch (e) {}
+                                    // Re-apply UD modifiers
+                                    const reapplyResult = await page.evaluate((admDateStr) => {
+                                        let rows = [];
+                                        const allTables = document.querySelectorAll('table');
+                                        for (const table of allTables) {
+                                            if (table.querySelectorAll('input[ng-model="lineItem.modifier1"]').length > 0) {
+                                                rows = Array.from(table.querySelectorAll('tbody tr'));
+                                                break;
+                                            }
+                                        }
+                                        let udAdded = 0;
+                                        let admDate = null;
+                                        if (admDateStr && admDateStr.length === 8) {
+                                            const month = parseInt(admDateStr.substring(0, 2)) - 1;
+                                            const day = parseInt(admDateStr.substring(2, 4));
+                                            const year = parseInt(admDateStr.substring(4, 8));
+                                            admDate = new Date(year, month, day);
+                                        }
+                                        rows.forEach((row) => {
+                                            const cells = row.querySelectorAll('td');
+                                            if (cells.length >= 2) {
+                                                const dateStr = cells[0].textContent.trim();
+                                                const visitType = cells[1].textContent.trim();
+                                                const isSN = visitType.toLowerCase().includes('skilled nursing');
+                                                if (isSN && admDate && dateStr) {
+                                                    const parts = dateStr.split('/');
+                                                    if (parts.length === 3) {
+                                                        const visitDate = new Date(parseInt(parts[2]), parseInt(parts[0]) - 1, parseInt(parts[1]));
+                                                        const diffDays = Math.floor((visitDate - admDate) / (1000 * 60 * 60 * 24));
+                                                        if (diffDays > 30) {
+                                                            const modifier1 = row.querySelector('input[ng-model="lineItem.modifier1"]');
+                                                            const modifier2 = row.querySelector('input[ng-model="lineItem.modifier2"]');
+                                                            // Skip if already has UD
+                                                            if (modifier1 && modifier1.value.trim().toUpperCase() === 'UD') return;
+                                                            if (modifier2 && modifier2.value.trim().toUpperCase() === 'UD') return;
+                                                            if (modifier1 && (!modifier1.value.trim())) {
+                                                                modifier1.value = 'UD';
+                                                                modifier1.dispatchEvent(new Event('input', { bubbles: true }));
+                                                                modifier1.dispatchEvent(new Event('change', { bubbles: true }));
+                                                                if (window.angular) {
+                                                                    try {
+                                                                        const scope = window.angular.element(modifier1).scope();
+                                                                        if (scope && scope.lineItem) {
+                                                                            scope.$apply(() => { scope.lineItem.modifier1 = 'UD'; });
+                                                                        }
+                                                                    } catch(e) {}
+                                                                }
+                                                                udAdded++;
+                                                            } else if (modifier1 && modifier1.value.trim().toUpperCase() !== 'UD' && modifier2 && (!modifier2.value.trim())) {
+                                                                modifier2.value = 'UD';
+                                                                modifier2.dispatchEvent(new Event('input', { bubbles: true }));
+                                                                modifier2.dispatchEvent(new Event('change', { bubbles: true }));
+                                                                if (window.angular) {
+                                                                    try {
+                                                                        const scope = window.angular.element(modifier2).scope();
+                                                                        if (scope && scope.lineItem) {
+                                                                            scope.$apply(() => { scope.lineItem.modifier2 = 'UD'; });
+                                                                        }
+                                                                    } catch(e) {}
+                                                                }
+                                                                udAdded++;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        });
+                                        return { udAdded, rowCount: rows.length };
+                                    }, admissionDate);
+                                    console.log(`  UD modifiers re-applied: ${reapplyResult.udAdded} (rows: ${reapplyResult.rowCount})`);
                                 } catch (navError) {
                                     console.log(`  ⚠️  Could not re-open claim worksheet: ${navError.message}`);
                                 }
