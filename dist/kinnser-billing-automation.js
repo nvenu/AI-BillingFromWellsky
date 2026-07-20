@@ -99,20 +99,20 @@ async function extractPdfFromPrintIcon(page, printIconId, retryCount = 0) {
                 } catch (e) {}
             };
             page.context().on('response', handler);
-            setTimeout(() => { page.context().off('response', handler); resolve(null); }, 50000);
+            setTimeout(() => { page.context().off('response', handler); resolve(null); }, 25000);
         });
 
         // Listen for popup
-        const newPagePromise = page.context().waitForEvent('page', { timeout: 50000 }).catch(() => null);
+        const newPagePromise = page.context().waitForEvent('page', { timeout: 25000 }).catch(() => null);
 
         // Click print icon
         await page.click(`#${printIconId}`);
         console.log(`  ✓ Clicked print icon: ${printIconId}`);
 
         // Race: wait for either window.open capture OR network response OR new tab
-        // Poll window.open capture every 1s for speed
+        // Poll window.open capture every 1s (reduced from 50 to 20 iterations)
         let pdfUrl = null;
-        for (let i = 0; i < 50; i++) {
+        for (let i = 0; i < 20; i++) {
             await page.waitForTimeout(1000);
             try {
                 const captured = await page.evaluate(() => window.__capturedOpenUrl);
@@ -2885,7 +2885,8 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
         console.log(`Found ${uhcMARecords.length} United health care MA record(s)`);
         console.log("  Requires: admission date check, UD modifier for >30 days, multiple SN check");
         for (const record of uhcMARecords) {
-            console.log(`\nProcessing UHC MA record:`);
+            const uhcIdx = uhcMARecords.indexOf(record);
+            console.log(`\nProcessing UHC MA record [${uhcIdx + 1}/${uhcMARecords.length}]:`);
             console.log(`  MRN: ${record.mrn}`);
             console.log(`  Insurance: ${record.insurance}`);
             console.log(`  Billing Period: ${record.billingPeriodText}`);
@@ -2893,6 +2894,32 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                 console.log(`  ⚠️  No edit button found - skipping`);
                 continue;
             }
+            // Check stop request
+            if (isStopRequested()) {
+                console.log(`\n⚠️  STOP REQUESTED - Stopping UHC MA processing at record ${uhcIdx + 1}/${uhcMARecords.length}`);
+                break;
+            }
+            // Batch break every 20 records
+            if (uhcIdx > 0 && uhcIdx % 20 === 0) {
+                console.log(`\n  ⏸️  Batch break at record ${uhcIdx}/${uhcMARecords.length} - pausing 5s...`);
+                await page.waitForTimeout(5000);
+                try {
+                    const alive = page.url();
+                    if (!alive || alive === 'about:blank') {
+                        console.log(`  ❌ Browser session lost - aborting UHC MA processing`);
+                        break;
+                    }
+                } catch (e) {
+                    console.log(`  ❌ Browser session lost - aborting UHC MA processing`);
+                    break;
+                }
+            }
+            const recordStart = Date.now();
+            const recordTimeoutMs = 120000;
+            // Set up a watchdog that logs a warning if this record takes too long
+            const watchdog = setTimeout(() => {
+                console.log(`  ⚠️  WATCHDOG: UHC MA record ${record.mrn} has been processing for > ${recordTimeoutMs / 1000}s`);
+            }, recordTimeoutMs);
             try {
                 // Step 1: Click print icon to get admission date from PDF
                 console.log(`  Step 1: Getting admission date from PDF...`);
@@ -3374,9 +3401,16 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                     await page.waitForSelector('table tbody tr', { timeout: 15000 });
                 } catch (e) {}
                 await page.waitForTimeout(2000);
-                console.log(`  ✅ Successfully processed UHC MA record`);
+                console.log(`  ✅ Successfully processed UHC MA record (${Math.round((Date.now() - recordStart) / 1000)}s)`);
+                clearTimeout(watchdog);
             } catch (error) {
-                console.error(`  ✗ Error processing UHC MA record:`, error.message || error);
+                clearTimeout(watchdog);
+                const errMsg = error.message || String(error);
+                console.error(`  ✗ Error processing UHC MA record:`, errMsg);
+                if (errMsg.includes('Target page') || errMsg.includes('browser has been closed')) {
+                    console.log(`  ❌ Browser session lost - aborting UHC MA processing`);
+                    break;
+                }
                 try { await page.click('#returnBtn'); await page.waitForTimeout(3000); } catch (e) {
                     try { await page.click('#pendingClaimsApproval'); await page.waitForTimeout(3000); } catch (e2) {}
                 }
@@ -3406,7 +3440,9 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
         console.log(`Found ${ccaRecords.length} Commonwealth Care Alliance record(s)`);
         console.log("  Requires: admission date check, UD modifier for >30 days, Occurrence Code 50");
         for (const record of ccaRecords) {
-            console.log(`\nProcessing CCA record:`);
+            // Progress logging and batch breaks
+            const ccaIdx = ccaRecords.indexOf(record);
+            console.log(`\nProcessing CCA record [${ccaIdx + 1}/${ccaRecords.length}]:`);
             console.log(`  MRN: ${record.mrn}`);
             console.log(`  Insurance: ${record.insurance}`);
             console.log(`  Billing Period: ${record.billingPeriodText}`);
@@ -3414,6 +3450,33 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                 console.log(`  ⚠️  No edit button found - skipping`);
                 continue;
             }
+            // Check stop request
+            if (isStopRequested()) {
+                console.log(`\n⚠️  STOP REQUESTED - Stopping CCA processing at record ${ccaIdx + 1}/${ccaRecords.length}`);
+                break;
+            }
+            // Batch break every 20 records to prevent memory pressure
+            if (ccaIdx > 0 && ccaIdx % 20 === 0) {
+                console.log(`\n  ⏸️  Batch break at record ${ccaIdx}/${ccaRecords.length} - pausing 5s...`);
+                await page.waitForTimeout(5000);
+                // Verify page is still alive
+                try {
+                    const alive = page.url();
+                    if (!alive || alive === 'about:blank') {
+                        console.log(`  ❌ Browser session lost at batch break - aborting CCA processing`);
+                        break;
+                    }
+                } catch (e) {
+                    console.log(`  ❌ Browser session lost at batch break - aborting CCA processing`);
+                    break;
+                }
+            }
+            // Per-record timeout: 120 seconds max per CCA record
+            const recordTimeoutMs = 120000;
+            const recordStart = Date.now();
+            const watchdog = setTimeout(() => {
+                console.log(`  ⚠️  WATCHDOG: CCA record ${record.mrn} has been processing for > ${recordTimeoutMs / 1000}s`);
+            }, recordTimeoutMs);
             try {
                 // Step 1: Click print icon to get admission date from PDF
                 console.log(`  Step 1: Getting admission date from PDF...`);
@@ -4095,11 +4158,29 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                     await page.waitForSelector('table tbody tr', { timeout: 15000 });
                 } catch (e) {}
                 await page.waitForTimeout(2000);
-                console.log(`  ✅ Successfully processed CCA record`);
+                console.log(`  ✅ Successfully processed CCA record (${Math.round((Date.now() - recordStart) / 1000)}s)`);
+                clearTimeout(watchdog);
             } catch (error) {
-                console.error(`  ✗ Error processing CCA record:`, error.message || error);
+                clearTimeout(watchdog);
+                const errMsg = error.message || String(error);
+                console.error(`  ✗ Error processing CCA record:`, errMsg);
+                if (errMsg.includes('Target page') || errMsg.includes('browser has been closed')) {
+                    console.log(`  ❌ Browser session lost - aborting CCA processing`);
+                    break;
+                }
                 try { await page.click('#returnBtn'); await page.waitForTimeout(3000); } catch (e) {
                     try { await page.click('#pendingClaimsApproval'); await page.waitForTimeout(3000); } catch (e2) {}
+                }
+                // Verify browser is still alive after error
+                try {
+                    const url = page.url();
+                    if (!url || url === 'about:blank') {
+                        console.log(`  ❌ Browser session lost - aborting CCA processing`);
+                        break;
+                    }
+                } catch (e) {
+                    console.log(`  ❌ Browser session lost - aborting CCA processing`);
+                    break;
                 }
             }
         }
