@@ -4402,41 +4402,7 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                     console.log(`  ✓ Worksheet loaded`);
                     // STEP 4: Extract patient ZIP code from the worksheet
                     console.log(`  Step 4: Extracting patient ZIP code...`);
-                    const patientZip = await page.evaluate(() => {
-                        // Try common selectors for patient ZIP on Kinnser worksheet
-                        const zipSelectors = [
-                            '#patientZip',
-                            '#patZip',
-                            'input[ng-model*="zip"]',
-                            'input[ng-model*="Zip"]',
-                            'input[name*="zip"]',
-                            'input[name*="Zip"]',
-                            '#zip',
-                            '#zipCode'
-                        ];
-                        for (const sel of zipSelectors) {
-                            const el = document.querySelector(sel);
-                            if (el && el.value) return el.value.trim();
-                        }
-                        // Try to find ZIP in any visible text that matches ZIP pattern
-                        // Look in patient info section
-                        const allInputs = document.querySelectorAll('input[type="text"]');
-                        for (const input of allInputs) {
-                            const val = input.value.trim();
-                            if (/^\d{5}(-\d{4})?$/.test(val)) {
-                                return val;
-                            }
-                        }
-                        // Try reading from span/div elements with ZIP pattern
-                        const textElements = document.querySelectorAll('span.ng-binding, div.ng-binding');
-                        for (const el of textElements) {
-                            const text = el.textContent.trim();
-                            if (/^\d{5}(-\d{4})?$/.test(text)) {
-                                return text;
-                            }
-                        }
-                        return null;
-                    });
+                    const patientZip = await extractPatientZip(page);
                     let zipCode5 = null;
                     if (patientZip) {
                         zipCode5 = patientZip.substring(0, 5);
