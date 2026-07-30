@@ -4530,70 +4530,43 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                     console.log(`  Step 6: Setting Value Code 61 (CBSA) = ${valueCode61}...`);
                     const vc61Result = await page.evaluate((args) => {
                         const vcValue = args.vcValue;
-                        const results = { success: false, slot: 0, methods: [] };
-                        // Find first empty value code slot
-                        let targetSlot = 0;
-                        for (let i = 1; i <= 12; i++) {
-                            const codeInput = document.querySelector(`#valueCode${i}`);
-                            if (codeInput) {
-                                const val = codeInput.value;
-                                if (!val || val.trim() === '') {
-                                    targetSlot = i;
-                                    break;
-                                }
-                                if (val === '61') {
-                                    targetSlot = i;
-                                    break;
-                                }
-                            }
-                        }
-                        if (!targetSlot) { results.methods.push('no-empty-slot'); return results; }
-                        results.slot = targetSlot;
-                        const codeInput = document.querySelector(`#valueCode${targetSlot}`);
-                        const amountInput = document.querySelector(`#valueAmount${targetSlot}`);
-                        // Set code = 61
-                        if (codeInput) {
-                            codeInput.value = '61';
-                            codeInput.dispatchEvent(new Event('input', { bubbles: true }));
-                            codeInput.dispatchEvent(new Event('change', { bubbles: true }));
-                            results.methods.push('code-input');
-                        }
+                        const results = { success: false, slot: 1, methods: [] };
+                        // Value Code 61 goes in slot 1 (fixed)
+                        // The select has option value "0" = 61, "1" = 85
+                        const codeSelect = document.querySelector('#valueCode1');
+                        const amountInput = document.querySelector('#valueCodeAmount1');
+                        if (!codeSelect) { results.methods.push('no-select-found'); return results; }
+                        // Set select value to "0" (which is 61)
+                        codeSelect.value = '0';
+                        codeSelect.dispatchEvent(new Event('change', { bubbles: true }));
+                        results.methods.push('select-value-0');
                         // Set amount = CBSA value
                         if (amountInput) {
                             amountInput.value = vcValue;
                             amountInput.dispatchEvent(new Event('input', { bubbles: true }));
                             amountInput.dispatchEvent(new Event('change', { bubbles: true }));
                             amountInput.dispatchEvent(new Event('blur', { bubbles: true }));
-                            results.methods.push('amount-input');
+                            results.methods.push('amount-set');
                         }
-                        // Angular scope update for Value Code 61
-                        try {
-                            if (window.angular && codeInput) {
-                                const scope = window.angular.element(codeInput).scope();
+                        // Angular scope update
+                        if (window.angular) {
+                            try {
+                                const scope = window.angular.element(codeSelect).scope();
                                 if (scope && scope.claim) {
                                     scope.$apply(() => {
-                                        scope.claim[`valueCode${targetSlot}Select2`] = { id: '61', text: '61 - Location Where Service is Furnished' };
-                                        scope.claim[`valueAmount${targetSlot}`] = vcValue;
+                                        scope.claim.valueCode1 = '0'; // "0" = 61 in the options
+                                        scope.claim.valueCodeAmount1 = vcValue;
                                     });
                                     results.methods.push('angular-scope');
                                 }
-                            }
-                        } catch (e) { results.methods.push('angular-err: ' + e.message); }
-                        // jQuery Select2 API
-                        try {
-                            const $ = window.jQuery;
-                            if ($ && $.fn.select2) {
-                                $(`#valueCode${targetSlot}`).select2('data', { id: '61', text: '61 - Location Where Service is Furnished' });
-                                $(`#valueCode${targetSlot}`).trigger('change');
-                                results.methods.push('jquery-select2');
-                            }
-                        } catch (e) { results.methods.push('jquery-err: ' + e.message); }
+                            } catch (e) { results.methods.push('angular-err: ' + e.message); }
+                        }
                         results.success = true;
                         return results;
                     }, { vcValue: valueCode61 });
                     console.log(`  VC61 Slot: ${vc61Result.slot}, Methods: ${vc61Result.methods.join(', ')}`);
                     if (vc61Result.success) {
-                        console.log(`  ✓ Value Code 61 = ${valueCode61} set in slot ${vc61Result.slot}`);
+                        console.log(`  ✓ Value Code 61 = ${valueCode61} set in slot 1`);
                     } else {
                         console.log(`  ⚠️  Could not set Value Code 61`);
                     }
@@ -4601,71 +4574,43 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                     console.log(`  Step 7: Setting Value Code 85 (FIPS) = ${valueCode85}...`);
                     const vc85Result = await page.evaluate((args) => {
                         const vcValue = args.vcValue;
-                        const prevSlot = args.prevSlot;
-                        const results = { success: false, slot: 0, methods: [] };
-                        // Find next empty value code slot (after the one used for VC61)
-                        let targetSlot = 0;
-                        for (let i = prevSlot + 1; i <= 12; i++) {
-                            const codeInput = document.querySelector(`#valueCode${i}`);
-                            if (codeInput) {
-                                const val = codeInput.value;
-                                if (!val || val.trim() === '') {
-                                    targetSlot = i;
-                                    break;
-                                }
-                                if (val === '85') {
-                                    targetSlot = i;
-                                    break;
-                                }
-                            }
-                        }
-                        if (!targetSlot) { results.methods.push('no-empty-slot'); return results; }
-                        results.slot = targetSlot;
-                        const codeInput = document.querySelector(`#valueCode${targetSlot}`);
-                        const amountInput = document.querySelector(`#valueAmount${targetSlot}`);
-                        // Set code = 85
-                        if (codeInput) {
-                            codeInput.value = '85';
-                            codeInput.dispatchEvent(new Event('input', { bubbles: true }));
-                            codeInput.dispatchEvent(new Event('change', { bubbles: true }));
-                            results.methods.push('code-input');
-                        }
+                        const results = { success: false, slot: 5, methods: [] };
+                        // Value Code 85 goes in slot 5 (fixed)
+                        // The select has option value "0" = 61, "1" = 85
+                        const codeSelect = document.querySelector('#valueCode5');
+                        const amountInput = document.querySelector('#valueCodeAmount5');
+                        if (!codeSelect) { results.methods.push('no-select-found'); return results; }
+                        // Set select value to "1" (which is 85)
+                        codeSelect.value = '1';
+                        codeSelect.dispatchEvent(new Event('change', { bubbles: true }));
+                        results.methods.push('select-value-1');
                         // Set amount = FIPS value
                         if (amountInput) {
                             amountInput.value = vcValue;
                             amountInput.dispatchEvent(new Event('input', { bubbles: true }));
                             amountInput.dispatchEvent(new Event('change', { bubbles: true }));
                             amountInput.dispatchEvent(new Event('blur', { bubbles: true }));
-                            results.methods.push('amount-input');
+                            results.methods.push('amount-set');
                         }
-                        // Angular scope update for Value Code 85
-                        try {
-                            if (window.angular && codeInput) {
-                                const scope = window.angular.element(codeInput).scope();
+                        // Angular scope update
+                        if (window.angular) {
+                            try {
+                                const scope = window.angular.element(codeSelect).scope();
                                 if (scope && scope.claim) {
                                     scope.$apply(() => {
-                                        scope.claim[`valueCode${targetSlot}Select2`] = { id: '85', text: '85 - County FIPS Code' };
-                                        scope.claim[`valueAmount${targetSlot}`] = vcValue;
+                                        scope.claim.valueCode5 = '1'; // "1" = 85 in the options
+                                        scope.claim.valueCodeAmount5 = vcValue;
                                     });
                                     results.methods.push('angular-scope');
                                 }
-                            }
-                        } catch (e) { results.methods.push('angular-err: ' + e.message); }
-                        // jQuery Select2 API
-                        try {
-                            const $ = window.jQuery;
-                            if ($ && $.fn.select2) {
-                                $(`#valueCode${targetSlot}`).select2('data', { id: '85', text: '85 - County FIPS Code' });
-                                $(`#valueCode${targetSlot}`).trigger('change');
-                                results.methods.push('jquery-select2');
-                            }
-                        } catch (e) { results.methods.push('jquery-err: ' + e.message); }
+                            } catch (e) { results.methods.push('angular-err: ' + e.message); }
+                        }
                         results.success = true;
                         return results;
-                    }, { vcValue: valueCode85, prevSlot: vc61Result.slot || 0 });
+                    }, { vcValue: valueCode85 });
                     console.log(`  VC85 Slot: ${vc85Result.slot}, Methods: ${vc85Result.methods.join(', ')}`);
                     if (vc85Result.success) {
-                        console.log(`  ✓ Value Code 85 = ${valueCode85} set in slot ${vc85Result.slot}`);
+                        console.log(`  ✓ Value Code 85 = ${valueCode85} set in slot 5`);
                     } else {
                         console.log(`  ⚠️  Could not set Value Code 85`);
                     }
