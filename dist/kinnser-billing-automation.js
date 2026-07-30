@@ -4554,7 +4554,7 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                                 const scope = window.angular.element(codeSelect).scope();
                                 if (scope && scope.claim) {
                                     scope.$apply(() => {
-                                        scope.claim.valueCode1 = '0'; // "0" = 61 in the options
+                                        scope.claim.valueCode1 = '61'; // Angular stores the code number
                                         scope.claim.valueCodeAmount1 = vcValue;
                                     });
                                     results.methods.push('angular-scope');
@@ -4598,7 +4598,7 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                                 const scope = window.angular.element(codeSelect).scope();
                                 if (scope && scope.claim) {
                                     scope.$apply(() => {
-                                        scope.claim.valueCode5 = '1'; // "1" = 85 in the options
+                                        scope.claim.valueCode5 = '85'; // Angular stores the code number
                                         scope.claim.valueCodeAmount5 = vcValue;
                                     });
                                     results.methods.push('angular-scope');
