@@ -1156,17 +1156,33 @@ app.get("/health", (req, res) => {
         version: "1.0.0"
     });
 });
+// Server-side lock to prevent concurrent automation runs
+let automationLock = { running: false, office: null, startedAt: null, startedBy: null };
 // API endpoint to run automation
 app.post("/run-automation", async (req, res) => {
     try {
+        // CHECK LOCK: Reject if another run is in progress
+        if (automationLock.running) {
+            const runningFor = Math.round((Date.now() - automationLock.startedAt) / 1000);
+            const msg = `Automation already running for "${automationLock.office}" (started ${runningFor}s ago). Please wait for it to complete or click Stop.`;
+            console.log(`⚠️  REJECTED: Concurrent run attempt while "${automationLock.office}" is processing`);
+            broadcastLog(`⚠️  ${msg}`);
+            return res.status(409).json({ success: false, error: msg });
+        }
+        // ACQUIRE LOCK
+        const { officeValue, selectedInsurances } = req.body;
+        automationLock = { running: true, office: officeValue, startedAt: Date.now(), startedBy: req.ip || 'unknown' };
+        console.log(`🔒 Lock acquired: ${officeValue} (from ${req.ip})`);
         // Reset stop flag at the start
         resetStopFlag();
-        const { officeValue, selectedInsurances } = req.body;
         console.log(`Starting Kinnser automation for: ${officeValue}`);
         if (selectedInsurances) {
             console.log(`Selected insurances: ${selectedInsurances.join(', ')}`);
         }
         const result = await (0, kinnser_billing_automation_1.loginAndProcessOffices)(officeValue, selectedInsurances);
+        // RELEASE LOCK
+        console.log(`🔓 Lock released: ${automationLock.office} (ran for ${Math.round((Date.now() - automationLock.startedAt) / 1000)}s)`);
+        automationLock = { running: false, office: null, startedAt: null, startedBy: null };
         res.json({
             success: true,
             totalRecords: result.totalRecords,
@@ -1176,6 +1192,9 @@ app.post("/run-automation", async (req, res) => {
         });
     }
     catch (error) {
+        // RELEASE LOCK on error
+        console.log(`🔓 Lock released (error): ${automationLock.office}`);
+        automationLock = { running: false, office: null, startedAt: null, startedBy: null };
         console.error("Automation failed:", error);
         res.status(500).json({
             success: false,
@@ -1188,7 +1207,17 @@ app.post("/stop-automation", (req, res) => {
     console.log("⚠️  STOP REQUESTED BY USER");
     stopRequested = true;
     broadcastLog("⚠️  STOP REQUESTED - Automation will stop after current record...");
+    // Lock will be released when the automation function returns (after it detects the stop flag)
     res.json({ success: true, message: "Stop requested - will stop gracefully after current record" });
+});
+// API endpoint to check automation status
+app.get("/automation-status", (req, res) => {
+    if (automationLock.running) {
+        const runningFor = Math.round((Date.now() - automationLock.startedAt) / 1000);
+        res.json({ running: true, office: automationLock.office, runningForSeconds: runningFor, startedBy: automationLock.startedBy });
+    } else {
+        res.json({ running: false });
+    }
 });
 // API endpoint to manually send email with today's files
 app.post("/send-email", async (req, res) => {
