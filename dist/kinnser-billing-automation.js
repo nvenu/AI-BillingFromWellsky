@@ -2668,6 +2668,8 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
             console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
             console.log(`  AUTOMATICALLY CHANGING ${recordsNeedingTOB327.length} RECORDS FROM TOB 323 TO TOB 327`);
             console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+            const tob327Success = [];
+            const tob327Failed = [];
             for (const recordIndex of recordsNeedingTOB327) {
                 const record = validRecords[recordIndex];
                 console.log(`\n┌─────────────────────────────────────────────────────────┐`);
@@ -2808,6 +2810,7 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                     await page.waitForTimeout(3000);
                     console.log(`  ✓ Returned to Pending Approval page`);
                     console.log(`  ✅ Successfully changed record [${recordIndex}] to TOB 327`);
+                    tob327Success.push({ index: recordIndex, mrn: record.mrn, billingPeriod: record.billingPeriodText });
                     // Check if stop was requested
                     if (isStopRequested()) {
                         console.log(`\n⚠️  STOP REQUESTED - Stopping TOB 327 changes...`);
@@ -2816,6 +2819,7 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                 }
                 catch (error) {
                     console.error(`  ✗ Error changing TOB 327 for record [${recordIndex}]:`, error);
+                    tob327Failed.push({ index: recordIndex, mrn: record.mrn, billingPeriod: record.billingPeriodText, error: error.message || String(error) });
                     // Try to navigate back to Pending Approval
                     try {
                         await page.click('#pendingClaimsApproval');
@@ -2829,8 +2833,14 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
             console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
             console.log(`  TOB 323 → 327 CHANGES COMPLETE`);
             console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-            console.log(`✓ Changed ${recordsNeedingTOB327.length} record(s) from TOB 323 to TOB 327`);
-            console.log(`✓ All duplicate records with TOB 323 now have TOB 327`);
+            console.log(`✓ SUCCESSFUL: ${tob327Success.length}/${recordsNeedingTOB327.length} record(s) changed to TOB 327`);
+            if (tob327Success.length > 0) {
+                tob327Success.forEach(r => console.log(`  ✓ MRN: ${r.mrn}, Period: ${r.billingPeriod}`));
+            }
+            if (tob327Failed.length > 0) {
+                console.log(`❌ FAILED: ${tob327Failed.length} record(s) could NOT be changed to TOB 327`);
+                tob327Failed.forEach(r => console.log(`  ✗ MRN: ${r.mrn}, Period: ${r.billingPeriod}, Error: ${r.error}`));
+            }
             console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
             // Navigate back to Pending Approval with fresh data (DO NOT reload - it kills the browser)
             console.log(`\nNavigating back to Pending Approval for fresh data...`);
