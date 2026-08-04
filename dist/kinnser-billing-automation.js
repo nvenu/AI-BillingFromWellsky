@@ -678,7 +678,7 @@ async function processOffice(page, office, insuranceHelper, selectedInsurances =
             catch (error) {
                 console.error(`⚠️  Error in Pending Approval/Ready To Send for ${office.name}:`, error.message || error);
             }
-            return { records: [], filename: null, readyToSendFiles, readyToSendCount: readyToSendFiles.length > 0 ? readyToSendFiles.filter(f => f.includes('electronic') || f.includes('paper-claim')).length : 0, pendingApprovalCount: 0, changedTo327, snFailures, manualReview: manualReviewFromPA || [] };
+            return { records: [], filename: null, readyToSendFiles, readyToSendCount: readyToSendFiles.length > 0 ? readyToSendFiles.filter(f => f.includes('electronic') || f.includes('paper-claim')).length : 0, pendingApprovalCount: 0, changedTo327, snFailures, manualReview: manualReviewFromPA || [], failedTo327: result && result.failedTo327 ? result.failedTo327 : [] };
         }
         // 5. Process records ONE BY ONE: select valid record → click create → repeat
         const { selectedCount, selectedRecords, failedRecords } = await processRecordsOneByOne(page, insuranceHelper, selectedInsurances);
@@ -731,6 +731,7 @@ async function processOffice(page, office, insuranceHelper, selectedInsurances =
             readyToSendFiles = result.files;
             changedTo327 = result.changedTo327;
             snFailures = result.snFailures || [];
+            let failedTo327PA = result.failedTo327 || [];
  manualReviewFromPA = result.manualReview || [];
             console.log(`✓ Pending Approval and Ready To Send workflow completed for ${office.name}`);
         }
@@ -740,7 +741,7 @@ async function processOffice(page, office, insuranceHelper, selectedInsurances =
         }
         console.log(`✓ Successfully processed ${office.name}`);
         const readyToSendCount = readyToSendFiles.length > 0 ? readyToSendFiles.filter(f => f.includes('electronic') || f.includes('paper-claim')).length : 0;
-        return { records: selectedRecords, filename, readyToSendFiles, readyToSendCount, pendingApprovalCount, changedTo327, snFailures, manualReview: manualReviewFromPA || [] };
+        return { records: selectedRecords, filename, readyToSendFiles, readyToSendCount, pendingApprovalCount, changedTo327, snFailures, manualReview: manualReviewFromPA || [], failedTo327: typeof failedTo327PA !== 'undefined' ? failedTo327PA : [] };
     }
     catch (error) {
         console.error(`✗ Error processing office ${office.name}:`, error);
@@ -940,6 +941,7 @@ async function loginAndProcessOffices(officeValue = 'all', selectedInsurances = 
         const excelFiles = [];
         const allReadyToSendFiles = [];
         const all327Changes = [];
+        const all327Failures = [];
         const allSNFailures = [];
         const allManualReview = [];
         // 2. Process each office
@@ -949,7 +951,7 @@ async function loginAndProcessOffices(officeValue = 'all', selectedInsurances = 
             // Select the office
             await selectOffice(page, office);
             // Process this office
-            const { records: officeRecords, filename, readyToSendFiles, readyToSendCount, pendingApprovalCount, changedTo327, snFailures, manualReview } = await processOffice(page, office, insuranceHelper, selectedInsurances);
+            const { records: officeRecords, filename, readyToSendFiles, readyToSendCount, pendingApprovalCount, changedTo327, snFailures, manualReview, failedTo327 } = await processOffice(page, office, insuranceHelper, selectedInsurances);
             allSelectedRecords.push(...officeRecords);
             const totalCount = officeRecords.length + (readyToSendCount || 0);
             summary.push({ office: office.name, count: officeRecords.length, readyToSendCount: readyToSendCount || 0, pendingApprovalCount: pendingApprovalCount || 0, changedTo327Count: changedTo327.length });
@@ -962,6 +964,17 @@ async function loginAndProcessOffices(officeValue = 'all', selectedInsurances = 
                     reason: change.reason
                 });
             });
+            // Collect 327 failures
+            if (failedTo327 && failedTo327.length > 0) {
+                failedTo327.forEach(failure => {
+                    all327Failures.push({
+                        office: office.name,
+                        mrn: failure.mrn,
+                        billingPeriod: failure.billingPeriod,
+                        error: failure.error
+                    });
+                });
+            }
             // Collect SN visit failures
             if (snFailures && snFailures.length > 0) {
                 snFailures.forEach(failure => {
@@ -1054,6 +1067,13 @@ ${all327Changes.map(change => `  Office: ${change.office}
 
 ✓ These records have been AUTOMATICALLY changed to Type of Bill 327 (Adjustment Claim)
   No manual action required - records were processed and approved.` : 'No duplicate records found - no Type of Bill changes needed'}
+
+${all327Failures.length > 0 ? `
+⚠️  TOB 327 FAILURES - ${all327Failures.length} record(s) FAILED to change:
+${all327Failures.map(f => `  - Office: ${f.office}, MRN: ${f.mrn}, Period: ${f.billingPeriod}
+    Error: ${f.error}`).join('\n')}
+
+These records remain in Pending Approval with TOB 323 and require MANUAL correction.` : ''}
 
 ${officesToProcess.some(o => o.stateCode === 'MA') && allSNFailures.length > 0 ? `
 SENIOR WHOLE HEALTH (BID) - SN VISIT VALIDATION:
@@ -2243,7 +2263,7 @@ async function processPendingApproval(page, insuranceHelper, selectedInsurances 
     // Check if stop was requested before starting
     if (isStopRequested()) {
         console.log(`⚠️  STOP REQUESTED - Skipping Pending Approval tab`);
-        return { files: [], changedTo327: [], snFailures: [], manualReview: [] };
+        return { files: [], changedTo327: [], snFailures: [], manualReview: [], failedTo327: [] };
     }
     try {
         // Navigate to Pending Approval tab
@@ -2339,9 +2359,13 @@ async function processPendingApproval(page, insuranceHelper, selectedInsurances 
                 changedTo327 = pendingResult.changedRecords || pendingResult;
                 snFailures = pendingResult.snFailures || [];
                 manualReview = pendingResult.manualReviewRecords || [];
+                const failedTo327 = pendingResult.tob327Failed || [];
                 pendingApprovalCount = pendingResult.totalRecords || 0;
                 console.log(`✓ Pending Approval: ${pendingApprovalCount} records processed`);
                 console.log(`✓ Type of Bill changes: ${changedTo327.length} records changed to 327`);
+                if (failedTo327.length > 0) {
+                    console.log(`❌ TOB 327 FAILURES: ${failedTo327.length} records could NOT be changed`);
+                }
                 if (manualReview.length > 0) {
                     console.log(`⚠️  Manual Review: ${manualReview.length} records skipped`);
                 }
@@ -2386,11 +2410,11 @@ async function processPendingApproval(page, insuranceHelper, selectedInsurances 
         const readyToSendFiles = await processReadyToSend(page, insuranceHelper, selectedInsurances, officeInfo);
         console.log(`✓ Ready To Send completed with ${readyToSendFiles.length} files`);
         // Return files and 327 changes and SN failures for email
-        return { files: readyToSendFiles, changedTo327, snFailures: snFailures || [], manualReview: manualReview || [] };
+        return { files: readyToSendFiles, changedTo327, snFailures: snFailures || [], manualReview: manualReview || [], failedTo327: failedTo327 || [] };
     }
     catch (error) {
         console.error("✗ Error in Pending Approval workflow:", error);
-        return { files: [], changedTo327: changedTo327 || [], snFailures: snFailures || [], manualReview: manualReview || [] };
+        return { files: [], changedTo327: changedTo327 || [], snFailures: snFailures || [], manualReview: manualReview || [], failedTo327: failedTo327 || [] };
     }
 }
 async function processPendingApprovalRecords(page, insuranceHelper, selectedInsurances = null, readyTabRecords = []) {
@@ -6069,7 +6093,7 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
     console.log(`  Records in Pending Approval table: ${totalRecordsInTable}`);
     if (totalRecordsInTable === 0) {
         console.log("  ✓ No records in Pending Approval - nothing to approve");
-        return { changedRecords, manualReviewRecords, totalRecords: validRecords.length, snFailures: recordsFailingSNCheck.map(idx => {
+        return { changedRecords, manualReviewRecords, tob327Failed: [], totalRecords: validRecords.length, snFailures: recordsFailingSNCheck.map(idx => {
             const record = validRecords[idx];
             return { mrn: record ? record.mrn : 'Unknown', billingPeriod: record ? record.billingPeriodText : 'Unknown', insurance: record ? record.insurance : 'Unknown' };
         })};
@@ -6144,7 +6168,7 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
         console.log("⚠️  'Select All' checkbox not found with any selector");
         console.log("⚠️  This is unexpected - Pending Approval should have a Select All checkbox");
         console.log("⚠️  Skipping approval to avoid errors");
-        return { changedRecords, manualReviewRecords, totalRecords: validRecords.length, snFailures: recordsFailingSNCheck.map(idx => {
+        return { changedRecords, manualReviewRecords, tob327Failed: tob327Failed || [], totalRecords: validRecords.length, snFailures: recordsFailingSNCheck.map(idx => {
             const record = records[idx];
             return { mrn: record ? record.mrn : 'Unknown', billingPeriod: record ? record.billingPeriodText : 'Unknown', insurance: record ? record.insurance : 'Senior whole Health (BID)' };
         })};
@@ -6354,7 +6378,7 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
         console.log("✗ Failed to click Approve button - skipping approval");
     }
     // Return the list of changed records and SN failures
-    return { changedRecords, manualReviewRecords, totalRecords: validRecords.length, snFailures: recordsFailingSNCheck.map(idx => {
+    return { changedRecords, manualReviewRecords, tob327Failed: tob327Failed || [], totalRecords: validRecords.length, snFailures: recordsFailingSNCheck.map(idx => {
         const record = records[idx];
         return { mrn: record ? record.mrn : 'Unknown', billingPeriod: record ? record.billingPeriodText : 'Unknown', insurance: record ? record.insurance : 'Senior whole Health (BID)' };
     })};
