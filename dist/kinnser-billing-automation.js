@@ -2344,6 +2344,7 @@ async function processPendingApproval(page, insuranceHelper, selectedInsurances 
         let changedTo327 = [];
         let snFailures = [];
         let manualReview = [];
+        let failedTo327 = [];
         // Check if there are no records to display
         const noRecordsMessage = await page.textContent('body');
         if (noRecordsMessage && noRecordsMessage.includes('There are currently no records to display.')) {
@@ -2359,7 +2360,7 @@ async function processPendingApproval(page, insuranceHelper, selectedInsurances 
                 changedTo327 = pendingResult.changedRecords || pendingResult;
                 snFailures = pendingResult.snFailures || [];
                 manualReview = pendingResult.manualReviewRecords || [];
-                const failedTo327 = pendingResult.tob327Failed || [];
+                failedTo327 = pendingResult.tob327Failed || [];
                 pendingApprovalCount = pendingResult.totalRecords || 0;
                 console.log(`✓ Pending Approval: ${pendingApprovalCount} records processed`);
                 console.log(`✓ Type of Bill changes: ${changedTo327.length} records changed to 327`);
