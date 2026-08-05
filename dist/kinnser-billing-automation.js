@@ -667,18 +667,20 @@ async function processOffice(page, office, insuranceHelper, selectedInsurances =
             let changedTo327 = [];
             let snFailures = [];
             let manualReviewFromPA = [];
+            let failedTo327FromPA = [];
             try {
                 const result = await processPendingApproval(page, insuranceHelper, selectedInsurances, [], { stateCode: office.stateCode, name: office.name });
                 readyToSendFiles = result.files;
                 changedTo327 = result.changedTo327;
                 snFailures = result.snFailures || [];
+                failedTo327FromPA = result.failedTo327 || [];
  manualReviewFromPA = result.manualReview || [];
                 console.log(`✓ Pending Approval and Ready To Send workflow completed for ${office.name}`);
             }
             catch (error) {
                 console.error(`⚠️  Error in Pending Approval/Ready To Send for ${office.name}:`, error.message || error);
             }
-            return { records: [], filename: null, readyToSendFiles, readyToSendCount: readyToSendFiles.length > 0 ? readyToSendFiles.filter(f => f.includes('electronic') || f.includes('paper-claim')).length : 0, pendingApprovalCount: 0, changedTo327, snFailures, manualReview: manualReviewFromPA || [], failedTo327: result && result.failedTo327 ? result.failedTo327 : [] };
+            return { records: [], filename: null, readyToSendFiles, readyToSendCount: readyToSendFiles.length > 0 ? readyToSendFiles.filter(f => f.includes('electronic') || f.includes('paper-claim')).length : 0, pendingApprovalCount: 0, changedTo327, snFailures, manualReview: manualReviewFromPA || [], failedTo327: failedTo327FromPA };
         }
         // 5. Process records ONE BY ONE: select valid record → click create → repeat
         const { selectedCount, selectedRecords, failedRecords } = await processRecordsOneByOne(page, insuranceHelper, selectedInsurances);
