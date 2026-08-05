@@ -709,6 +709,7 @@ async function processOffice(page, office, insuranceHelper, selectedInsurances =
         let readyToSendFiles = [];
         let changedTo327 = [];
         let manualReviewFromPA = [];
+        let failedTo327PA = [];
         let snFailures = [];
         let pendingApprovalCount = 0;
         try {
@@ -733,7 +734,7 @@ async function processOffice(page, office, insuranceHelper, selectedInsurances =
             readyToSendFiles = result.files;
             changedTo327 = result.changedTo327;
             snFailures = result.snFailures || [];
-            let failedTo327PA = result.failedTo327 || [];
+            failedTo327PA = result.failedTo327 || [];
  manualReviewFromPA = result.manualReview || [];
             console.log(`✓ Pending Approval and Ready To Send workflow completed for ${office.name}`);
         }
@@ -743,7 +744,7 @@ async function processOffice(page, office, insuranceHelper, selectedInsurances =
         }
         console.log(`✓ Successfully processed ${office.name}`);
         const readyToSendCount = readyToSendFiles.length > 0 ? readyToSendFiles.filter(f => f.includes('electronic') || f.includes('paper-claim')).length : 0;
-        return { records: selectedRecords, filename, readyToSendFiles, readyToSendCount, pendingApprovalCount, changedTo327, snFailures, manualReview: manualReviewFromPA || [], failedTo327: typeof failedTo327PA !== 'undefined' ? failedTo327PA : [] };
+        return { records: selectedRecords, filename, readyToSendFiles, readyToSendCount, pendingApprovalCount, changedTo327, snFailures, manualReview: manualReviewFromPA || [], failedTo327: failedTo327PA };
     }
     catch (error) {
         console.error(`✗ Error processing office ${office.name}:`, error);
@@ -2691,12 +2692,13 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
         console.log(`SUMMARY: ${recordsNeedingTOB327.length} record(s) with TOB 323 need to be changed to TOB 327`);
         console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
         // AUTOMATICALLY CHANGE TYPE OF BILL FROM 323 TO 327 for duplicate records
+        let tob327Failed = [];
         if (recordsNeedingTOB327.length > 0) {
             console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
             console.log(`  AUTOMATICALLY CHANGING ${recordsNeedingTOB327.length} RECORDS FROM TOB 323 TO TOB 327`);
             console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
             const tob327Success = [];
-            const tob327Failed = [];
+            tob327Failed = [];
             for (const recordIndex of recordsNeedingTOB327) {
                 const record = validRecords[recordIndex];
                 console.log(`\n┌─────────────────────────────────────────────────────────┐`);
