@@ -2666,10 +2666,10 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
             // Add all duplicate record indices to the list
             dup.indices.forEach((idx) => {
                 const record = validRecords[idx];
-                // Only add if Type of Bill is 323 (needs to be changed to 327)
-                if (record.typeOfBill.includes('323')) {
+                // Only add if Type of Bill is NOT already 327 (needs to be changed to 327)
+                if (!record.typeOfBill.includes('327')) {
                     recordsNeedingTOB327.push(idx);
-                    console.log(`    ❌ Record [${idx}] has TOB 323 → Will be changed to TOB 327`);
+                    console.log(`    ❌ Record [${idx}] has TOB ${record.typeOfBill} → Will be changed to TOB 327`);
                     console.log(`       MRN: ${record.mrn}, Period: ${record.billingPeriodText}`);
                     // Track this for reporting
                     changedRecords.push({
