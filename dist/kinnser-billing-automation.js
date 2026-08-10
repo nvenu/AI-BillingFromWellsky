@@ -577,7 +577,7 @@ function shouldChangeTOB327ForAuth(authorizationCode) {
     const auth = authorizationCode.trim();
     const authLower = auth.toLowerCase();
     if (/^[Tt]/.test(auth)) return true;
-    if (authLower.includes('not t')) return true;
+    if (authLower.includes('not t') || authLower.includes('not a t')) return true;
     return false;
 }
 async function selectOffice(page, office) {
@@ -2708,7 +2708,7 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                 });
                 if (matchingReady && matchingReady.authorization) {
                     const auth = matchingReady.authorization.trim();
-                    if (/^[Tt]/.test(auth) || auth.toLowerCase().includes('not t')) {
+                    if (/^[Tt]/.test(auth) || auth.toLowerCase().includes('not t') || auth.toLowerCase().includes('not a t')) {
                         recordsNeedingTOB327.push(idx);
                         tcodeRecordsCount++;
                         console.log(`  ❌ Record [${idx}] has TCODE auth "${auth}" → Will be changed to TOB 327`);
