@@ -2708,7 +2708,7 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                 });
                 if (matchingReady && matchingReady.authorization) {
                     const auth = matchingReady.authorization.trim();
-                    if (/^[Tt]/.test(auth)) {
+                    if (/^[Tt]/.test(auth) || auth.toLowerCase().includes('not t')) {
                         recordsNeedingTOB327.push(idx);
                         tcodeRecordsCount++;
                         console.log(`  ❌ Record [${idx}] has TCODE auth "${auth}" → Will be changed to TOB 327`);
