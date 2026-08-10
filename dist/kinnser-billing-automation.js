@@ -2689,7 +2689,46 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
             });
         }
         console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-        console.log(`SUMMARY: ${recordsNeedingTOB327.length} record(s) with TOB 323 need to be changed to TOB 327`);
+        console.log(`SUMMARY: ${recordsNeedingTOB327.length} record(s) need to be changed to TOB 327 (duplicates)`);
+        console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+        // CHECK FOR TCODE AUTH RECORDS - these also need TOB 327 (all insurances)
+        console.log("\n=== CHECKING FOR TCODE AUTHORIZATION RECORDS ===");
+        let tcodeRecordsCount = 0;
+        if (readyTabRecords && readyTabRecords.length > 0) {
+            validRecords.forEach((record, idx) => {
+                // Skip if already marked for 327 (from duplicate detection)
+                if (recordsNeedingTOB327.includes(idx)) return;
+                // Skip if already TOB 327
+                if (record.typeOfBill && record.typeOfBill.includes('327')) return;
+                // Find matching Ready tab record to get auth code
+                const matchingReady = readyTabRecords.find(r => {
+                    if (r.allColumns && r.allColumns.some(col => col && col.includes(record.mrn))) return true;
+                    if (r.mrn === record.mrn) return true;
+                    return false;
+                });
+                if (matchingReady && matchingReady.authorization) {
+                    const auth = matchingReady.authorization.trim();
+                    if (/^[Tt]/.test(auth)) {
+                        recordsNeedingTOB327.push(idx);
+                        tcodeRecordsCount++;
+                        console.log(`  ❌ Record [${idx}] has TCODE auth "${auth}" → Will be changed to TOB 327`);
+                        console.log(`     MRN: ${record.mrn}, Insurance: ${record.insurance}, Period: ${record.billingPeriodText}`);
+                        changedRecords.push({
+                            mrn: record.mrn,
+                            billingPeriod: record.billingPeriodText,
+                            reason: `TCODE authorization "${auth}" - changing TOB to 327`
+                        });
+                    }
+                }
+            });
+        }
+        if (tcodeRecordsCount > 0) {
+            console.log(`\n  TCODE SUMMARY: ${tcodeRecordsCount} record(s) with TCODE auth need TOB 327`);
+        } else {
+            console.log("  ✓ No TCODE authorization records found");
+        }
+        console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+        console.log(`TOTAL: ${recordsNeedingTOB327.length} record(s) need TOB 327 (duplicates: ${recordsNeedingTOB327.length - tcodeRecordsCount}, TCODE: ${tcodeRecordsCount})`);
         console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
         // AUTOMATICALLY CHANGE TYPE OF BILL FROM 323 TO 327 for duplicate records
         let tob327Failed = [];

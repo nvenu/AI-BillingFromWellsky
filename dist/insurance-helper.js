@@ -278,6 +278,10 @@ class InsuranceHelper {
         if (this.shouldDiscardAuthorization(authorization)) {
             return false;
         }
+        // TCODE auth codes (starts with T/t) are valid - they trigger TOB 327 in Pending Approval
+        if (/^[Tt]/.test(authorization.trim())) {
+            return true;
+        }
         // Valid: numeric, alphanumeric (with hyphens and spaces allowed), blank, or "na"
         return auth === "na" || auth === "" || /^[a-z0-9\-\s]+$/i.test(auth);
     }
