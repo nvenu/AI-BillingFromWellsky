@@ -3418,6 +3418,8 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                     console.log(`  ❌ More than 1 SN visit on same date → TOB 327:`);
                     visitResult.multipleDates.forEach(d => console.log(`    ${d.date}: ${d.count} visits`));
                     needsTOB327 = true;
+                    // Track this record to stay in Pending Approval (will be deselected during approval)
+                    recordsMultipleSNStayInPA.push({ mrn: record.mrn, billingPeriod: record.billingPeriodText, insurance: record.insurance, reason: '2+ SN visits on same day' });
                 }
                 // Check if billing period is more than 30 days from admission → TOB 327
                 if (!needsTOB327 && admissionDate && record.billingPeriodEnd) {
@@ -3833,11 +3835,11 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                             }
                         }
                     });
-                    // Check if any date has more than 2 SN visits
+                    // Check if any date has more than 1 SN visit (2+ SN same day → TOB 327, stay in PA)
                     let hasExcessiveSNVisits = false;
                     const excessiveDates = [];
                     for (const [date, count] of Object.entries(snVisitsByDate)) {
-                        if (count > 2) {
+                        if (count > 1) {
                             hasExcessiveSNVisits = true;
                             excessiveDates.push({ date, count });
                         }
@@ -3850,11 +3852,22 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                     visitResult.debugInfo.forEach(d => console.log(`    ${d}`));
                 }
                 console.log(`  Total rows in visits table: ${visitResult.totalRows}`);
-                // Track if this claim has excessive SN visits (will be excluded from approval later)
+                // Track if this claim has 2+ SN visits on same day → change TOB to 327 and stay in PA
                 if (visitResult.hasExcessiveSNVisits) {
-                    console.log(`  ⚠️  More than 2 SN visits on same date - claim will NOT be approved`);
-                    visitResult.excessiveDates.forEach(d => console.log(`    ${d.date}: ${d.count} visits (exceeds limit of 2)`));
+                    console.log(`  ❌ 2+ SN visits on same date → TOB 327, will stay in Pending Approval`);
+                    visitResult.excessiveDates.forEach(d => console.log(`    ${d.date}: ${d.count} visits`));
                     record.skipApproval = true;
+                    // Change TOB to 327 in the worksheet
+                    await page.evaluate(() => {
+                        const select = document.querySelector('#typeOfBill');
+                        if (select) {
+                            const option327 = Array.from(select.options).find(opt => opt.text.trim() === '327 - Adjustment Claim');
+                            if (option327) { select.value = option327.value; select.dispatchEvent(new Event('change', { bubbles: true })); }
+                        }
+                    });
+                    console.log(`  ✓ Changed TOB to 327`);
+                    // Track for deselection during approval
+                    recordsMultipleSNStayInPA.push({ mrn: record.mrn, billingPeriod: record.billingPeriodText, insurance: record.insurance, reason: '2+ SN visits on same day' });
                 }
                 // Step 7: Determine Occurrence Code 50 date
                 console.log(`  Step 6: Determining Occurrence Code 50...`);
@@ -4264,6 +4277,129 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
         }
         console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
         console.log(`CCA SUMMARY: ${ccaRecords.length} processed`);
+        console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+    }
+    // PROCESS TUFTS HEALTH PLAN RECORDS (2+ SN visits on same day → TOB 327, stay in PA)
+    await ensureOnPendingApproval(page);
+    const tuftsRecords = isInsuranceSelected('tufts health plan')
+        ? validRecords.filter(r => r.insurance.toLowerCase().trim() === 'tufts health plan')
+        : [];
+    if (tuftsRecords.length > 0) {
+        console.log(`\n=== PROCESSING TUFTS HEALTH PLAN RECORDS ===`);
+        console.log(`Found ${tuftsRecords.length} Tufts Health Plan record(s)`);
+        console.log("  Checking for 2+ SN visits on same day → TOB 327 (stay in PA)");
+        for (const record of tuftsRecords) {
+            console.log(`\nChecking Tufts record:`);
+            console.log(`  MRN: ${record.mrn}`);
+            console.log(`  Billing Period: ${record.billingPeriodText}`);
+            if (!record.editButtonId) {
+                console.log(`  ⚠️  No edit button found - skipping`);
+                continue;
+            }
+            if (isStopRequested()) {
+                console.log(`\n⚠️  STOP REQUESTED - Stopping Tufts processing`);
+                break;
+            }
+            try {
+                // Open claim worksheet
+                await page.click(`#${record.editButtonId}`);
+                await page.waitForLoadState('domcontentloaded', { timeout: 30000 });
+                await page.waitForTimeout(3000);
+                await dismissModal(page);
+                // Expand Visits section
+                await page.evaluate(() => {
+                    const links = Array.from(document.querySelectorAll('a.accordion-toggle'));
+                    const visitsLink = links.find(a => a.textContent.trim() === 'Visits') ||
+                                       links.find(a => a.textContent.trim().includes('Visits'));
+                    if (visitsLink && window.angular) {
+                        try {
+                            const scope = window.angular.element(visitsLink).scope();
+                            if (scope) { scope.$apply(() => { scope.isOpen = true; }); }
+                        } catch(e) {}
+                    }
+                });
+                await page.waitForTimeout(2000);
+                try {
+                    const vh = await page.evaluateHandle(() => {
+                        const links = Array.from(document.querySelectorAll('a.accordion-toggle'));
+                        return links.find(a => a.textContent.trim() === 'Visits') ||
+                               links.find(a => a.textContent.trim().includes('Visits')) || null;
+                    });
+                    if (vh && vh.asElement()) {
+                        await vh.asElement().scrollIntoViewIfNeeded();
+                        await page.waitForTimeout(500);
+                        await vh.asElement().click();
+                        await page.waitForTimeout(2000);
+                    }
+                } catch (e) {}
+                // Count SN visits by date
+                const snCheck = await page.evaluate(() => {
+                    let rows = [];
+                    const allTables = document.querySelectorAll('table');
+                    for (const table of allTables) {
+                        if (table.querySelectorAll('input[ng-model="lineItem.modifier1"]').length > 0) {
+                            rows = Array.from(table.querySelectorAll('tbody tr'));
+                            break;
+                        }
+                    }
+                    const snVisitsByDate = {};
+                    rows.forEach((row) => {
+                        const cells = row.querySelectorAll('td');
+                        if (cells.length >= 2) {
+                            const dateStr = cells[0].textContent.trim();
+                            const visitType = cells[1].textContent.trim();
+                            if (visitType.toLowerCase().includes('skilled nursing') && dateStr) {
+                                if (!snVisitsByDate[dateStr]) snVisitsByDate[dateStr] = 0;
+                                snVisitsByDate[dateStr]++;
+                            }
+                        }
+                    });
+                    let hasMultiple = false;
+                    const multipleDates = [];
+                    for (const [date, count] of Object.entries(snVisitsByDate)) {
+                        if (count > 1) { hasMultiple = true; multipleDates.push({ date, count }); }
+                    }
+                    return { hasMultiple, multipleDates, snVisitsByDate, totalRows: rows.length };
+                });
+                if (snCheck.hasMultiple) {
+                    console.log(`  ❌ 2+ SN visits on same date → TOB 327, will stay in PA`);
+                    snCheck.multipleDates.forEach(d => console.log(`    ${d.date}: ${d.count} visits`));
+                    // Change TOB to 327
+                    await page.evaluate(() => {
+                        const select = document.querySelector('#typeOfBill');
+                        if (select) {
+                            const option327 = Array.from(select.options).find(opt => opt.text.trim() === '327 - Adjustment Claim');
+                            if (option327) { select.value = option327.value; select.dispatchEvent(new Event('change', { bubbles: true })); }
+                        }
+                    });
+                    console.log(`  ✓ Changed TOB to 327`);
+                    // Save and Close
+                    await page.evaluate(() => { const btn = document.querySelector('#submitBtn'); if (btn) btn.scrollIntoView({ behavior: 'smooth', block: 'center' }); });
+                    await page.waitForTimeout(1000);
+                    await page.click('#submitBtn');
+                    await page.waitForLoadState('domcontentloaded', { timeout: 30000 });
+                    await page.waitForTimeout(3000);
+                    try { await page.waitForSelector('.loading-message', { state: 'hidden', timeout: 30000 }); } catch (e) {}
+                    await page.waitForTimeout(2000);
+                    // Track for deselection
+                    recordsMultipleSNStayInPA.push({ mrn: record.mrn, billingPeriod: record.billingPeriodText, insurance: record.insurance, reason: '2+ SN visits on same day' });
+                    console.log(`  ✅ Saved with TOB 327 - will stay in Pending Approval`);
+                } else {
+                    console.log(`  ✓ No multiple SN visits on same day - returning without changes`);
+                    // Return without saving
+                    try { await page.click('#returnBtn'); await page.waitForTimeout(3000); } catch (e) {
+                        try { await page.click('#cancelBtn'); await page.waitForTimeout(3000); } catch (e2) {}
+                    }
+                }
+            } catch (error) {
+                console.error(`  ✗ Error checking Tufts record:`, error.message || error);
+                try { await page.click('#returnBtn'); await page.waitForTimeout(3000); } catch (e) {
+                    try { await page.click('#pendingClaimsApproval'); await page.waitForTimeout(3000); } catch (e2) {}
+                }
+            }
+        }
+        console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+        console.log(`TUFTS SUMMARY: ${tuftsRecords.length} checked, ${recordsMultipleSNStayInPA.filter(r => r.insurance.toLowerCase() === 'tufts health plan').length} have 2+ SN same day (TOB 327, staying in PA)`);
         console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
     }
     // PROCESS UCSD / UCSD COMMERCIAL RECORDS (Occurrence Code 50 + Value Codes 61/85)
@@ -5942,6 +6078,8 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
         ? records.filter(r => r.insurance.toLowerCase().includes('senior whole health') && r.insurance.toLowerCase().includes('bid'))
         : [];
     const recordsFailingSNCheck = []; // Track records that have > 2 SN visits per day
+    // Track UHC MA / CCA / Tufts records with 2+ SN visits on same day (stay in PA after TOB 327 change)
+    const recordsMultipleSNStayInPA = [];
     if (seniorWholeHealthRecords.length > 0) {
         console.log(`\n⚠️  Found ${seniorWholeHealthRecords.length} Senior whole Health (BID) record(s)`);
         console.log("  These records require Skilled Nursing visit validation (max 2 per day)");
@@ -6254,6 +6392,37 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
         console.log(`✓ ${recordsFailingSNCheck.length} records staying in Pending Approval (need manual review)`);
     }
     // Note: Records needing TOB 327 have already been changed automatically above
+    // Deselect records with 2+ SN visits on same day (UHC MA, CCA, Tufts) - they stay in PA
+    if (recordsMultipleSNStayInPA.length > 0) {
+        console.log(`\n=== DESELECTING ${recordsMultipleSNStayInPA.length} RECORDS WITH 2+ SN VISITS SAME DAY ===`);
+        console.log(`These records had TOB changed to 327 and will stay in Pending Approval`);
+        for (const rec of recordsMultipleSNStayInPA) {
+            try {
+                const deselected = await page.evaluate((mrn, billingPeriod) => {
+                    const rows = Array.from(document.querySelectorAll('table tbody tr'));
+                    for (const row of rows) {
+                        const text = row.textContent || '';
+                        if (text.includes(mrn)) {
+                            const checkbox = row.querySelector('input[type="checkbox"]');
+                            if (checkbox && checkbox.checked) {
+                                checkbox.click();
+                                return true;
+                            }
+                        }
+                    }
+                    return false;
+                }, rec.mrn, rec.billingPeriod);
+                if (deselected) {
+                    console.log(`  ✓ Deselected: MRN ${rec.mrn} (${rec.insurance}) - ${rec.reason}`);
+                } else {
+                    console.log(`  ⚠️  MRN ${rec.mrn} not found or already unchecked`);
+                }
+            } catch (e) {
+                console.log(`  ⚠️  Could not deselect MRN ${rec.mrn}: ${e.message}`);
+            }
+        }
+        await page.waitForTimeout(1000);
+    }
     // All records should now have correct Type of Bill, so we can proceed with approval
     // Deselect UHC MA records that failed UD modifier (they were not saved, still in PA)
     if (uhcMAFailedUDRecords.length > 0) {
