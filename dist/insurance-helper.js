@@ -384,7 +384,9 @@ class InsuranceHelper {
             "northcost pps- anthem": "electronic", // Send electronically (typo variant from spreadsheet)
             "northcoast - aetna": "electronic", // Send electronically (after OC50)
             "northcoast – aetna": "electronic", // Send electronically (em dash variant)
-            "northcoast -aetna": "electronic" // Send electronically (no space variant from spreadsheet)
+            "northcoast -aetna": "electronic", // Send electronically (no space variant from spreadsheet)
+            "tufts health plan": "electronic", // Send electronically (after 2+ SN same day check)
+            "humana": "electronic" // Send electronically (after Value Codes 61/85)
         };
         return specialHandlingConfig[nameLower] || null;
     }
