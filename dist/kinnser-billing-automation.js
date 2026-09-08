@@ -577,7 +577,7 @@ function shouldChangeTOB327ForAuth(authorizationCode) {
     const auth = authorizationCode.trim();
     const authLower = auth.toLowerCase();
     if (/^[Tt]/.test(auth)) return true;
-    if (authLower.includes('not t') || authLower.includes('not a t')) return true;
+    if (/not[\s-]t/.test(authLower) || authLower.includes('not a t')) return true;
     return false;
 }
 async function selectOffice(page, office) {
@@ -4287,7 +4287,7 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
     if (tuftsRecords.length > 0) {
         console.log(`\n=== PROCESSING TUFTS HEALTH PLAN RECORDS ===`);
         console.log(`Found ${tuftsRecords.length} Tufts Health Plan record(s)`);
-        console.log("  Checking for 2+ SN visits on same day → TOB 327 (stay in PA)");
+        console.log("  Checking for more than 2 SN visits on same day → TOB 327 (stay in PA)");
         for (const record of tuftsRecords) {
             console.log(`\nChecking Tufts record:`);
             console.log(`  MRN: ${record.mrn}`);
@@ -4357,12 +4357,12 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                     let hasMultiple = false;
                     const multipleDates = [];
                     for (const [date, count] of Object.entries(snVisitsByDate)) {
-                        if (count > 1) { hasMultiple = true; multipleDates.push({ date, count }); }
+                        if (count > 2) { hasMultiple = true; multipleDates.push({ date, count }); }
                     }
                     return { hasMultiple, multipleDates, snVisitsByDate, totalRows: rows.length };
                 });
                 if (snCheck.hasMultiple) {
-                    console.log(`  ❌ 2+ SN visits on same date → TOB 327, will stay in PA`);
+                    console.log(`  ❌ More than 2 SN visits on same date → TOB 327, will stay in PA`);
                     snCheck.multipleDates.forEach(d => console.log(`    ${d.date}: ${d.count} visits`));
                     // Change TOB to 327
                     await page.evaluate(() => {
