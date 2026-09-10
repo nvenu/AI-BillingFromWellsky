@@ -2429,6 +2429,10 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
     console.log("\nExtracting record details from table...");
     const changedRecords = [];
     const manualReviewRecords = [];
+    // Declared at function scope so they are in scope for every insurance block and return below.
+    // (Fixes runtime errors: 'Cannot access recordsMultipleSNStayInPA before initialization' and 'tob327Failed is not defined')
+    let tob327Failed = [];
+    const recordsMultipleSNStayInPA = [];
     const records = await page.evaluate(() => {
         // First, find the column indices by reading the header
         const headerCells = Array.from(document.querySelectorAll('table thead th, table thead td'));
@@ -2731,7 +2735,7 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
         console.log(`TOTAL: ${recordsNeedingTOB327.length} record(s) need TOB 327 (duplicates: ${recordsNeedingTOB327.length - tcodeRecordsCount}, TCODE: ${tcodeRecordsCount})`);
         console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
         // AUTOMATICALLY CHANGE TYPE OF BILL FROM 323 TO 327 for duplicate records
-        let tob327Failed = [];
+        tob327Failed = [];
         if (recordsNeedingTOB327.length > 0) {
             console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
             console.log(`  AUTOMATICALLY CHANGING ${recordsNeedingTOB327.length} RECORDS FROM TOB 323 TO TOB 327`);
@@ -6078,8 +6082,8 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
         ? records.filter(r => r.insurance.toLowerCase().includes('senior whole health') && r.insurance.toLowerCase().includes('bid'))
         : [];
     const recordsFailingSNCheck = []; // Track records that have > 2 SN visits per day
-    // Track UHC MA / CCA / Tufts records with 2+ SN visits on same day (stay in PA after TOB 327 change)
-    const recordsMultipleSNStayInPA = [];
+    // Note: recordsMultipleSNStayInPA is declared at the top of this function (function scope).
+    // It tracks UHC MA / CCA / Tufts records with 2+ SN visits on same day (stay in PA after TOB 327 change).
     if (seniorWholeHealthRecords.length > 0) {
         console.log(`\n⚠️  Found ${seniorWholeHealthRecords.length} Senior whole Health (BID) record(s)`);
         console.log("  These records require Skilled Nursing visit validation (max 2 per day)");
