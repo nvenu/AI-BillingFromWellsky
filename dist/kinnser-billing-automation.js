@@ -2268,6 +2268,12 @@ async function processPendingApproval(page, insuranceHelper, selectedInsurances 
         console.log(`⚠️  STOP REQUESTED - Skipping Pending Approval tab`);
         return { files: [], changedTo327: [], snFailures: [], manualReview: [], failedTo327: [] };
     }
+    // Declared at function scope so the catch block's return can reference them
+    // even if an error is thrown mid-run. (Fixes: 'changedTo327 is not defined')
+    let changedTo327 = [];
+    let snFailures = [];
+    let manualReview = [];
+    let failedTo327 = [];
     try {
         // Navigate to Pending Approval tab
         console.log("Navigating to Pending Approval tab...");
@@ -2343,11 +2349,7 @@ async function processPendingApproval(page, insuranceHelper, selectedInsurances 
         await page.waitForSelector('.loading-message', { state: 'hidden', timeout: 60000 });
         await page.waitForTimeout(3000); // Extra time for records to render
         console.log("✓ Records loaded");
-        // Track 327 changes
-        let changedTo327 = [];
-        let snFailures = [];
-        let manualReview = [];
-        let failedTo327 = [];
+        // 327 changes tracked via function-scope vars declared above (changedTo327, snFailures, manualReview, failedTo327)
         // Check if there are no records to display
         const noRecordsMessage = await page.textContent('body');
         if (noRecordsMessage && noRecordsMessage.includes('There are currently no records to display.')) {
