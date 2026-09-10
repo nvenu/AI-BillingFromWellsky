@@ -1158,6 +1158,30 @@ app.get("/health", (req, res) => {
 });
 // Server-side lock to prevent concurrent automation runs
 let automationLock = { running: false, office: null, startedAt: null, startedBy: null };
+// Shared: acquire lock, run automation, release lock. Used by both the
+// manual /run-automation endpoint and the daily scheduler.
+async function executeAutomation(officeValue, selectedInsurances, startedBy) {
+    // ACQUIRE LOCK
+    automationLock = { running: true, office: officeValue, startedAt: Date.now(), startedBy: startedBy || 'unknown' };
+    console.log(`🔒 Lock acquired: ${officeValue} (from ${startedBy})`);
+    // Reset stop flag at the start
+    resetStopFlag();
+    console.log(`Starting Kinnser automation for: ${officeValue}`);
+    if (selectedInsurances) {
+        console.log(`Selected insurances: ${selectedInsurances.join(', ')}`);
+    }
+    try {
+        const result = await (0, kinnser_billing_automation_1.loginAndProcessOffices)(officeValue, selectedInsurances);
+        console.log(`🔓 Lock released: ${automationLock.office} (ran for ${Math.round((Date.now() - automationLock.startedAt) / 1000)}s)`);
+        automationLock = { running: false, office: null, startedAt: null, startedBy: null };
+        return result;
+    }
+    catch (error) {
+        console.log(`🔓 Lock released (error): ${automationLock.office}`);
+        automationLock = { running: false, office: null, startedAt: null, startedBy: null };
+        throw error;
+    }
+}
 // API endpoint to run automation
 app.post("/run-automation", async (req, res) => {
     try {
@@ -1169,20 +1193,8 @@ app.post("/run-automation", async (req, res) => {
             broadcastLog(`⚠️  ${msg}`);
             return res.status(409).json({ success: false, error: msg });
         }
-        // ACQUIRE LOCK
         const { officeValue, selectedInsurances } = req.body;
-        automationLock = { running: true, office: officeValue, startedAt: Date.now(), startedBy: req.ip || 'unknown' };
-        console.log(`🔒 Lock acquired: ${officeValue} (from ${req.ip})`);
-        // Reset stop flag at the start
-        resetStopFlag();
-        console.log(`Starting Kinnser automation for: ${officeValue}`);
-        if (selectedInsurances) {
-            console.log(`Selected insurances: ${selectedInsurances.join(', ')}`);
-        }
-        const result = await (0, kinnser_billing_automation_1.loginAndProcessOffices)(officeValue, selectedInsurances);
-        // RELEASE LOCK
-        console.log(`🔓 Lock released: ${automationLock.office} (ran for ${Math.round((Date.now() - automationLock.startedAt) / 1000)}s)`);
-        automationLock = { running: false, office: null, startedAt: null, startedBy: null };
+        const result = await executeAutomation(officeValue, selectedInsurances, req.ip);
         res.json({
             success: true,
             totalRecords: result.totalRecords,
@@ -1192,9 +1204,6 @@ app.post("/run-automation", async (req, res) => {
         });
     }
     catch (error) {
-        // RELEASE LOCK on error
-        console.log(`🔓 Lock released (error): ${automationLock.office}`);
-        automationLock = { running: false, office: null, startedAt: null, startedBy: null };
         console.error("Automation failed:", error);
         res.status(500).json({
             success: false,
@@ -1272,3 +1281,209 @@ app.listen(PORT, () => {
     console.log(`Server running at http://localhost:${PORT}`);
     console.log(`Open your browser and visit: http://localhost:${PORT}`);
 });
+// =====================================================================
+// DAILY AUTOMATED SCHEDULER
+// Runs every day at 11:00 AM IST (05:30 UTC).
+// Processes offices/insurances in a fixed sequence with a 15-second
+// break between every step. If a step fails, it is logged and a
+// notification is sent, and the chain continues with the next step.
+// =====================================================================
+const SCHEDULE_BREAK_MS = 15 * 1000; // 15-second break between steps
+const SCHEDULE_HOUR_IST = 11; // 11:00 AM IST
+const SCHEDULE_MINUTE_IST = 0;
+// Office value lookup by name (from office-config)
+function officeValueByName(name) {
+    const office = office_config_1.OFFICES.find(o => o.name === name);
+    if (!office) {
+        console.error(`⚠️  Scheduler: office "${name}" not found in office-config`);
+        return null;
+    }
+    return office.value;
+}
+// The daily processing chain, in order.
+// type 'office'   -> run all insurances for that office (selectedInsurances = null)
+// type 'insurance'-> run Taunton (MA) filtered to the given insurance name(s)
+function buildDailyChain() {
+    const taunton = officeValueByName("Nightingale - Taunton");
+    // MA insurances already handled individually (excluded from the final "rest" run)
+    const maHandledIndividually = [
+        "Senior whole Health (BID)",
+        "Senior whole Health",
+        "COMMONWEALTH CARE ALLIANCE",
+        "FALLON COMMUNITY HEALTH PLAN MAV",
+        "FALLON COMMUNITY HEALTH PLAN",
+        "Tufts Health Plan",
+        "United health care MA"
+    ];
+    // Compute the "rest" of Taunton's processable MA insurances (everything not handled above)
+    let maRest = [];
+    try {
+        const allMA = insuranceHelper.getProcessableInsurancesByLocation("MA");
+        const handledLower = maHandledIndividually.map(n => n.toLowerCase().trim());
+        maRest = allMA.filter(n => !handledLower.includes(n.toLowerCase().trim()));
+    }
+    catch (e) {
+        console.error("⚠️  Scheduler: failed to compute MA 'rest' insurances:", e.message);
+    }
+    const chain = [
+        { label: "Aspire - Scottsdale (all)", officeValue: officeValueByName("Aspire - Scottsdale"), insurances: null },
+        { label: "Nightingale - Stamford (all)", officeValue: officeValueByName("Nightingale - Stamford"), insurances: null },
+        { label: "Aspire - San Diego (all)", officeValue: officeValueByName("Aspire - San Diego"), insurances: null },
+        { label: "Nightingale - Pompano Beach (all)", officeValue: officeValueByName("Nightingale - Pompano Beach"), insurances: null },
+        { label: "Nightingale - Willowbrook (all)", officeValue: officeValueByName("Nightingale - Willowbrook"), insurances: null },
+        { label: "Nightingale - Minnetonka (all)", officeValue: officeValueByName("Nightingale - Minnetonka"), insurances: null },
+        { label: "Nightingale - Las Vegas (all)", officeValue: officeValueByName("Nightingale - Las Vegas"), insurances: null },
+        { label: "Aspire - Dublin (all)", officeValue: officeValueByName("Aspire - Dublin"), insurances: null },
+        { label: "Aspire - Yuba City (all)", officeValue: officeValueByName("Aspire - Yuba City"), insurances: null },
+        // Taunton (MA) by insurance, in order
+        { label: "Taunton: Senior whole Health (BID)", officeValue: taunton, insurances: ["Senior whole Health (BID)"] },
+        { label: "Taunton: Senior whole Health", officeValue: taunton, insurances: ["Senior whole Health"] },
+        { label: "Taunton: COMMONWEALTH CARE ALLIANCE", officeValue: taunton, insurances: ["COMMONWEALTH CARE ALLIANCE"] },
+        { label: "Taunton: FALLON COMMUNITY HEALTH PLAN MAV", officeValue: taunton, insurances: ["FALLON COMMUNITY HEALTH PLAN MAV"] },
+        { label: "Taunton: FALLON COMMUNITY HEALTH PLAN", officeValue: taunton, insurances: ["FALLON COMMUNITY HEALTH PLAN"] },
+        { label: "Taunton: Tufts Health Plan", officeValue: taunton, insurances: ["Tufts Health Plan"] },
+        { label: "Taunton: United health care MA", officeValue: taunton, insurances: ["United health care MA"] },
+        { label: `Taunton: all remaining MA insurances (${maRest.length})`, officeValue: taunton, insurances: maRest }
+    ];
+    return chain;
+}
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+// Send a notification email listing any failed steps.
+async function notifyScheduleFailures(failures, startedAt) {
+    if (failures.length === 0)
+        return;
+    try {
+        const { sendEmail } = require('./email-helper');
+        const { format } = require('date-fns');
+        const today = format(new Date(), 'yyyy-MM-dd HH:mm:ss');
+        const body = `Kinnser Daily Scheduled Run - FAILURE NOTIFICATION\n` +
+            `Run started: ${startedAt}\n` +
+            `Generated: ${today}\n\n` +
+            `The following ${failures.length} step(s) FAILED during the daily automated run:\n\n` +
+            failures.map((f, i) => `${i + 1}. ${f.label}\n   Error: ${f.error}`).join('\n\n') +
+            `\n\nThe scheduler continued with the remaining steps after each failure.`;
+        await sendEmail({
+            to: process.env.EMAIL_RECIPIENTS || "nvenu@solifetec.com",
+            subject: `⚠️ Kinnser Daily Run - ${failures.length} step(s) FAILED - ${format(new Date(), 'yyyy-MM-dd')}`,
+            body,
+            attachments: []
+        });
+        console.log(`✉️  Failure notification sent for ${failures.length} failed step(s)`);
+    }
+    catch (e) {
+        console.error("⚠️  Scheduler: failed to send failure notification email:", e.message);
+    }
+}
+// Run the full daily chain sequentially.
+let scheduledChainRunning = false;
+async function runDailyChain() {
+    if (scheduledChainRunning) {
+        console.log("⚠️  Scheduler: a scheduled chain is already running - skipping this trigger");
+        return;
+    }
+    if (automationLock.running) {
+        console.log(`⚠️  Scheduler: a manual run is in progress ("${automationLock.office}") - skipping today's scheduled chain`);
+        return;
+    }
+    scheduledChainRunning = true;
+    const startedAt = new Date().toISOString();
+    const chain = buildDailyChain();
+    const failures = [];
+    console.log(`\n${'='.repeat(80)}`);
+    console.log(`⏰ DAILY SCHEDULED CHAIN STARTED (${startedAt}) - ${chain.length} steps`);
+    console.log(`${'='.repeat(80)}`);
+    broadcastLog(`⏰ Daily scheduled chain started - ${chain.length} steps`);
+    for (let i = 0; i < chain.length; i++) {
+        const step = chain[i];
+        const stepNum = `[${i + 1}/${chain.length}]`;
+        if (!step.officeValue) {
+            const msg = `Missing office value`;
+            console.error(`${stepNum} ⚠️  SKIP "${step.label}": ${msg}`);
+            failures.push({ label: step.label, error: msg });
+            continue;
+        }
+        if (Array.isArray(step.insurances) && step.insurances.length === 0) {
+            console.log(`${stepNum} ⚠️  SKIP "${step.label}": no insurances to process`);
+        }
+        else {
+            console.log(`\n${stepNum} ▶️  Starting: ${step.label}`);
+            broadcastLog(`${stepNum} ▶️  ${step.label}`);
+            try {
+                await executeAutomation(step.officeValue, step.insurances, 'scheduler');
+                console.log(`${stepNum} ✓ Completed: ${step.label}`);
+            }
+            catch (error) {
+                const errMsg = error instanceof Error ? error.message : String(error);
+                console.error(`${stepNum} ❌ FAILED: ${step.label} - ${errMsg}`);
+                broadcastLog(`${stepNum} ❌ FAILED: ${step.label} - ${errMsg}`);
+                failures.push({ label: step.label, error: errMsg });
+                // continue with next step
+            }
+        }
+        // 15-second break between steps (not after the last step)
+        if (i < chain.length - 1) {
+            console.log(`   ⏸️  ${SCHEDULE_BREAK_MS / 1000}s break before next step...`);
+            await sleep(SCHEDULE_BREAK_MS);
+        }
+    }
+    console.log(`\n${'='.repeat(80)}`);
+    console.log(`⏰ DAILY SCHEDULED CHAIN FINISHED - ${chain.length - failures.length} succeeded, ${failures.length} failed`);
+    console.log(`${'='.repeat(80)}`);
+    broadcastLog(`⏰ Daily chain finished - ${failures.length} failed`);
+    await notifyScheduleFailures(failures, startedAt);
+    scheduledChainRunning = false;
+}
+// Compute ms until the next 11:00 AM IST (05:30 UTC) and schedule the chain.
+function msUntilNextRunIST() {
+    const now = new Date();
+    // Target time today in UTC that corresponds to 11:00 AM IST (IST = UTC+5:30)
+    const targetUtcHour = SCHEDULE_HOUR_IST - 5; // 11 - 5 = 6
+    const targetUtcMinute = SCHEDULE_MINUTE_IST - 30; // 0 - 30 = -30 -> handled via Date normalization
+    const next = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), targetUtcHour, targetUtcMinute, 0, 0));
+    // Date.UTC normalizes -30 minutes to 05:30 of the same day.
+    if (next.getTime() <= now.getTime()) {
+        // Already past for today -> schedule for tomorrow
+        next.setUTCDate(next.getUTCDate() + 1);
+    }
+    return { ms: next.getTime() - now.getTime(), next };
+}
+function scheduleDailyRun() {
+    const { ms, next } = msUntilNextRunIST();
+    const hours = Math.floor(ms / 3600000);
+    const mins = Math.round((ms % 3600000) / 60000);
+    console.log(`⏰ Daily scheduler armed. Next run: ${next.toISOString()} (UTC) = 11:00 AM IST. In ~${hours}h ${mins}m.`);
+    setTimeout(async () => {
+        try {
+            await runDailyChain();
+        }
+        catch (e) {
+            console.error("⚠️  Scheduler: runDailyChain threw:", e);
+            scheduledChainRunning = false;
+        }
+        finally {
+            // Re-arm for the next day
+            scheduleDailyRun();
+        }
+    }, ms);
+}
+// Manual trigger endpoint for testing the full chain on demand.
+app.post("/run-daily-chain", async (req, res) => {
+    if (scheduledChainRunning) {
+        return res.status(409).json({ success: false, error: "Daily chain already running" });
+    }
+    if (automationLock.running) {
+        return res.status(409).json({ success: false, error: `Automation already running for "${automationLock.office}"` });
+    }
+    res.json({ success: true, message: "Daily chain started - watch the logs" });
+    // Run in background (do not block the response)
+    runDailyChain().catch(e => console.error("Daily chain error:", e));
+});
+// Arm the scheduler on startup (can be disabled with DISABLE_SCHEDULER=true)
+if (process.env.DISABLE_SCHEDULER === 'true') {
+    console.log("⏰ Daily scheduler DISABLED via DISABLE_SCHEDULER=true");
+}
+else {
+    scheduleDailyRun();
+}
