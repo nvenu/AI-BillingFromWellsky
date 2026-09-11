@@ -1378,7 +1378,19 @@ async function notifyScheduleFailures(failures, startedAt) {
 }
 // Run the full daily chain sequentially.
 let scheduledChainRunning = false;
-async function runDailyChain() {
+async function runDailyChain(options = {}) {
+    // Weekday-only guard: the automated daily run must only run Monday–Friday (IST), not on
+    // Saturday or Sunday. Computed in IST since the schedule fires at 11:00 AM IST.
+    // A manual trigger can bypass this by passing { force: true }.
+    if (!options.force) {
+        const istNow = new Date(Date.now() + (5 * 60 + 30) * 60 * 1000); // shift UTC -> IST
+        const istDay = istNow.getUTCDay(); // 0 = Sunday, 6 = Saturday (using UTC getters on the shifted time)
+        if (istDay === 0 || istDay === 6) {
+            const dayName = istDay === 0 ? 'Sunday' : 'Saturday';
+            console.log(`⏰ Scheduler: today is ${dayName} (IST) - skipping. Automation runs Monday–Friday only.`);
+            return;
+        }
+    }
     if (scheduledChainRunning) {
         console.log("⚠️  Scheduler: a scheduled chain is already running - skipping this trigger");
         return;
@@ -1477,8 +1489,8 @@ app.post("/run-daily-chain", async (req, res) => {
         return res.status(409).json({ success: false, error: `Automation already running for "${automationLock.office}"` });
     }
     res.json({ success: true, message: "Daily chain started - watch the logs" });
-    // Run in background (do not block the response)
-    runDailyChain().catch(e => console.error("Daily chain error:", e));
+    // Run in background (do not block the response). Manual trigger bypasses the weekday-only guard.
+    runDailyChain({ force: true }).catch(e => console.error("Daily chain error:", e));
 });
 // Arm the scheduler on startup (can be disabled with DISABLE_SCHEDULER=true)
 if (process.env.DISABLE_SCHEDULER === 'true') {

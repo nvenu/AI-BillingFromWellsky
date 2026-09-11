@@ -6397,6 +6397,46 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
         console.log(`✓ After deselection: ${updatedCheckedCount} records selected for approval`);
         console.log(`✓ ${recordsFailingSNCheck.length} records staying in Pending Approval (need manual review)`);
     }
+    // SAFETY GATE: Only approve records whose insurance IS part of this run's selection.
+    // When a filter is active (e.g. the scheduler's "all remaining insurances" step), any record
+    // in Pending Approval whose insurance is NOT in the current selection must be deselected so it
+    // is not blanket-approved. This keeps leftover records (e.g. a Senior Whole Health (BID) claim
+    // from an earlier individual step) in Pending Approval for their proper dedicated run, and
+    // ensures they never bypass their required validation (SN visit check, UD modifier, etc.).
+    if (normalizedSelectedInsurances) {
+        const deselectResult = await page.evaluate((selectedList) => {
+            const rows = Array.from(document.querySelectorAll('table tbody tr'));
+            const deselected = [];
+            rows.forEach(row => {
+                const checkbox = row.querySelector('input[type="checkbox"]');
+                if (!checkbox || !checkbox.checked) return;
+                // Compare each cell's exact value (lowercased) against the selected insurances.
+                // The insurance appears as its own <td>; if NONE of the row's cells match a
+                // selected insurance, this record's insurance is not part of the run -> deselect.
+                const cellValues = Array.from(row.querySelectorAll('td')).map(td => td.textContent.trim().toLowerCase());
+                const isSelectedInsurance = cellValues.some(v => selectedList.includes(v));
+                if (!isSelectedInsurance) {
+                    checkbox.click();
+                    const cells = Array.from(row.querySelectorAll('td')).map(td => td.textContent.trim());
+                    deselected.push({ cells });
+                }
+            });
+            return deselected;
+        }, normalizedSelectedInsurances);
+        if (deselectResult.length > 0) {
+            console.log(`\n=== SAFETY GATE: DESELECTED ${deselectResult.length} RECORD(S) NOT PART OF THIS RUN ===`);
+            console.log(`Only insurances selected for this run are approved. Others stay in Pending Approval.`);
+            deselectResult.forEach(d => {
+                console.log(`  ⊘ Deselected row: ${d.cells.join(' | ')}`);
+            });
+            await page.waitForTimeout(1000);
+            const afterSafety = await page.evaluate(() => {
+                const checkboxes = Array.from(document.querySelectorAll('table tbody tr input[type="checkbox"]'));
+                return checkboxes.filter(cb => cb.checked).length;
+            });
+            console.log(`✓ After safety-gate deselection: ${afterSafety} records selected for approval`);
+        }
+    }
     // Note: Records needing TOB 327 have already been changed automatically above
     // Deselect records with 2+ SN visits on same day (UHC MA, CCA, Tufts) - they stay in PA
     if (recordsMultipleSNStayInPA.length > 0) {
