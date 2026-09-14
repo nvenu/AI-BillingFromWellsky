@@ -13,6 +13,17 @@ const office_config_1 = require("./office-config");
 const insurance_helper_1 = require("./insurance-helper");
 const app = (0, express_1.default)();
 const PORT = process.env.PORT || 8080;
+// Global safety net: keep the long-running server alive if a stray async error occurs
+// (e.g. a dangling Playwright promise rejecting after the browser is closed mid-run).
+// Without these, an unhandled rejection can terminate the process, which pm2 then restarts,
+// killing an in-progress scheduled chain. We log and continue instead of crashing.
+process.on('unhandledRejection', (reason) => {
+    const msg = reason instanceof Error ? (reason.stack || reason.message) : String(reason);
+    console.error(`⚠️  [unhandledRejection] ${msg}`);
+});
+process.on('uncaughtException', (err) => {
+    console.error(`⚠️  [uncaughtException] ${err && err.stack ? err.stack : err}`);
+});
 // Load insurance data
 const insuranceHelper = new insurance_helper_1.InsuranceHelper("Insurance Instructions.xlsx");
 // Set up log broadcasting

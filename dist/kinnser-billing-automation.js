@@ -2274,6 +2274,7 @@ async function processPendingApproval(page, insuranceHelper, selectedInsurances 
     let snFailures = [];
     let manualReview = [];
     let failedTo327 = [];
+    let pendingApprovalCount = 0;
     try {
         // Navigate to Pending Approval tab
         console.log("Navigating to Pending Approval tab...");
@@ -6668,7 +6669,7 @@ async function processReadyToSend(page, insuranceHelper, selectedInsurances = nu
             // If already on "All Insurances", select something else first to trigger change event
             if (currentValueRTS === '1') {
                 console.log("Already on 'All Insurances', selecting different option first to trigger change...");
-                const optionsRTS = await page.$eval('select[ng-model="insuranceKey"] option', (opts) => opts.map((opt) => opt.value).filter((v) => v && v !== '1'));
+                const optionsRTS = await page.$$eval('select[ng-model="insuranceKey"] option', (opts) => opts.map((opt) => opt.value).filter((v) => v && v !== '1'));
                 if (optionsRTS.length > 0) {
                     await page.selectOption('select[ng-model="insuranceKey"]', optionsRTS[0]);
                     await page.waitForTimeout(1000);
