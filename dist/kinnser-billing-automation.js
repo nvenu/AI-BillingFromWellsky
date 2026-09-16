@@ -684,13 +684,9 @@ async function processOffice(page, office, insuranceHelper, selectedInsurances =
         }
         // 5. Process records ONE BY ONE: select valid record → click create → repeat
         const { selectedCount, selectedRecords, failedRecords } = await processRecordsOneByOne(page, insuranceHelper, selectedInsurances);
-        // 6. Save selected records to Excel for audit trail
+        // 6. Selected-records Excel is saved AFTER Pending Approval (below), so the
+        //    "327 Reason" column can be populated from the TOB-327 changes.
         let filename = null;
-        if (selectedRecords.length > 0) {
-            const timestamp = (0, date_fns_1.format)(new Date(), 'yyyy-MM-dd_HH-mm-ss');
-            filename = `selected-records-${office.stateCode}-${office.name.replace(/[^a-zA-Z0-9]/g, '_')}-${timestamp}.xlsx`;
-            saveSelectedRecordsToExcel(selectedRecords, filename);
-        }
         // 6b. Save failed records to separate Excel file
         if (failedRecords.length > 0) {
             const timestamp = (0, date_fns_1.format)(new Date(), 'yyyy-MM-dd_HH-mm-ss');
@@ -742,6 +738,13 @@ async function processOffice(page, office, insuranceHelper, selectedInsurances =
             console.error(`⚠️  Error in Pending Approval/Ready To Send for ${office.name}:`, error);
             console.log(`Continuing without Ready To Send files...`);
         }
+        // 6. Save selected records to Excel for audit trail (now that 327 reasons are known).
+        //    Includes a "327 Reason" column populated from changedTo327 (matched by MRN + Billing Period).
+        if (selectedRecords.length > 0) {
+            const timestamp = (0, date_fns_1.format)(new Date(), 'yyyy-MM-dd_HH-mm-ss');
+            filename = `selected-records-${office.stateCode}-${office.name.replace(/[^a-zA-Z0-9]/g, '_')}-${timestamp}.xlsx`;
+            saveSelectedRecordsToExcel(selectedRecords, filename, changedTo327 || []);
+        }
         console.log(`✓ Successfully processed ${office.name}`);
         const readyToSendCount = readyToSendFiles.length > 0 ? readyToSendFiles.filter(f => f.includes('electronic') || f.includes('paper-claim')).length : 0;
         return { records: selectedRecords, filename, readyToSendFiles, readyToSendCount, pendingApprovalCount, changedTo327, snFailures, manualReview: manualReviewFromPA || [], failedTo327: failedTo327PA };
@@ -751,7 +754,7 @@ async function processOffice(page, office, insuranceHelper, selectedInsurances =
         throw error;
     }
 }
-function saveSelectedRecordsToExcel(records, filename) {
+function saveSelectedRecordsToExcel(records, filename, changes327 = []) {
     if (records.length === 0) {
         console.log("⚠️  No records to save");
         return;
@@ -759,23 +762,37 @@ function saveSelectedRecordsToExcel(records, filename) {
     console.log(`\n=== Saving Excel File ===`);
     console.log(`Records to save: ${records.length}`);
     console.log(`Filename: ${filename}`);
+    // Build a lookup of 327 change reasons keyed by MRN + Billing Period (normalized).
+    const reasonKey = (mrn, billingPeriod) => `${String(mrn || '').trim()}|${String(billingPeriod || '').trim()}`;
+    const reasonByKey = {};
+    const changesArr = Array.isArray(changes327) ? changes327 : [];
+    changesArr.forEach(c => {
+        if (!c) return;
+        const key = reasonKey(c.mrn, c.billingPeriod);
+        // If multiple reasons exist for the same key, join them.
+        reasonByKey[key] = reasonByKey[key] ? `${reasonByKey[key]}; ${c.reason || ''}` : (c.reason || '');
+    });
     // Create worksheet data
     const wsData = [
-        ['Timestamp', 'Record ID', 'Insurance', 'Authorization', 'Patient Name', 'MRN', 'Branch', 'Insurance (Full)', 'SOC Date', 'Billing Period', 'Authorization (Full)'],
+        ['Timestamp', 'Record ID', 'Insurance', 'Authorization', 'Patient Name', 'MRN', 'Branch', 'Insurance (Full)', 'SOC Date', 'Billing Period', 'Authorization (Full)', '327 Reason'],
         ...records.map(r => {
             const cols = r.allColumns || [];
+            const mrn = cols[3] || '';
+            const billingPeriod = cols[7] || '';
+            const reason327 = reasonByKey[reasonKey(mrn, billingPeriod)] || '';
             return [
                 r.timestamp,
                 r.id,
                 r.insurance,
                 r.authorization,
                 cols[2] || '',  // Patient Name
-                cols[3] || '',  // MRN
+                mrn,            // MRN
                 cols[4] || '',  // Branch
                 cols[5] || '',  // Insurance (Full)
                 cols[6] || '',  // SOC Date
-                cols[7] || '',  // Billing Period
-                cols[8] || ''   // Authorization (Full)
+                billingPeriod,  // Billing Period
+                cols[8] || '',  // Authorization (Full)
+                reason327       // 327 Reason (why TOB was changed to 327, blank if not changed)
             ];
         })
     ];
@@ -1029,7 +1046,7 @@ async function loginAndProcessOffices(officeValue = 'all', selectedInsurances = 
         const timestamp = (0, date_fns_1.format)(new Date(), 'yyyy-MM-dd_HH-mm-ss');
         if (officesToProcess.length > 1 && allSelectedRecords.length > 0) {
             const summaryFilename = `SUMMARY-${officesToProcess.length}-offices-${timestamp}.xlsx`;
-            saveSelectedRecordsToExcel(allSelectedRecords, summaryFilename);
+            saveSelectedRecordsToExcel(allSelectedRecords, summaryFilename, all327Changes);
             excelFiles.push(summaryFilename);
         }
         // 5. Send email with all Excel files and PDFs
