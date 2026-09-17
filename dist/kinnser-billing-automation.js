@@ -708,6 +708,7 @@ async function processOffice(page, office, insuranceHelper, selectedInsurances =
         let failedTo327PA = [];
         let snFailures = [];
         let pendingApprovalCount = 0;
+        let recordDetailsPA = [];
         try {
             // Browser health check before Pending Approval
             console.log(`\n=== BROWSER HEALTH CHECK ===`);
@@ -732,6 +733,7 @@ async function processOffice(page, office, insuranceHelper, selectedInsurances =
             snFailures = result.snFailures || [];
             failedTo327PA = result.failedTo327 || [];
  manualReviewFromPA = result.manualReview || [];
+            recordDetailsPA = result.recordDetails || [];
             console.log(`✓ Pending Approval and Ready To Send workflow completed for ${office.name}`);
         }
         catch (error) {
@@ -743,18 +745,18 @@ async function processOffice(page, office, insuranceHelper, selectedInsurances =
         if (selectedRecords.length > 0) {
             const timestamp = (0, date_fns_1.format)(new Date(), 'yyyy-MM-dd_HH-mm-ss');
             filename = `selected-records-${office.stateCode}-${office.name.replace(/[^a-zA-Z0-9]/g, '_')}-${timestamp}.xlsx`;
-            saveSelectedRecordsToExcel(selectedRecords, filename, changedTo327 || []);
+            saveSelectedRecordsToExcel(selectedRecords, filename, changedTo327 || [], recordDetailsPA || []);
         }
         console.log(`✓ Successfully processed ${office.name}`);
         const readyToSendCount = readyToSendFiles.length > 0 ? readyToSendFiles.filter(f => f.includes('electronic') || f.includes('paper-claim')).length : 0;
-        return { records: selectedRecords, filename, readyToSendFiles, readyToSendCount, pendingApprovalCount, changedTo327, snFailures, manualReview: manualReviewFromPA || [], failedTo327: failedTo327PA };
+        return { records: selectedRecords, filename, readyToSendFiles, readyToSendCount, pendingApprovalCount, changedTo327, snFailures, manualReview: manualReviewFromPA || [], failedTo327: failedTo327PA, recordDetails: recordDetailsPA || [] };
     }
     catch (error) {
         console.error(`✗ Error processing office ${office.name}:`, error);
         throw error;
     }
 }
-function saveSelectedRecordsToExcel(records, filename, changes327 = []) {
+function saveSelectedRecordsToExcel(records, filename, changes327 = [], recordDetails = []) {
     if (records.length === 0) {
         console.log("⚠️  No records to save");
         return;
@@ -762,37 +764,51 @@ function saveSelectedRecordsToExcel(records, filename, changes327 = []) {
     console.log(`\n=== Saving Excel File ===`);
     console.log(`Records to save: ${records.length}`);
     console.log(`Filename: ${filename}`);
-    // Build a lookup of 327 change reasons keyed by MRN + Billing Period (normalized).
-    const reasonKey = (mrn, billingPeriod) => `${String(mrn || '').trim()}|${String(billingPeriod || '').trim()}`;
+    // Build lookups keyed by MRN + Billing Period (normalized).
+    const makeKey = (mrn, billingPeriod) => `${String(mrn || '').trim()}|${String(billingPeriod || '').trim()}`;
+    // 327 change reasons
     const reasonByKey = {};
     const changesArr = Array.isArray(changes327) ? changes327 : [];
     changesArr.forEach(c => {
         if (!c) return;
-        const key = reasonKey(c.mrn, c.billingPeriod);
+        const key = makeKey(c.mrn, c.billingPeriod);
         // If multiple reasons exist for the same key, join them.
         reasonByKey[key] = reasonByKey[key] ? `${reasonByKey[key]}; ${c.reason || ''}` : (c.reason || '');
     });
+    // Claim # and TOB from Pending Approval records
+    const detailsByKey = {};
+    const detailsArr = Array.isArray(recordDetails) ? recordDetails : [];
+    detailsArr.forEach(d => {
+        if (!d) return;
+        detailsByKey[makeKey(d.mrn, d.billingPeriod)] = { claimNumber: d.claimNumber || '', tob: d.tob || '' };
+    });
     // Create worksheet data
     const wsData = [
-        ['Timestamp', 'Record ID', 'Insurance', 'Authorization', 'Patient Name', 'MRN', 'Branch', 'Insurance (Full)', 'SOC Date', 'Billing Period', 'Authorization (Full)', '327 Reason'],
+        ['Timestamp', 'Record ID', 'Insurance', 'Authorization', 'Patient Name', 'MRN', 'Branch', 'Insurance (Full)', 'SOC Date', 'Billing Period', 'Authorization (Full)', 'Claim #', 'TOB', '327 Reason'],
         ...records.map(r => {
             const cols = r.allColumns || [];
             const mrn = cols[3] || '';
             const billingPeriod = cols[7] || '';
-            const reason327 = reasonByKey[reasonKey(mrn, billingPeriod)] || '';
+            const key = makeKey(mrn, billingPeriod);
+            const reason327 = reasonByKey[key] || '';
+            const details = detailsByKey[key] || { claimNumber: '', tob: '' };
+            // If the record was changed to 327, reflect the final TOB as 327.
+            const tob = reason327 ? '327' : (details.tob || '');
             return [
                 r.timestamp,
                 r.id,
                 r.insurance,
                 r.authorization,
-                cols[2] || '',  // Patient Name
-                mrn,            // MRN
-                cols[4] || '',  // Branch
-                cols[5] || '',  // Insurance (Full)
-                cols[6] || '',  // SOC Date
-                billingPeriod,  // Billing Period
-                cols[8] || '',  // Authorization (Full)
-                reason327       // 327 Reason (why TOB was changed to 327, blank if not changed)
+                cols[2] || '',       // Patient Name
+                mrn,                 // MRN
+                cols[4] || '',       // Branch
+                cols[5] || '',       // Insurance (Full)
+                cols[6] || '',       // SOC Date
+                billingPeriod,       // Billing Period
+                cols[8] || '',       // Authorization (Full)
+                details.claimNumber, // Claim #
+                tob,                 // TOB (final; 327 if changed)
+                reason327            // 327 Reason (blank if not changed)
             ];
         })
     ];
@@ -961,6 +977,7 @@ async function loginAndProcessOffices(officeValue = 'all', selectedInsurances = 
         const excelFiles = [];
         const allReadyToSendFiles = [];
         const all327Changes = [];
+        const allRecordDetails = [];
         const all327Failures = [];
         const allSNFailures = [];
         const allManualReview = [];
@@ -971,7 +988,7 @@ async function loginAndProcessOffices(officeValue = 'all', selectedInsurances = 
             // Select the office
             await selectOffice(page, office);
             // Process this office
-            const { records: officeRecords, filename, readyToSendFiles, readyToSendCount, pendingApprovalCount, changedTo327, snFailures, manualReview, failedTo327 } = await processOffice(page, office, insuranceHelper, selectedInsurances);
+            const { records: officeRecords, filename, readyToSendFiles, readyToSendCount, pendingApprovalCount, changedTo327, snFailures, manualReview, failedTo327, recordDetails } = await processOffice(page, office, insuranceHelper, selectedInsurances);
             allSelectedRecords.push(...officeRecords);
             const totalCount = officeRecords.length + (readyToSendCount || 0);
             summary.push({ office: office.name, count: officeRecords.length, readyToSendCount: readyToSendCount || 0, pendingApprovalCount: pendingApprovalCount || 0, changedTo327Count: changedTo327.length });
@@ -984,6 +1001,10 @@ async function loginAndProcessOffices(officeValue = 'all', selectedInsurances = 
                     reason: change.reason
                 });
             });
+            // Collect Claim # / TOB details for the summary Excel
+            if (Array.isArray(recordDetails)) {
+                recordDetails.forEach(d => { if (d) allRecordDetails.push(d); });
+            }
             // Collect 327 failures
             if (failedTo327 && failedTo327.length > 0) {
                 failedTo327.forEach(failure => {
@@ -1046,7 +1067,7 @@ async function loginAndProcessOffices(officeValue = 'all', selectedInsurances = 
         const timestamp = (0, date_fns_1.format)(new Date(), 'yyyy-MM-dd_HH-mm-ss');
         if (officesToProcess.length > 1 && allSelectedRecords.length > 0) {
             const summaryFilename = `SUMMARY-${officesToProcess.length}-offices-${timestamp}.xlsx`;
-            saveSelectedRecordsToExcel(allSelectedRecords, summaryFilename, all327Changes);
+            saveSelectedRecordsToExcel(allSelectedRecords, summaryFilename, all327Changes, allRecordDetails);
             excelFiles.push(summaryFilename);
         }
         // 5. Send email with all Excel files and PDFs
@@ -2292,6 +2313,7 @@ async function processPendingApproval(page, insuranceHelper, selectedInsurances 
     let manualReview = [];
     let failedTo327 = [];
     let pendingApprovalCount = 0;
+    let recordDetails = [];
     try {
         // Navigate to Pending Approval tab
         console.log("Navigating to Pending Approval tab...");
@@ -2383,6 +2405,7 @@ async function processPendingApproval(page, insuranceHelper, selectedInsurances 
                 changedTo327 = pendingResult.changedRecords || pendingResult;
                 snFailures = pendingResult.snFailures || [];
                 manualReview = pendingResult.manualReviewRecords || [];
+                recordDetails = pendingResult.recordDetails || [];
                 failedTo327 = pendingResult.tob327Failed || [];
                 pendingApprovalCount = pendingResult.totalRecords || 0;
                 console.log(`✓ Pending Approval: ${pendingApprovalCount} records processed`);
@@ -2434,11 +2457,11 @@ async function processPendingApproval(page, insuranceHelper, selectedInsurances 
         const readyToSendFiles = await processReadyToSend(page, insuranceHelper, selectedInsurances, officeInfo);
         console.log(`✓ Ready To Send completed with ${readyToSendFiles.length} files`);
         // Return files and 327 changes and SN failures for email
-        return { files: readyToSendFiles, changedTo327, snFailures: snFailures || [], manualReview: manualReview || [], failedTo327: failedTo327 || [] };
+        return { files: readyToSendFiles, changedTo327, snFailures: snFailures || [], manualReview: manualReview || [], failedTo327: failedTo327 || [], recordDetails: recordDetails || [] };
     }
     catch (error) {
         console.error("✗ Error in Pending Approval workflow:", error);
-        return { files: [], changedTo327: changedTo327 || [], snFailures: snFailures || [], manualReview: manualReview || [], failedTo327: failedTo327 || [] };
+        return { files: [], changedTo327: changedTo327 || [], snFailures: snFailures || [], manualReview: manualReview || [], failedTo327: failedTo327 || [], recordDetails: recordDetails || [] };
     }
 }
 async function processPendingApprovalRecords(page, insuranceHelper, selectedInsurances = null, readyTabRecords = []) {
@@ -2571,6 +2594,14 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
     // Filter out empty records
     const validRecords = records.filter(r => r.mrn && r.mrn.trim() !== '');
     console.log(`Valid records (with MRN): ${validRecords.length}`);
+    // Capture Claim # and TOB for every record (for the audit Excel), keyed later by MRN + billing period.
+    // Claim # is derived from the edit button id (openWorksheet<claimNumber>). TOB is the table value.
+    const recordDetails = validRecords.map(r => ({
+        mrn: r.mrn,
+        billingPeriod: r.billingPeriodText,
+        claimNumber: (r.editButtonId || '').replace('openWorksheet', ''),
+        tob: r.typeOfBill || ''
+    }));
     if (validRecords.length === 0) {
         console.log("\n✓ No valid records to process in Pending Approval");
         return [];
@@ -6299,7 +6330,7 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
     console.log(`  Records in Pending Approval table: ${totalRecordsInTable}`);
     if (totalRecordsInTable === 0) {
         console.log("  ✓ No records in Pending Approval - nothing to approve");
-        return { changedRecords, manualReviewRecords, tob327Failed: [], totalRecords: validRecords.length, snFailures: recordsFailingSNCheck.map(idx => {
+        return { changedRecords, manualReviewRecords, recordDetails, tob327Failed: [], totalRecords: validRecords.length, snFailures: recordsFailingSNCheck.map(idx => {
             const record = validRecords[idx];
             return { mrn: record ? record.mrn : 'Unknown', billingPeriod: record ? record.billingPeriodText : 'Unknown', insurance: record ? record.insurance : 'Unknown' };
         })};
@@ -6374,7 +6405,7 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
         console.log("⚠️  'Select All' checkbox not found with any selector");
         console.log("⚠️  This is unexpected - Pending Approval should have a Select All checkbox");
         console.log("⚠️  Skipping approval to avoid errors");
-        return { changedRecords, manualReviewRecords, tob327Failed: tob327Failed || [], totalRecords: validRecords.length, snFailures: recordsFailingSNCheck.map(idx => {
+        return { changedRecords, manualReviewRecords, recordDetails, tob327Failed: tob327Failed || [], totalRecords: validRecords.length, snFailures: recordsFailingSNCheck.map(idx => {
             const record = records[idx];
             return { mrn: record ? record.mrn : 'Unknown', billingPeriod: record ? record.billingPeriodText : 'Unknown', insurance: record ? record.insurance : 'Senior whole Health (BID)' };
         })};
@@ -6655,7 +6686,7 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
         console.log("✗ Failed to click Approve button - skipping approval");
     }
     // Return the list of changed records and SN failures
-    return { changedRecords, manualReviewRecords, tob327Failed: tob327Failed || [], totalRecords: validRecords.length, snFailures: recordsFailingSNCheck.map(idx => {
+    return { changedRecords, manualReviewRecords, recordDetails, tob327Failed: tob327Failed || [], totalRecords: validRecords.length, snFailures: recordsFailingSNCheck.map(idx => {
         const record = records[idx];
         return { mrn: record ? record.mrn : 'Unknown', billingPeriod: record ? record.billingPeriodText : 'Unknown', insurance: record ? record.insurance : 'Senior whole Health (BID)' };
     })};
