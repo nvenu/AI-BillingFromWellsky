@@ -1300,8 +1300,10 @@ app.listen(PORT, () => {
 // notification is sent, and the chain continues with the next step.
 // =====================================================================
 const SCHEDULE_BREAK_MS = 15 * 1000; // 15-second break between steps
-const SCHEDULE_HOUR_IST = 11; // 11:00 AM IST
-const SCHEDULE_MINUTE_IST = 0;
+// Schedule time (IST). Configurable via .env (SCHEDULE_HOUR_IST / SCHEDULE_MINUTE_IST).
+// Defaults to 11:00 AM IST if not set or invalid. Editing .env avoids touching this file.
+const SCHEDULE_HOUR_IST = (() => { const h = parseInt(process.env.SCHEDULE_HOUR_IST, 10); return Number.isInteger(h) && h >= 0 && h <= 23 ? h : 11; })();
+const SCHEDULE_MINUTE_IST = (() => { const m = parseInt(process.env.SCHEDULE_MINUTE_IST, 10); return Number.isInteger(m) && m >= 0 && m <= 59 ? m : 0; })();
 // Office value lookup by name (from office-config)
 function officeValueByName(name) {
     const office = office_config_1.OFFICES.find(o => o.name === name);
