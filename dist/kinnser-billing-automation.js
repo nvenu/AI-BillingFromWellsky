@@ -775,13 +775,20 @@ function saveSelectedRecordsToExcel(records, filename, changes327 = [], recordDe
         // If multiple reasons exist for the same key, join them.
         reasonByKey[key] = reasonByKey[key] ? `${reasonByKey[key]}; ${c.reason || ''}` : (c.reason || '');
     });
-    // Claim # and TOB from Pending Approval records
-    const detailsByKey = {};
+    // Claim # and TOB from Pending Approval records.
+    // Store a QUEUE (array) per MRN+Billing Period key so that duplicate claims (which share the same
+    // MRN and billing period) each get their OWN claim number instead of all showing the last one.
+    // Rows for the same key consume these in order (first row -> first claim, etc.).
+    const detailsQueueByKey = {};
     const detailsArr = Array.isArray(recordDetails) ? recordDetails : [];
     detailsArr.forEach(d => {
         if (!d) return;
-        detailsByKey[makeKey(d.mrn, d.billingPeriod)] = { claimNumber: d.claimNumber || '', tob: d.tob || '' };
+        const k = makeKey(d.mrn, d.billingPeriod);
+        if (!detailsQueueByKey[k]) detailsQueueByKey[k] = [];
+        detailsQueueByKey[k].push({ claimNumber: d.claimNumber || '', tob: d.tob || '' });
     });
+    // Track how many rows we've already matched per key, to pick the next claim in the queue.
+    const consumedByKey = {};
     // Create worksheet data
     const wsData = [
         ['Timestamp', 'Record ID', 'Insurance', 'Authorization', 'Patient Name', 'MRN', 'Branch', 'Insurance (Full)', 'SOC Date', 'Billing Period', 'Authorization (Full)', 'Claim #', 'TOB', '327 Reason'],
@@ -791,7 +798,11 @@ function saveSelectedRecordsToExcel(records, filename, changes327 = [], recordDe
             const billingPeriod = cols[7] || '';
             const key = makeKey(mrn, billingPeriod);
             const reason327 = reasonByKey[key] || '';
-            const details = detailsByKey[key] || { claimNumber: '', tob: '' };
+            // Pick the next unconsumed claim detail for this key (handles duplicate claims distinctly).
+            const queue = detailsQueueByKey[key] || [];
+            const idx = consumedByKey[key] || 0;
+            const details = queue[idx] || queue[queue.length - 1] || { claimNumber: '', tob: '' };
+            consumedByKey[key] = idx + 1;
             // If the record was changed to 327, reflect the final TOB as 327.
             const tob = reason327 ? '327' : (details.tob || '');
             return [
@@ -6484,6 +6495,64 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                 return checkboxes.filter(cb => cb.checked).length;
             });
             console.log(`✓ After safety-gate deselection: ${afterSafety} records selected for approval`);
+        }
+    }
+    // AUTH GATE: Never approve a record whose authorization is pending/dummy/non-billing/denied/no auth.
+    // The Ready-tab stage already skips these when creating claims, but a claim that is ALREADY sitting
+    // in Pending Approval (e.g. created in a prior run) is not re-validated otherwise. Deselect any such
+    // record here so it stays in Pending Approval and is never approved. Matched by reading the
+    // Authorization column of each row. Only deselects (never selects); if the column can't be found,
+    // it does nothing (safe no-op). T-code auths (e.g. "T CODE ...") are NOT affected - they are valid.
+    {
+        const authDeselect = await page.evaluate(() => {
+            const result = { deselected: [], authColFound: false };
+            // Find the table that has the row checkboxes (same table used for approval)
+            const tables = Array.from(document.querySelectorAll('table'));
+            let targetTable = null;
+            for (const t of tables) {
+                if (t.querySelector('tbody tr input[type="checkbox"]')) { targetTable = t; break; }
+            }
+            if (!targetTable) return result;
+            // Locate the Authorization column index from the header
+            const headerCells = Array.from(targetTable.querySelectorAll('thead th, thead td'));
+            const headers = headerCells.map(c => (c.textContent || '').trim().toLowerCase());
+            let authIdx = headers.findIndex(h => h.includes('authorization'));
+            if (authIdx === -1) authIdx = headers.findIndex(h => h.includes('auth'));
+            if (authIdx === -1) return result; // can't find auth column -> safe no-op
+            result.authColFound = true;
+            // Same discard rules as insuranceHelper.shouldDiscardAuthorization (inlined for the browser context)
+            const isDiscardAuth = (authRaw) => {
+                const auth = (authRaw || '').toLowerCase().trim();
+                if (!auth) return false; // blank is not a discard (valid)
+                return auth === 'pending' || auth.includes('dummy') || auth === 'non-billing' || auth === 'denied' || auth === 'no auth';
+            };
+            const rows = Array.from(targetTable.querySelectorAll('tbody tr'));
+            rows.forEach(row => {
+                const checkbox = row.querySelector('input[type="checkbox"]');
+                if (!checkbox || !checkbox.checked) return;
+                const cells = row.querySelectorAll('td');
+                if (authIdx >= cells.length) return;
+                const authText = (cells[authIdx].textContent || '').trim();
+                if (isDiscardAuth(authText)) {
+                    checkbox.click();
+                    const cellTexts = Array.from(cells).map(td => (td.textContent || '').trim());
+                    result.deselected.push({ auth: authText, cells: cellTexts });
+                }
+            });
+            return result;
+        });
+        if (authDeselect && authDeselect.deselected && authDeselect.deselected.length > 0) {
+            console.log(`\n=== AUTH GATE: DESELECTED ${authDeselect.deselected.length} RECORD(S) WITH PENDING/DUMMY AUTHORIZATION ===`);
+            console.log(`These records have invalid authorization and will stay in Pending Approval (not approved).`);
+            authDeselect.deselected.forEach(d => {
+                console.log(`  ⊘ Deselected [auth="${d.auth}"] row: ${d.cells.join(' | ')}`);
+            });
+            await page.waitForTimeout(1000);
+            const afterAuth = await page.evaluate(() => {
+                const checkboxes = Array.from(document.querySelectorAll('table tbody tr input[type="checkbox"]'));
+                return checkboxes.filter(cb => cb.checked).length;
+            });
+            console.log(`✓ After auth-gate deselection: ${afterAuth} records selected for approval`);
         }
     }
     // Note: Records needing TOB 327 have already been changed automatically above
