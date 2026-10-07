@@ -1757,6 +1757,7 @@ async function processRecordsOneByOne(page, insuranceHelper, selectedInsurances 
     let allSelectedRecords = [];
     let failedRecords = [];
     let failedRecordIds = new Set(); // Track failed record IDs to skip them
+    let processedRecordIds = new Set(); // Track successfully-created record IDs to skip them (prevents the same record being selected/created/logged more than once if its row lingers in the Ready table)
     let totalProcessed = 0;
     let totalFailed = 0;
     let maxIterations = 500; // Safety limit
@@ -1770,8 +1771,12 @@ async function processRecordsOneByOne(page, insuranceHelper, selectedInsurances 
         await waitForLoadingToComplete(page);
         // Get all records on current page and identify the FIRST valid one (excluding failed ones)
         const validRecords = await identifyValidRecordsOnPage(page, insuranceHelper, selectedInsurances);
-        // Filter out records that have already failed
-        const availableRecords = validRecords.filter(r => !failedRecordIds.has(r.id));
+        // Filter out records that have already failed OR already been successfully processed.
+        // A created record normally disappears from the Ready table, but if its row lingers
+        // (Angular re-render lag, or the "no message -> assume success" path), it would otherwise
+        // be picked again and selected/created/logged a second time. Tracking processed ids
+        // prevents duplicate claim creation and duplicate audit rows.
+        const availableRecords = validRecords.filter(r => !failedRecordIds.has(r.id) && !processedRecordIds.has(r.id));
         if (availableRecords.length === 0) {
             console.log(`✓ No more valid records found - completed`);
             break;
@@ -1852,6 +1857,7 @@ async function processRecordsOneByOne(page, insuranceHelper, selectedInsurances 
                 if (resultMessage.success) {
                     // Record SUCCEEDED
                     console.log(`  ✅ SUCCESS: ${resultMessage.message}`);
+                    processedRecordIds.add(record.id);
                     allSelectedRecords.push(record);
                     totalProcessed++;
                     console.log(`  ✓ Processed successfully (Total: ${totalProcessed})`);
@@ -1879,6 +1885,7 @@ async function processRecordsOneByOne(page, insuranceHelper, selectedInsurances 
             else {
                 // No message found - assume success (record should have disappeared)
                 console.log(`  ⚠️  No success/error message found - assuming success`);
+                processedRecordIds.add(record.id);
                 allSelectedRecords.push(record);
                 totalProcessed++;
                 console.log(`  ✓ Processed (Total: ${totalProcessed})`);
@@ -2013,10 +2020,24 @@ async function identifyValidRecordsOnPage(page, insuranceHelper, selectedInsuran
             console.log(`  ⊘ Skipped: ${record.insurance} (not in approved list)`);
             continue;
         }
-        // Check authorization validity
+        // Check authorization validity.
+        // AUDIT REQUIREMENT: a record whose authorization is "pending" (or dummy/non-billing/
+        // denied/no auth) must NEVER be selected or have Create clicked.
         if (record.authorization && !insuranceHelper.isValidAuthorization(record.authorization)) {
             console.log(`  ❌ Skipped: ${record.insurance} - Invalid auth: ${record.authorization}`);
             continue;
+        }
+        // Fallback discard scan: if the Authorization cell came through blank (column not
+        // located, or value rendered in an element the extractor missed), a pending/dummy/
+        // denied/non-billing/no-auth value anywhere else in the row must still block the
+        // record. This only runs when the extracted auth is empty, so valid auth codes and
+        // legitimate T-code auths are never affected.
+        if (!record.authorization || record.authorization.trim() === '') {
+            const discardHit = (record.allColumns || []).find(col => insuranceHelper.shouldDiscardAuthorization(col));
+            if (discardHit) {
+                console.log(`  ❌ Skipped: ${record.insurance} - Pending/invalid authorization "${discardHit}" found in row (auth cell was blank) - NOT selected, NOT created`);
+                continue;
+            }
         }
         console.log(`  ✓ Valid: ${record.insurance}`);
         validRecords.push({
