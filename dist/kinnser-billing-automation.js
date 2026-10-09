@@ -2731,7 +2731,28 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
             console.log(`  ... and ${duplicateMRNs.length - 10} more duplicate MRNs`);
         }
     }
-    if (duplicates.length > 0) {
+    // Determine up front whether any record has a T-code authorization. The T-code → TOB 327
+    // detection and the TOB-change execution loop below used to live ONLY inside the
+    // `if (duplicates.length > 0)` branch, so when a batch had no duplicate MRNs, T-code records
+    // were never changed to 327 and stayed at 323 (audit finding). We now enter the block when
+    // there are duplicates OR when any T-code record exists. The duplicate-specific inner loop is
+    // a natural no-op when `duplicates` is empty.
+    const hasTcodeRecords = Array.isArray(readyTabRecords) && readyTabRecords.length > 0 &&
+        validRecords.some(record => {
+            if (record.typeOfBill && record.typeOfBill.includes('327')) return false;
+            const matchingReady = readyTabRecords.find(r => {
+                if (r.allColumns && r.allColumns.some(col => col && col.includes(record.mrn))) return true;
+                if (r.mrn === record.mrn) return true;
+                return false;
+            });
+            if (!matchingReady || !matchingReady.authorization) return false;
+            const auth = matchingReady.authorization.trim();
+            return /^[Tt]/.test(auth) || auth.toLowerCase().includes('not t') || auth.toLowerCase().includes('not a t');
+        });
+    if (hasTcodeRecords && duplicates.length === 0) {
+        console.log(`\nℹ️  No duplicate MRN groups, but T-code authorization record(s) present — running TOB 327 processing for T-code records.`);
+    }
+    if (duplicates.length > 0 || hasTcodeRecords) {
         console.log(`\n⚠️  DUPLICATE DETECTION RESULTS: Found ${duplicates.length} duplicate MRN group(s) with overlapping billing periods`);
         for (const dup of duplicates) {
             console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
