@@ -810,11 +810,11 @@ app.get("/billing", (req, res) => {
               Process All Offices (${office_config_1.OFFICES.length} locations)
             </button>
 
-            <button id="waystarAllBtn" class="waystar-all-btn" onclick="runWaystarAll()" disabled title="Finish Kinnser processing for all offices to enable">
+            <button id="waystarAllBtn" class="waystar-all-btn" onclick="runWaystarAll()" title="Run Waystar for all offices that have processed records">
               <svg class="btn-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
               </svg>
-              <span id="waystarAllLabel">Process All — Waystar (locked until all offices done)</span>
+              <span id="waystarAllLabel">Process All — Waystar</span>
             </button>
           </div>
           
@@ -1333,24 +1333,22 @@ app.get("/billing", (req, res) => {
         // Poll readiness and enable the "Process All — Waystar" button once all
         // Waystar-mapped offices are processed. Runs on load and every 10s.
         async function refreshWaystarReady() {
+          // The button is ALWAYS enabled (anyone can start it). This just shows an
+          // informational count of how many offices currently have processed records.
           try {
             const resp = await fetch('/waystar-ready');
             const data = await resp.json();
             const btn = document.getElementById('waystarAllBtn');
             const label = document.getElementById('waystarAllLabel');
             if (!btn) return;
-            if (data.ready) {
-              btn.disabled = false;
-              btn.title = 'Run Waystar for all processed offices in order';
-              const count = (data.processed || []).length;
-              label.textContent = 'Process All — Waystar (' + count + ' offices ready)';
-            } else {
-              btn.disabled = true;
-              const missing = (data.missing || []).map(m => m.stateCode).join(', ');
-              btn.title = 'Locked — still need: ' + (missing || 'all offices');
-              label.textContent = 'Process All — Waystar (locked — pending: ' + (missing || 'all') + ')';
-            }
-          } catch (e) { /* leave button as-is on error */ }
+            btn.disabled = false;
+            const readyCount = (data.readyStates || []).length;
+            const total = (data.required || []).length;
+            btn.title = 'Run Waystar for all offices that have processed records';
+            label.textContent = readyCount > 0
+              ? 'Process All — Waystar (' + readyCount + '/' + total + ' offices ready)'
+              : 'Process All — Waystar';
+          } catch (e) { /* leave button enabled on error */ }
         }
         window.addEventListener('load', refreshWaystarReady);
         setInterval(refreshWaystarReady, 10000);
@@ -1458,12 +1456,14 @@ function computeWaystarReady() {
     const required = waystarRequiredStates();
     const processedStates = new Set(processedOffices.map(o => String(o.stateCode).toUpperCase()));
     const missing = [];
+    const readyStates = []; // states that currently have a selected-records file (can be processed)
     for (const st of required) {
         const done = processedStates.has(st);
         const hasFile = !!findLatestSelectedRecords(st);
+        if (hasFile) readyStates.push(st);
         if (!done || !hasFile) missing.push({ stateCode: st, processed: done, hasFile });
     }
-    return { ready: missing.length === 0, required, missing, processed: processedOffices };
+    return { ready: missing.length === 0, required, missing, readyStates, processed: processedOffices };
 }
 // Find the newest selected-records-<state>-*.xlsx in cwd (mirrors the processor).
 function findLatestSelectedRecords(stateCode) {
@@ -1601,21 +1601,35 @@ app.post("/run-waystar-all", async (req, res) => {
             return res.status(409).json({ success: false, error: `Waystar already running (${runningFor}s).` });
         }
         const { submit } = req.body || {};
-        const status = computeWaystarReady();
-        if (!status.ready) {
-            return res.status(409).json({
-                success: false,
-                error: "Not all offices are processed yet. Finish Kinnser processing for all offices first.",
-                missing: status.missing
-            });
+        // Always allowed. Build the office list to attempt:
+        //  - Prefer completion order from processedOffices (Waystar-mapped only).
+        //  - Add any Waystar-mapped state that has a selected-records file on disk
+        //    but isn't in the processed list (e.g. after a restart).
+        //  - If nothing is in processedOffices, fall back to ALL Waystar-mapped states.
+        // Offices with NO selected-records file are still passed through; the
+        // processor skips them gracefully ("no file — skipping"), so a records-less
+        // office never blocks the run.
+        const orderedMap = new Map();
+        for (const o of processedOffices) {
+            if (waystar_config_1.getWaystarAccountForState(o.stateCode)) {
+                orderedMap.set(String(o.stateCode).toUpperCase(), { stateCode: o.stateCode, name: o.name });
+            }
         }
-        // Build the office list in COMPLETION order, keeping only Waystar-mapped ones.
-        const ordered = processedOffices
-            .map(o => ({ stateCode: o.stateCode, name: o.name }))
-            .filter(o => !!waystar_config_1.getWaystarAccountForState(o.stateCode));
+        // Append Waystar-mapped states that have a file but weren't tracked.
+        for (const acct of waystar_config_1.WAYSTAR_ACCOUNTS) {
+            const st = acct.stateCode.toUpperCase();
+            if (!orderedMap.has(st) && findLatestSelectedRecords(acct.stateCode)) {
+                orderedMap.set(st, { stateCode: acct.stateCode, name: acct.officeName });
+            }
+        }
+        // Fallback: if still empty, attempt all Waystar-mapped offices.
+        let ordered = Array.from(orderedMap.values());
+        if (ordered.length === 0) {
+            ordered = waystar_config_1.WAYSTAR_ACCOUNTS.map(a => ({ stateCode: a.stateCode, name: a.officeName }));
+        }
 
         waystarLock = { running: true, stateCode: "ALL", startedAt: Date.now() };
-        console.log(`🔒 Waystar ALL lock acquired (${ordered.length} offices)${submit === true ? " (SUBMIT ENABLED)" : " (dry run)"}`);
+        console.log(`🔒 Waystar ALL lock acquired (${ordered.length} office(s) to attempt)${submit === true ? " (SUBMIT ENABLED)" : " (dry run)"}`);
         try {
             const result = await (0, waystar_processor_1.processWaystarForAllOffices)(ordered, { submit: submit === true });
             res.json({ success: true, result });
