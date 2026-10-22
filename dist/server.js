@@ -9,8 +9,12 @@ exports.broadcastLog = broadcastLog;
 require("dotenv/config");
 const express_1 = __importDefault(require("express"));
 const kinnser_billing_automation_1 = require("./kinnser-billing-automation");
+const waystar_processor_1 = require("./waystar-processor");
+const waystar_config_1 = require("./waystar-config");
 const office_config_1 = require("./office-config");
 const insurance_helper_1 = require("./insurance-helper");
+const fs_1 = require("fs");
+const path_1 = require("path");
 const app = (0, express_1.default)();
 const PORT = process.env.PORT || 8080;
 // Global safety net: keep the long-running server alive if a stray async error occurs
@@ -109,6 +113,12 @@ app.get("/billing", (req, res) => {
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path>
         </svg>
         Select Insurances
+      </button>
+      <button class="waystar-btn" onclick="runWaystar('${office.stateCode}', '${office.name.replace(/'/g, "\\'")}')">
+        <svg class="btn-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+        </svg>
+        Waystar: Rejected Claims
       </button>
     </div>
   `).join('\n');
@@ -295,6 +305,38 @@ app.get("/billing", (req, res) => {
           height: 20px;
         }
         
+        .waystar-btn {
+          width: 100%;
+          margin-top: 10px;
+          padding: 10px 20px;
+          font-size: 0.9rem;
+          font-weight: 600;
+          border: 2px solid #319795;
+          cursor: pointer;
+          border-radius: 8px;
+          transition: all 0.3s;
+          background: white;
+          color: #319795;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+        }
+        
+        .waystar-btn:hover:not(:disabled) {
+          background: #319795;
+          color: white;
+          transform: translateY(-2px);
+          box-shadow: 0 4px 12px rgba(49, 151, 149, 0.3);
+        }
+        
+        .waystar-btn:disabled {
+          border-color: #cbd5e0;
+          color: #cbd5e0;
+          cursor: not-allowed;
+          transform: none;
+        }
+        
         .all-offices-section {
           margin-top: 30px;
           padding-top: 30px;
@@ -325,6 +367,37 @@ app.get("/billing", (req, res) => {
         }
         
         .all-offices-btn:disabled {
+          background: #cbd5e0;
+          cursor: not-allowed;
+          transform: none;
+          box-shadow: none;
+        }
+        
+        .waystar-all-btn {
+          width: 100%;
+          margin-top: 16px;
+          padding: 18px;
+          font-size: 1.05rem;
+          font-weight: 700;
+          border: none;
+          cursor: pointer;
+          border-radius: 12px;
+          transition: all 0.3s;
+          background: linear-gradient(135deg, #2c7a7b 0%, #319795 100%);
+          color: white;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 12px;
+          box-shadow: 0 4px 15px rgba(49, 151, 149, 0.3);
+        }
+        
+        .waystar-all-btn:hover:not(:disabled) {
+          transform: translateY(-2px);
+          box-shadow: 0 8px 25px rgba(49, 151, 149, 0.4);
+        }
+        
+        .waystar-all-btn:disabled {
           background: #cbd5e0;
           cursor: not-allowed;
           transform: none;
@@ -735,6 +808,13 @@ app.get("/billing", (req, res) => {
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
               </svg>
               Process All Offices (${office_config_1.OFFICES.length} locations)
+            </button>
+
+            <button id="waystarAllBtn" class="waystar-all-btn" onclick="runWaystarAll()" disabled title="Finish Kinnser processing for all offices to enable">
+              <svg class="btn-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+              </svg>
+              <span id="waystarAllLabel">Process All — Waystar (locked until all offices done)</span>
             </button>
           </div>
           
@@ -1153,6 +1233,177 @@ app.get("/billing", (req, res) => {
             buttons.forEach(btn => btn.disabled = false);
           }
         }
+        
+        // Debug trigger for the Waystar rejected-claims step (per office/state).
+        async function runWaystar(stateCode, officeName) {
+          // Ask whether to actually Resubmit (irreversible) or run a safe dry run.
+          const submit = confirm(
+            'Waystar step for ' + officeName + ' (' + stateCode + ').\\n\\n' +
+            'Click OK to RESUBMIT corrected claims (irreversible).\\n' +
+            'Click Cancel for a DRY RUN (make edits but do NOT resubmit).'
+          );
+          const buttons = document.querySelectorAll('button');
+          buttons.forEach(btn => btn.disabled = true);
+          
+          showConsole();
+          clearConsole();
+          autoScrollEnabled = true;
+          appendToConsole(new Date().toISOString(), '🏥 Starting Waystar rejected-claims step for ' + officeName + ' (' + stateCode + ') — ' + (submit ? 'RESUBMIT MODE' : 'DRY RUN') + '...');
+          connectToLogStream();
+          
+          const results = document.getElementById('results');
+          results.style.display = 'block';
+          results.className = 'loading';
+          results.innerHTML = \`
+            <div class="result-header">
+              <div class="spinner"></div>
+              Running Waystar step for <strong>\${officeName}</strong>...
+            </div>
+            <p style="color: #666; margin-top: 8px;">Logging in, switching account, downloading rejected-claims CSV, and enriching the Excel. Watch the live console below.</p>
+          \`;
+          
+          try {
+            const response = await fetch('/run-waystar', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ stateCode, officeName, submit })
+            });
+            const data = await response.json();
+            
+            if (response.ok && data.success) {
+              const r = data.result || {};
+              if (r.skipped) {
+                results.className = 'loading';
+                results.innerHTML = \`
+                  <div class="result-header">
+                    <svg class="result-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                    Waystar step skipped
+                  </div>
+                  <div class="result-details"><p style="color: #975a16;">\${r.reason || 'Skipped'}</p></div>
+                \`;
+              } else {
+                results.className = 'success';
+                results.innerHTML = \`
+                  <div class="result-header">
+                    <svg class="result-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                    Waystar step completed
+                  </div>
+                  <div class="result-details">
+                    <div class="result-row"><span class="result-label">Account:</span><span class="result-value">\${r.account || ''}</span></div>
+                    <div class="result-row"><span class="result-label">CSV mappings:</span><span class="result-value">\${r.csvMappings ?? 0}</span></div>
+                    <div class="result-row"><span class="result-label">TOB 327 rows:</span><span class="result-value">\${r.tob327 ?? 0}</span></div>
+                    <div class="result-row"><span class="result-label">Enriched (matched):</span><span class="result-value">\${r.matched ?? 0}</span></div>
+                    <div class="result-row"><span class="result-label">Unmatched:</span><span class="result-value">\${(r.unmatched && r.unmatched.length) || 0}</span></div>
+                    \${r.correction ? \`
+                    <div class="result-row"><span class="result-label">Claims edited:</span><span class="result-value">\${r.correction.edited}</span></div>
+                    <div class="result-row"><span class="result-label">Claims resubmitted:</span><span class="result-value">\${r.correction.submitted}\${r.submitEnabled ? '' : ' (dry run)'}</span></div>
+                    <div class="result-row"><span class="result-label">Skipped / errored:</span><span class="result-value">\${r.correction.skipped} / \${r.correction.errored}</span></div>
+                    \` : ''}
+                  </div>
+                  <details><summary>View raw result</summary><pre>\${JSON.stringify(r, null, 2)}</pre></details>
+                \`;
+              }
+            } else {
+              results.className = 'error';
+              results.innerHTML = \`
+                <div class="result-header">
+                  <svg class="result-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                  </svg>
+                  Waystar step failed
+                </div>
+                <div class="result-details"><p style="color: #c53030;">\${data.error || 'Unknown error'}</p></div>
+              \`;
+            }
+          } catch (error) {
+            results.className = 'error';
+            results.innerHTML = \`
+              <div class="result-header">Connection Error</div>
+              <div class="result-details"><p style="color: #c53030;">\${error.message}</p></div>
+            \`;
+          } finally {
+            buttons.forEach(btn => btn.disabled = false);
+          }
+        }
+
+        // Poll readiness and enable the "Process All — Waystar" button once all
+        // Waystar-mapped offices are processed. Runs on load and every 10s.
+        async function refreshWaystarReady() {
+          try {
+            const resp = await fetch('/waystar-ready');
+            const data = await resp.json();
+            const btn = document.getElementById('waystarAllBtn');
+            const label = document.getElementById('waystarAllLabel');
+            if (!btn) return;
+            if (data.ready) {
+              btn.disabled = false;
+              btn.title = 'Run Waystar for all processed offices in order';
+              const count = (data.processed || []).length;
+              label.textContent = 'Process All — Waystar (' + count + ' offices ready)';
+            } else {
+              btn.disabled = true;
+              const missing = (data.missing || []).map(m => m.stateCode).join(', ');
+              btn.title = 'Locked — still need: ' + (missing || 'all offices');
+              label.textContent = 'Process All — Waystar (locked — pending: ' + (missing || 'all') + ')';
+            }
+          } catch (e) { /* leave button as-is on error */ }
+        }
+        window.addEventListener('load', refreshWaystarReady);
+        setInterval(refreshWaystarReady, 10000);
+
+        // Run Waystar across all processed offices, in processing order.
+        async function runWaystarAll() {
+          const submit = confirm(
+            'Run Waystar for ALL processed offices, in the order they were processed.\\n\\n' +
+            'Click OK to RESUBMIT corrected claims (irreversible).\\n' +
+            'Click Cancel for a DRY RUN (make edits but do NOT resubmit).'
+          );
+          const buttons = document.querySelectorAll('button');
+          buttons.forEach(btn => btn.disabled = true);
+
+          showConsole();
+          clearConsole();
+          autoScrollEnabled = true;
+          appendToConsole(new Date().toISOString(), '🏥 Starting Waystar for ALL offices — ' + (submit ? 'RESUBMIT MODE' : 'DRY RUN') + '...');
+          connectToLogStream();
+
+          const results = document.getElementById('results');
+          results.style.display = 'block';
+          results.className = 'loading';
+          results.innerHTML = '<div class="result-header"><div class="spinner"></div> Running Waystar for all offices...</div>' +
+            '<p style="color:#666;margin-top:8px;">Single login, switching accounts per office, in processing order. Watch the live console.</p>';
+
+          try {
+            const response = await fetch('/run-waystar-all', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ submit })
+            });
+            const data = await response.json();
+            if (response.ok && data.success) {
+              const offices = (data.result && data.result.offices) || [];
+              const okCount = offices.filter(o => o.success).length;
+              results.className = 'success';
+              results.innerHTML = '<div class="result-header">✓ Waystar all-offices complete (' + okCount + '/' + offices.length + ')</div>' +
+                '<details open><summary>Per-office results</summary><pre>' + escapeHtml(JSON.stringify(offices, null, 2)) + '</pre></details>';
+            } else {
+              results.className = 'error';
+              results.innerHTML = '<div class="result-header">Waystar all-offices failed</div>' +
+                '<div class="result-details"><p style="color:#c53030;">' + escapeHtml(data.error || 'Unknown error') + '</p>' +
+                (data.missing ? '<pre>' + escapeHtml(JSON.stringify(data.missing, null, 2)) + '</pre>' : '') + '</div>';
+            }
+          } catch (error) {
+            results.className = 'error';
+            results.innerHTML = '<div class="result-header">Connection Error</div><div class="result-details"><p style="color:#c53030;">' + escapeHtml(error.message) + '</p></div>';
+          } finally {
+            buttons.forEach(btn => btn.disabled = false);
+            refreshWaystarReady();
+          }
+        }
       </script>
     </body>
     </html>
@@ -1169,6 +1420,68 @@ app.get("/health", (req, res) => {
 });
 // Server-side lock to prevent concurrent automation runs
 let automationLock = { running: false, office: null, startedAt: null, startedBy: null };
+// =====================================================================
+// PROCESSED-OFFICE TRACKING (for the "Process All — Waystar" button)
+// Records which offices completed Kinnser processing, in completion order,
+// so the Waystar button can enable once all offices are done and run them
+// in that same order. Persisted so it survives a server restart.
+// =====================================================================
+const PROCESSED_FILE = path_1.join(process.cwd(), ".waystar-processed.json");
+// completion order: array of { value, stateCode, name, at }
+let processedOffices = [];
+function loadProcessedOffices() {
+    try {
+        if (fs_1.existsSync(PROCESSED_FILE)) {
+            const data = JSON.parse(fs_1.readFileSync(PROCESSED_FILE, "utf8"));
+            if (Array.isArray(data)) processedOffices = data;
+        }
+    } catch (e) { console.error("Could not load processed offices:", e.message); }
+}
+function saveProcessedOffices() {
+    try { fs_1.writeFileSync(PROCESSED_FILE, JSON.stringify(processedOffices, null, 2)); }
+    catch (e) { console.error("Could not save processed offices:", e.message); }
+}
+// Record that an office finished Kinnser processing. Keeps the LAST completion
+// per office (re-processing moves it to the end of the order).
+function recordProcessedOffice(office) {
+    if (!office) return;
+    processedOffices = processedOffices.filter(o => o.value !== office.value);
+    processedOffices.push({ value: office.value, stateCode: office.stateCode, name: office.name, at: new Date().toISOString() });
+    saveProcessedOffices();
+}
+// All Waystar-mapped stateCodes (CT/Stamford excluded — no account).
+function waystarRequiredStates() {
+    return waystar_config_1.WAYSTAR_ACCOUNTS.map(a => a.stateCode.toUpperCase());
+}
+// Is every Waystar-mapped office both processed AND has a selected-records file?
+function computeWaystarReady() {
+    const required = waystarRequiredStates();
+    const processedStates = new Set(processedOffices.map(o => String(o.stateCode).toUpperCase()));
+    const missing = [];
+    for (const st of required) {
+        const done = processedStates.has(st);
+        const hasFile = !!findLatestSelectedRecords(st);
+        if (!done || !hasFile) missing.push({ stateCode: st, processed: done, hasFile });
+    }
+    return { ready: missing.length === 0, required, missing, processed: processedOffices };
+}
+// Find the newest selected-records-<state>-*.xlsx in cwd (mirrors the processor).
+function findLatestSelectedRecords(stateCode) {
+    try {
+        const prefix = `selected-records-${stateCode}-`;
+        const matches = fs_1.readdirSync(process.cwd())
+            .filter(f => f.startsWith(prefix) && f.endsWith(".xlsx"))
+            .map(f => ({ f, mtime: fs_1.statSync(path_1.join(process.cwd(), f)).mtimeMs }))
+            .sort((a, b) => b.mtime - a.mtime);
+        return matches.length ? matches[0].f : null;
+    } catch (e) { return null; }
+}
+// Office lookup by its office-config value (e.g. "1406957,Clinic").
+function officeByValue(value) {
+    return office_config_1.OFFICES.find(o => o.value === value) || null;
+}
+loadProcessedOffices();
+
 // Shared: acquire lock, run automation, release lock. Used by both the
 // manual /run-automation endpoint and the daily scheduler.
 async function executeAutomation(officeValue, selectedInsurances, startedBy) {
@@ -1185,6 +1498,13 @@ async function executeAutomation(officeValue, selectedInsurances, startedBy) {
         const result = await (0, kinnser_billing_automation_1.loginAndProcessOffices)(officeValue, selectedInsurances);
         console.log(`🔓 Lock released: ${automationLock.office} (ran for ${Math.round((Date.now() - automationLock.startedAt) / 1000)}s)`);
         automationLock = { running: false, office: null, startedAt: null, startedBy: null };
+        // Record completion order for the "Process All — Waystar" gate.
+        if (officeValue === 'all') {
+            office_config_1.OFFICES.forEach(o => recordProcessedOffice(o));
+        } else {
+            const office = officeByValue(officeValue);
+            if (office) recordProcessedOffice(office);
+        }
         return result;
     }
     catch (error) {
@@ -1220,6 +1540,92 @@ app.post("/run-automation", async (req, res) => {
             success: false,
             error: error instanceof Error ? error.message : "Unknown error"
         });
+    }
+});
+// API endpoint to run the Waystar post-processing step for a single office.
+// Debug/manual trigger: expects { stateCode, officeName? } and enriches the
+// matching selected-records-<state>-*.xlsx (TOB 327 rows) with Claim ID + Claim URL.
+let waystarLock = { running: false, stateCode: null, startedAt: null };
+app.post("/run-waystar", async (req, res) => {
+    try {
+        if (waystarLock.running) {
+            const runningFor = Math.round((Date.now() - waystarLock.startedAt) / 1000);
+            const msg = `Waystar step already running for "${waystarLock.stateCode}" (started ${runningFor}s ago).`;
+            broadcastLog(`⚠️  ${msg}`);
+            return res.status(409).json({ success: false, error: msg });
+        }
+        const { stateCode, officeName, submit, correct } = req.body || {};
+        if (!stateCode) {
+            return res.status(400).json({ success: false, error: "stateCode is required" });
+        }
+        waystarLock = { running: true, stateCode, startedAt: Date.now() };
+        console.log(`🔒 Waystar lock acquired: ${stateCode}${submit === true ? " (SUBMIT ENABLED)" : " (dry run)"}`);
+        try {
+            const result = await (0, waystar_processor_1.processWaystarForOffice)({
+                stateCode,
+                officeName,
+                submit: submit === true,
+                correct: correct === false ? false : true
+            });
+            res.json({ success: true, result });
+        }
+        finally {
+            console.log(`🔓 Waystar lock released: ${waystarLock.stateCode}`);
+            waystarLock = { running: false, stateCode: null, startedAt: null };
+        }
+    }
+    catch (error) {
+        console.error("Waystar step failed:", error);
+        res.status(500).json({
+            success: false,
+            error: error instanceof Error ? error.message : "Unknown error"
+        });
+    }
+});
+// Whether the "Process All — Waystar" button should be enabled: all Waystar-mapped
+// offices processed AND each has a selected-records file. Also returns order info.
+app.get("/waystar-ready", (req, res) => {
+    try {
+        const status = computeWaystarReady();
+        res.json(status);
+    } catch (error) {
+        res.status(500).json({ ready: false, error: error instanceof Error ? error.message : "Unknown error" });
+    }
+});
+// Run Waystar for ALL processed offices, in the order they were processed,
+// using a single login. Only allowed once every Waystar-mapped office is ready.
+app.post("/run-waystar-all", async (req, res) => {
+    try {
+        if (waystarLock.running) {
+            const runningFor = Math.round((Date.now() - waystarLock.startedAt) / 1000);
+            return res.status(409).json({ success: false, error: `Waystar already running (${runningFor}s).` });
+        }
+        const { submit } = req.body || {};
+        const status = computeWaystarReady();
+        if (!status.ready) {
+            return res.status(409).json({
+                success: false,
+                error: "Not all offices are processed yet. Finish Kinnser processing for all offices first.",
+                missing: status.missing
+            });
+        }
+        // Build the office list in COMPLETION order, keeping only Waystar-mapped ones.
+        const ordered = processedOffices
+            .map(o => ({ stateCode: o.stateCode, name: o.name }))
+            .filter(o => !!waystar_config_1.getWaystarAccountForState(o.stateCode));
+
+        waystarLock = { running: true, stateCode: "ALL", startedAt: Date.now() };
+        console.log(`🔒 Waystar ALL lock acquired (${ordered.length} offices)${submit === true ? " (SUBMIT ENABLED)" : " (dry run)"}`);
+        try {
+            const result = await (0, waystar_processor_1.processWaystarForAllOffices)(ordered, { submit: submit === true });
+            res.json({ success: true, result });
+        } finally {
+            console.log(`🔓 Waystar ALL lock released`);
+            waystarLock = { running: false, stateCode: null, startedAt: null };
+        }
+    } catch (error) {
+        console.error("Waystar ALL failed:", error);
+        res.status(500).json({ success: false, error: error instanceof Error ? error.message : "Unknown error" });
     }
 });
 // API endpoint to stop automation

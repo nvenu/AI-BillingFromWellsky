@@ -2,6 +2,22 @@
 .env
 .env.local
 
+# Waystar runtime state
+.waystar-browser-profile/
+.waystar-processed.json
+waystar-confirm-submit
+waystar-skip-submit
+waystar-run-report-*
+downloads/waystar/
+downloads/waystar-debug/
+
+# Debug screenshots / scratch
+debug-*.png
+ClaimsScreen.csv
+
+# Downloaded claim artifacts (PHI — never commit)
+downloads/
+
 # Dependencies
 node_modules/
 package-lock.json

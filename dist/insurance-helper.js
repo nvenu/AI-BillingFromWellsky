@@ -264,8 +264,25 @@ class InsuranceHelper {
     shouldDiscardAuthorization(authorization) {
         if (!authorization)
             return false;
-        const auth = authorization.toLowerCase().trim();
-        return auth === "pending" || auth.includes("dummy") || auth === "non-billing" || auth === "denied" || auth === "no auth";
+        // Normalize: lowercase, convert non-breaking spaces to regular spaces,
+        // collapse whitespace, trim. This catches values like "Pending",
+        // "PENDING ", "Auth Pending", "pending\u00a0" that the old exact-match missed.
+        const auth = String(authorization)
+            .toLowerCase()
+            .replace(/\u00a0/g, " ")
+            .replace(/\s+/g, " ")
+            .trim();
+        if (!auth)
+            return false;
+        // Substring/word-based matching so a pending/denied/etc. indicator ANYWHERE
+        // in the authorization value blocks billing (audit: pending must never bill).
+        // Use word boundaries for short tokens to avoid false hits inside real codes.
+        if (/\bpending\b/.test(auth)) return true;      // "pending", "auth pending", "pending authorization"
+        if (auth.includes("dummy")) return true;
+        if (/\bnon[\s-]?billing\b/.test(auth)) return true; // "non-billing", "non billing", "nonbilling"
+        if (/\bdenied\b/.test(auth)) return true;
+        if (/\bno\s*auth\b/.test(auth)) return true;    // "no auth", "noauth"
+        return false;
     }
     /**
      * Check if authorization is valid for processing
