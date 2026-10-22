@@ -734,11 +734,17 @@ function enrichSelectedRecordsExcel(excelPath, byClaimNumber) {
     const header = rows[0].map(h => String(h));
     const idxTob = header.findIndex(h => h.trim().toLowerCase() === "tob");
     const idxClaimNo = header.findIndex(h => h.trim().toLowerCase() === "claim #" || h.trim().toLowerCase() === "claim#");
+    // "327 Reason" tells WHY the claim became 327. Waystar date-correction only
+    // applies to DUPLICATE-DATE 327s — NOT TCODE/Partnership/etc. 327s.
+    const idx327Reason = header.findIndex(h => h.trim().toLowerCase() === "327 reason");
     if (idxTob === -1) {
         throw new Error('Excel has no "TOB" column — cannot locate 327 rows');
     }
     if (idxClaimNo === -1) {
         throw new Error('Excel has no "Claim #" column — cannot match claim numbers');
+    }
+    if (idx327Reason === -1) {
+        log(`  ⚠️  No "327 Reason" column found — cannot distinguish duplicate-date 327s from TCODE 327s; NO claims will be corrected.`);
     }
 
     // Ensure the two new columns exist (append if missing).
@@ -748,9 +754,15 @@ function enrichSelectedRecordsExcel(excelPath, byClaimNumber) {
     if (idxClaimUrl === -1) { idxClaimUrl = header.length; header.push("Claim URL"); }
     rows[0] = header;
 
-    let tob327 = 0, matched = 0;
+    // A 327 row is eligible for date-correction ONLY if it became 327 due to
+    // DUPLICATE dates. The Kinnser 327-reason text for that case contains
+    // "duplicate" (e.g. "Duplicate MRN with overlapping dates - changing TOB...").
+    // TCODE ("TCODE authorization ...") and Partnership reasons are NOT eligible.
+    const isDuplicateReason = (reason) => /duplicate/i.test(String(reason || ""));
+
+    let tob327 = 0, matched = 0, eligibleCount = 0, skippedReasonCount = 0;
     const unmatched = [];
-    const enriched = []; // { claimNo, claimId, url } for the correction step
+    const enriched = []; // { claimNo, claimId, url, reason, eligible } for the correction step
 
     for (let r = 1; r < rows.length; r++) {
         const row = rows[r];
@@ -759,6 +771,8 @@ function enrichSelectedRecordsExcel(excelPath, byClaimNumber) {
         const tob = String(row[idxTob] || "").trim();
         if (tob !== "327") continue;
         tob327++;
+        const reason327 = idx327Reason !== -1 ? String(row[idx327Reason] || "").trim() : "";
+        const eligible = isDuplicateReason(reason327);
         const claimNo = String(row[idxClaimNo] || "").trim();
         if (!claimNo) {
             unmatched.push({ row: r + 1, claimNo: "(blank)", reason: "no claim # in Excel" });
@@ -778,7 +792,10 @@ function enrichSelectedRecordsExcel(excelPath, byClaimNumber) {
             row[idxClaimId] = claimId;
             row[idxClaimUrl] = url;
             matched++;
-            enriched.push({ claimNo, claimId: String(claimId).trim(), url });
+            // Enrich (Claim ID + URL) ALL matched 327 rows, but only mark
+            // duplicate-date rows as eligible for the date-correction step.
+            if (eligible) eligibleCount++; else skippedReasonCount++;
+            enriched.push({ claimNo, claimId: String(claimId).trim(), url, reason: reason327, eligible });
         } else {
             unmatched.push({ row: r + 1, claimNo, reason: "claim # not in CSV" });
         }
@@ -790,12 +807,13 @@ function enrichSelectedRecordsExcel(excelPath, byClaimNumber) {
     XLSX.writeFile(wb, excelPath);
 
     log(`  ✓ TOB 327 rows: ${tob327}, matched & enriched: ${matched}, unmatched: ${unmatched.length}`);
+    log(`  ✓ Eligible for date-correction (duplicate dates): ${eligibleCount} | not eligible (TCODE/other 327): ${skippedReasonCount}`);
     if (unmatched.length > 0) {
         unmatched.slice(0, 20).forEach(u =>
             log(`     ⚠️  Row ${u.row}: claim # "${u.claimNo}" — ${u.reason}`));
     }
     log(`  ✓ Saved: ${excelPath}`);
-    return { matched, tob327, unmatched, excelPath, enriched };
+    return { matched, tob327, unmatched, excelPath, enriched, eligibleCount, skippedReasonCount };
 }
 
 // ---------------------------------------------------------------------------
@@ -831,7 +849,7 @@ function writeWaystarRunReport(officeResults) {
         "TOB Before", "TOB After", "Resubmitted", "Action / Status", "Claim URL"
     ];
     const rows = [header];
-    const totals = { offices: 0, insuranceFiles: 0, claims: 0, edited: 0, resubmitted: 0, skipped: 0, errored: 0, unmatched327: 0 };
+    const totals = { offices: 0, insuranceFiles: 0, claims: 0, edited: 0, resubmitted: 0, skipped: 0, errored: 0, unmatched327: 0, notCorrected: 0 };
 
     const txt = [];
     txt.push(`WAYSTAR RUN REPORT — ${new Date().toLocaleString()}`);
@@ -870,6 +888,14 @@ function writeWaystarRunReport(officeResults) {
                 txt.push(`    • Claim #${u.claimNo}: NOT matched in Waystar CSV (${u.reason || ""})`);
             }
 
+            // 327 claims enriched (Claim ID/URL) but intentionally NOT corrected
+            // because the 327 reason is not "duplicate dates" (TCODE/Partnership/etc.).
+            for (const n of (file.notCorrected || [])) {
+                totals.notCorrected = (totals.notCorrected || 0) + 1;
+                rows.push([officeName, office.stateCode || "", office.account || "", insurance, n.claimNo || "", n.claimId || "", "", "", "", "", "", "", "327", "327", "No", `Enriched only — not a duplicate-date 327 (${n.reason || ""})`, n.url || ""]);
+                txt.push(`    • Claim #${n.claimNo} (id ${n.claimId}) — enriched only, NOT corrected (${n.reason || ""})`);
+            }
+
             const results = (file.correction && file.correction.results) || [];
             for (const c of results) {
                 totals.claims++;
@@ -893,7 +919,7 @@ function writeWaystarRunReport(officeResults) {
                 txt.push(`        TOB ${c.tobBefore || "?"}→${c.tobAfter || "?"} | statement ${c.fromDate || "?"}–${c.toDate || "?"}`
                     + (c.hipps && c.hipps.applied ? ` | HIPPS ${c.hipps.from}→${c.hipps.to}` : ""));
             }
-            if ((file.unmatched || []).length === 0 && results.length === 0) {
+            if ((file.unmatched || []).length === 0 && results.length === 0 && (file.notCorrected || []).length === 0) {
                 txt.push(`    (no TOB-327 claims to act on)`);
                 rows.push([officeName, office.stateCode || "", office.account || "", insurance, "", "", "", "", "", "", "", "", "", "", "", "No TOB-327 claims", ""]);
             }
@@ -903,7 +929,8 @@ function writeWaystarRunReport(officeResults) {
     txt.push("");
     txt.push("=".repeat(70));
     txt.push(`TOTALS: offices=${totals.offices}, insuranceFiles=${totals.insuranceFiles}, claims=${totals.claims}, edited=${totals.edited}, `
-        + `resubmitted=${totals.resubmitted}, skipped=${totals.skipped}, errored=${totals.errored}, unmatched327=${totals.unmatched327}`);
+        + `resubmitted=${totals.resubmitted}, skipped=${totals.skipped}, errored=${totals.errored}, `
+        + `enrichedOnly(TCODE/other 327)=${totals.notCorrected}, unmatched327=${totals.unmatched327}`);
 
     // Write Excel
     try {
@@ -1371,7 +1398,10 @@ async function correctAllClaims(page, enriched, submit, confirmFn) {
 //  - Otherwise (server/background) → file-based approve/skip.
 function buildConfirmFn(opts) {
     if (opts && typeof opts.confirmFn === "function") return opts.confirmFn;
-    if (opts && opts.autoConfirm === true) {
+    // Auto-confirm (no per-claim pause) when explicitly requested OR when the
+    // env flag WAYSTAR_AUTO_CONFIRM=true is set (used on the server for an
+    // unattended run alongside WAYSTAR_SUBMIT=true).
+    if ((opts && opts.autoConfirm === true) || process.env.WAYSTAR_AUTO_CONFIRM === "true") {
         return (r) => { log(`     ✅ Auto-confirm enabled — resubmitting claim #${r.claimNo}`); return Promise.resolve(true); };
     }
     if (process.stdin.isTTY) {
@@ -1466,13 +1496,17 @@ async function runWaystarOnPage(page, account, opts) {
         totMatched += result.matched; totTob327 += result.tob327;
         (result.unmatched || []).forEach(u => allUnmatched.push({ ...u, insurance }));
 
+        // Correct ONLY duplicate-date 327 claims (eligible === true). TCODE/other
+        // 327s are enriched with Claim ID/URL but NOT date-corrected or resubmitted.
+        const correctable = (result.enriched || []).filter(e => e.eligible).map(e => ({ ...e, insurance }));
+        const skippedByReason = (result.enriched || []).filter(e => !e.eligible).map(e => ({ ...e, insurance }));
+
         let correction = null;
-        if (doCorrect && result.enriched && result.enriched.length > 0) {
-            // Tag each claim with its insurance for the report.
-            const enriched = result.enriched.map(e => ({ ...e, insurance }));
-            correction = await correctAllClaims(page, enriched, doSubmit, confirmFn);
+        if (doCorrect && correctable.length > 0) {
+            correction = await correctAllClaims(page, correctable, doSubmit, confirmFn);
         } else if (doCorrect) {
-            log(`\n  ℹ️  No enriched TOB-327 claims to correct in this file.`);
+            log(`\n  ℹ️  No DUPLICATE-DATE TOB-327 claims to correct in this file` +
+                (skippedByReason.length ? ` (${skippedByReason.length} TCODE/other 327 enriched but not corrected).` : `.`));
         } else {
             log(`\n  ⏭️  Claim correction disabled (correct=false).`);
         }
@@ -1480,6 +1514,11 @@ async function runWaystarOnPage(page, account, opts) {
         files.push({
             excelPath, insurance,
             matched: result.matched, tob327: result.tob327,
+            eligibleCount: result.eligibleCount || 0,
+            skippedReasonCount: result.skippedReasonCount || 0,
+            // 327s enriched (Claim ID/URL) but NOT corrected because the 327 reason
+            // is not "duplicate dates" (TCODE/Partnership/etc.).
+            notCorrected: skippedByReason.map(e => ({ claimNo: e.claimNo, claimId: e.claimId, url: e.url, reason: e.reason, insurance })),
             unmatched: (result.unmatched || []).map(u => ({ ...u, insurance })),
             correction: correction ? {
                 edited: correction.edited, submitted: correction.submitted,
