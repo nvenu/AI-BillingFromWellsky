@@ -1783,8 +1783,42 @@ async function processRecordsOneByOne(page, insuranceHelper, selectedInsurances 
         }
         // Process ONLY the first available valid record
         const record = availableRecords[0];
-        console.log(`\n[Record ${totalProcessed + totalFailed + 1}] Processing: ${record.insurance}`);
+        const _vc = record.allColumns || [];
+        console.log(`\n[Record ${totalProcessed + totalFailed + 1}] Processing: ${record.insurance} | VALIDATED → Patient="${_vc[2] || '?'}" MRN=${_vc[3] || '?'} Period="${_vc[7] || '?'}" Auth="${record.authorization}" checkbox=${record.id}`);
         try {
+            // DIAGNOSTIC (logging ONLY — does NOT change behavior):
+            // Re-read the LIVE row that owns this checkbox id, immediately before
+            // selecting it, and compare against the validated values. If the live
+            // MRN/period differs (row/id reuse "swap") or the live authorization now
+            // reads pending/invalid, log it loudly so the question "was a pending/wrong
+            // record processed?" has a definitive answer in the logs. No record is
+            // skipped or blocked here — selection proceeds exactly as before.
+            const live = await page.evaluate((checkboxId) => {
+                const cb = document.getElementById(checkboxId);
+                if (!cb) return { found: false };
+                const tr = cb.closest('tr');
+                if (!tr) return { found: true, noRow: true };
+                const cells = Array.from(tr.querySelectorAll('td')).map(td => {
+                    const d = td.querySelector('div.ng-binding');
+                    return (d ? d.textContent : td.innerText || '').replace(/\s+/g, ' ').trim();
+                });
+                return { found: true, patient: cells[2] || '', mrn: cells[3] || '', period: cells[7] || '', auth: cells[10] || '', checked: cb.checked };
+            }, record.id).catch(() => ({ found: false }));
+
+            if (!live.found) {
+                console.log(`  ⚠️  DIAGNOSTIC: checkbox ${record.id} not found in live DOM at selection time (row may have re-rendered)`);
+            } else {
+                console.log(`  🔎 LIVE row for checkbox=${record.id} → Patient="${live.patient}" MRN=${live.mrn} Period="${live.period}" Auth="${live.auth}"`);
+                const mrnMismatch = live.mrn && _vc[3] && live.mrn !== _vc[3];
+                const periodMismatch = live.period && _vc[7] && live.period !== _vc[7];
+                if (mrnMismatch || periodMismatch) {
+                    console.log(`  🚨 SWAP DETECTED (logging only): validated (MRN=${_vc[3]}, Period="${_vc[7]}", Auth="${record.authorization}") != live (MRN=${live.mrn}, Period="${live.period}", Auth="${live.auth}") — this is the record that WILL be created`);
+                }
+                if (live.auth && !insuranceHelper.isValidAuthorization(live.auth)) {
+                    console.log(`  🚨 LIVE AUTH NOW PENDING/INVALID (logging only): "${live.auth}" for checkbox=${record.id} at click time — this record WILL still be created (behavior unchanged)`);
+                }
+            }
+
             // Select this record
             await page.evaluate((checkboxId) => {
                 const checkbox = document.getElementById(checkboxId);
@@ -1792,7 +1826,7 @@ async function processRecordsOneByOne(page, insuranceHelper, selectedInsurances 
                     checkbox.click();
                 }
             }, record.id);
-            console.log(`  ✓ Selected checkbox`);
+            console.log(`  ✓ Selected checkbox (id=${record.id}, MRN=${_vc[3] || '?'}, Period="${_vc[7] || '?'}")`);
             await page.waitForTimeout(500);
             // Scroll to Create button
             console.log(`  ⟳ Scrolling to Create button...`);
@@ -1857,6 +1891,8 @@ async function processRecordsOneByOne(page, insuranceHelper, selectedInsurances 
                 if (resultMessage.success) {
                     // Record SUCCEEDED
                     console.log(`  ✅ SUCCESS: ${resultMessage.message}`);
+                    // DIAGNOSTIC (logging only): tie the created claim to the exact record.
+                    console.log(`  🧾 CREATED claim for → Patient="${_vc[2] || '?'}" MRN=${_vc[3] || '?'} Period="${_vc[7] || '?'}" Auth="${record.authorization}" checkbox=${record.id}`);
                     processedRecordIds.add(record.id);
                     allSelectedRecords.push(record);
                     totalProcessed++;
@@ -1885,6 +1921,7 @@ async function processRecordsOneByOne(page, insuranceHelper, selectedInsurances 
             else {
                 // No message found - assume success (record should have disappeared)
                 console.log(`  ⚠️  No success/error message found - assuming success`);
+                console.log(`  🧾 CREATED (assumed) claim for → Patient="${_vc[2] || '?'}" MRN=${_vc[3] || '?'} Period="${_vc[7] || '?'}" Auth="${record.authorization}" checkbox=${record.id}`);
                 processedRecordIds.add(record.id);
                 allSelectedRecords.push(record);
                 totalProcessed++;
@@ -2024,7 +2061,10 @@ async function identifyValidRecordsOnPage(page, insuranceHelper, selectedInsuran
         // AUDIT REQUIREMENT: a record whose authorization is "pending" (or dummy/non-billing/
         // denied/no auth) must NEVER be selected or have Create clicked.
         if (record.authorization && !insuranceHelper.isValidAuthorization(record.authorization)) {
-            console.log(`  ❌ Skipped: ${record.insurance} - Invalid auth: ${record.authorization}`);
+            // DIAGNOSTIC (logging only): include MRN + period so a skipped pending
+            // claim can be proven skipped by MRN/period, not just insurance name.
+            const _c = record.allColumns || [];
+            console.log(`  ❌ Skipped: ${record.insurance} - Invalid auth: "${record.authorization}" | Patient="${_c[2] || '?'}" | MRN=${_c[3] || '?'} | Period="${_c[7] || '?'}" | checkbox=${record.id}`);
             continue;
         }
         // Fallback discard scan: if the Authorization cell came through blank (column not
@@ -2039,7 +2079,13 @@ async function identifyValidRecordsOnPage(page, insuranceHelper, selectedInsuran
                 continue;
             }
         }
-        console.log(`  ✓ Valid: ${record.insurance}`);
+        // DIAGNOSTIC (logging only): capture MRN + billing period + auth + checkbox id
+        // together so a later selection can be cross-checked for a row/auth swap.
+        const _cols = record.allColumns || [];
+        const _patient = _cols[2] || '?';
+        const _mrn = _cols[3] || '?';
+        const _period = _cols[7] || '?';
+        console.log(`  ✓ Valid: ${record.insurance} | Patient="${_patient}" | MRN=${_mrn} | Period="${_period}" | Auth="${record.authorization}" | checkbox=${record.id}`);
         validRecords.push({
             id: record.id,
             insurance: record.insurance,
