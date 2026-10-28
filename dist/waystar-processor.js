@@ -737,6 +737,10 @@ function enrichSelectedRecordsExcel(excelPath, byClaimNumber) {
     // "327 Reason" tells WHY the claim became 327. Waystar date-correction only
     // applies to DUPLICATE-DATE 327s — NOT TCODE/Partnership/etc. 327s.
     const idx327Reason = header.findIndex(h => h.trim().toLowerCase() === "327 reason");
+    // Insurance columns (used to gate the TCODE correction to Senior Whole Health).
+    // The Kinnser export has both a short "Insurance" and an "Insurance (Full)" column.
+    const idxInsurance = header.findIndex(h => h.trim().toLowerCase() === "insurance");
+    const idxInsuranceFull = header.findIndex(h => h.trim().toLowerCase() === "insurance (full)");
     if (idxTob === -1) {
         throw new Error('Excel has no "TOB" column — cannot locate 327 rows');
     }
@@ -754,15 +758,24 @@ function enrichSelectedRecordsExcel(excelPath, byClaimNumber) {
     if (idxClaimUrl === -1) { idxClaimUrl = header.length; header.push("Claim URL"); }
     rows[0] = header;
 
-    // A 327 row is eligible for date-correction ONLY if it became 327 due to
-    // DUPLICATE dates. The Kinnser 327-reason text for that case contains
-    // "duplicate" (e.g. "Duplicate MRN with overlapping dates - changing TOB...").
-    // TCODE ("TCODE authorization ...") and Partnership reasons are NOT eligible.
+    // A 327 row is eligible for correction in two cases:
+    //  1. DUPLICATE-DATE 327 — reason text contains "duplicate" (e.g. "Duplicate
+    //     MRN with overlapping dates - changing TOB..."). correctionType = "duplicate".
+    //  2. TCODE 327 for SENIOR WHOLE HEALTH / SENIOR WHOLE HEALTH BID — reason text
+    //     contains "tcode" AND the insurance is Senior Whole Health. correctionType =
+    //     "tcode" (adds an Insurance-tab Prior Auth fix before the same date/TOB flow).
+    // All OTHER 327s (TCODE for other payers, Partnership, etc.) are enriched only.
     const isDuplicateReason = (reason) => /duplicate/i.test(String(reason || ""));
+    const isTcodeReason = (reason) => /t\s*code/i.test(String(reason || ""));
+    const isSeniorWholeHealth = (ins, insFull) => {
+        const hay = `${String(ins || "")} ${String(insFull || "")}`.toLowerCase();
+        return /senior\s*whole\s*health/.test(hay) || /\bswhma/.test(hay);
+    };
 
     let tob327 = 0, matched = 0, eligibleCount = 0, skippedReasonCount = 0;
+    let dupCount = 0, tcodeCount = 0;
     const unmatched = [];
-    const enriched = []; // { claimNo, claimId, url, reason, eligible } for the correction step
+    const enriched = []; // { claimNo, claimId, url, reason, eligible, correctionType } for the correction step
 
     for (let r = 1; r < rows.length; r++) {
         const row = rows[r];
@@ -772,7 +785,17 @@ function enrichSelectedRecordsExcel(excelPath, byClaimNumber) {
         if (tob !== "327") continue;
         tob327++;
         const reason327 = idx327Reason !== -1 ? String(row[idx327Reason] || "").trim() : "";
-        const eligible = isDuplicateReason(reason327);
+        const insurance = idxInsurance !== -1 ? String(row[idxInsurance] || "").trim() : "";
+        const insuranceFull = idxInsuranceFull !== -1 ? String(row[idxInsuranceFull] || "").trim() : "";
+        // Decide correction type (and eligibility):
+        //   • duplicate-date 327  → correctionType "duplicate"
+        //   • TCODE 327 for Senior Whole Health (incl. BID) → correctionType "tcode"
+        //   • anything else → not eligible (enriched only)
+        const swh = isSeniorWholeHealth(insurance, insuranceFull);
+        let correctionType = null;
+        if (isDuplicateReason(reason327)) correctionType = "duplicate";
+        else if (isTcodeReason(reason327) && swh) correctionType = "tcode";
+        const eligible = correctionType !== null;
         const claimNo = String(row[idxClaimNo] || "").trim();
         if (!claimNo) {
             unmatched.push({ row: r + 1, claimNo: "(blank)", reason: "no claim # in Excel" });
@@ -793,9 +816,14 @@ function enrichSelectedRecordsExcel(excelPath, byClaimNumber) {
             row[idxClaimUrl] = url;
             matched++;
             // Enrich (Claim ID + URL) ALL matched 327 rows, but only mark
-            // duplicate-date rows as eligible for the date-correction step.
-            if (eligible) eligibleCount++; else skippedReasonCount++;
-            enriched.push({ claimNo, claimId: String(claimId).trim(), url, reason: reason327, eligible });
+            // duplicate-date and TCODE/Senior-Whole-Health rows as eligible.
+            if (eligible) {
+                eligibleCount++;
+                if (correctionType === "duplicate") dupCount++; else if (correctionType === "tcode") tcodeCount++;
+            } else {
+                skippedReasonCount++;
+            }
+            enriched.push({ claimNo, claimId: String(claimId).trim(), url, reason: reason327, insurance, eligible, correctionType });
         } else {
             unmatched.push({ row: r + 1, claimNo, reason: "claim # not in CSV" });
         }
@@ -807,13 +835,13 @@ function enrichSelectedRecordsExcel(excelPath, byClaimNumber) {
     XLSX.writeFile(wb, excelPath);
 
     log(`  ✓ TOB 327 rows: ${tob327}, matched & enriched: ${matched}, unmatched: ${unmatched.length}`);
-    log(`  ✓ Eligible for date-correction (duplicate dates): ${eligibleCount} | not eligible (TCODE/other 327): ${skippedReasonCount}`);
+    log(`  ✓ Eligible for correction: ${eligibleCount} (duplicate-date: ${dupCount}, TCODE/Senior Whole Health: ${tcodeCount}) | not eligible (other 327): ${skippedReasonCount}`);
     if (unmatched.length > 0) {
         unmatched.slice(0, 20).forEach(u =>
             log(`     ⚠️  Row ${u.row}: claim # "${u.claimNo}" — ${u.reason}`));
     }
     log(`  ✓ Saved: ${excelPath}`);
-    return { matched, tob327, unmatched, excelPath, enriched, eligibleCount, skippedReasonCount };
+    return { matched, tob327, unmatched, excelPath, enriched, eligibleCount, skippedReasonCount, dupCount, tcodeCount };
 }
 
 // ---------------------------------------------------------------------------
@@ -918,11 +946,16 @@ function writeWaystarRunReport(officeResults) {
                     c.submitted ? "Yes" : "No",
                     action, c.url || ""
                 ]);
-                txt.push(`    • Claim #${c.claimNo} (id ${c.claimId}) — ${action}`);
+                txt.push(`    • Claim #${c.claimNo} (id ${c.claimId}) — ${action}${c.correctionType ? ` [${c.correctionType}]` : ""}`);
                 txt.push(`        TOB ${c.tobBefore || "?"}→${c.tobAfter || "?"} | statement ${c.fromDate || "?"}–${c.toDate || "?"}`
                     + (c.hipps && c.hipps.applied ? ` | HIPPS ${c.hipps.from}→${c.hipps.to}` : "")
                     + (c.dischargeStatusBefore || c.dischargeStatusChanged ? ` | discharge ${c.dischargeStatusBefore || "?"}${c.dischargeStatusChanged ? `→${c.dischargeStatusAfter}` : ""}` : "")
                     + (c.tobRule ? ` | rule ${c.tobRule}` : ""));
+                if (c.correctionType === "tcode") {
+                    txt.push(`        TCODE: prior auth "${c.priorAuthBefore || ""}"${c.priorAuthChanged ? ` → "${c.priorAuthAfter}"` : " (unchanged)"}`
+                        + ((c.procRewrites || []).length ? ` | proc rewrites: ${c.procRewrites.map(x => `${x.fromProc}→T1502 @${x.charge}`).join(", ")}` : " | no G0299/G0300 rows")
+                        + (c.patientEstimateSet ? ` | patient estimate = ${c.patientEstimateSet} (total charges)` : ""));
+                }
             }
             if ((file.unmatched || []).length === 0 && results.length === 0 && (file.notCorrected || []).length === 0) {
                 txt.push(`    (no TOB-327 claims to act on)`);
@@ -1221,6 +1254,87 @@ async function setDischargeStatus(page, fieldId, code) {
     }, { id: fieldId, code });
 }
 
+// ---------------------------------------------------------------------------
+// TCODE / Senior Whole Health helpers
+// ---------------------------------------------------------------------------
+// On the Insurance tab, strip the "TCODE"/"T CODE" token from the Prior Auth
+// value, keeping the rest (e.g. "TCODE PUM2625 NA" -> "PUM2625 NA").
+// Returns { found, before, after, changed }.
+async function stripTcodeFromPriorAuth(page) {
+    return await page.evaluate(() => {
+        const el = document.getElementById("ins_FV2_priorauth");
+        if (!el) return { found: false };
+        const before = (el.value || "");
+        // Remove a leading/standalone "TCODE" or "T CODE" token (case-insensitive),
+        // then collapse the whitespace left behind.
+        const after = before
+            .replace(/\bT\s*CODE\b/ig, " ")
+            .replace(/\s{2,}/g, " ")
+            .trim();
+        if (after === before.trim()) return { found: true, before, after: before.trim(), changed: false };
+        el.focus();
+        el.value = after;
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+        el.dispatchEvent(new Event("blur", { bubbles: true }));
+        return { found: true, before, after, changed: true };
+    });
+}
+
+// On the Service Line tab, for every row whose Proc Code is G0299 or G0300:
+//   • change the Proc Code to T1502
+//   • set Covered Charges = 139 * Units (formatted to 2 decimals)
+// Returns { rewrites: [{ row, fromProc, units, charge }], count }.
+// NOTE: Total Charges (#FV_totalCharges) auto-recalculates from the line charges.
+async function rewriteSeniorWholeHealthProcCodes(page) {
+    return await page.evaluate(() => {
+        const RATE = 139;
+        const table = document.getElementById("slv_FV_GV");
+        if (!table) return { rewrites: [], count: 0, error: "service line grid not found" };
+        const fire = (node) => {
+            node.dispatchEvent(new Event("input", { bubbles: true }));
+            node.dispatchEvent(new Event("keyup", { bubbles: true }));
+            node.dispatchEvent(new Event("change", { bubbles: true }));
+            node.dispatchEvent(new Event("blur", { bubbles: true }));
+        };
+        const rewrites = [];
+        const procInputs = Array.from(table.querySelectorAll("input[id*='proccode' i]"))
+            // exclude the hidden proccodequal inputs
+            .filter(inp => /proccode$/i.test(inp.id || "") || /_proccode$/i.test(inp.id || "") || /\$proccode$/i.test(inp.name || ""));
+        for (const proc of procInputs) {
+            const val = (proc.value || "").trim().toUpperCase();
+            if (val !== "G0299" && val !== "G0300") continue;
+            // Derive the row prefix (e.g. "slv_FV_GV_ctl02_") from the proc input id.
+            const m = (proc.id || "").match(/^(.*_)proccode$/i);
+            const prefix = m ? m[1] : null;
+            if (!prefix) continue;
+            const qtyEl = document.getElementById(prefix + "qty");
+            const chgEl = document.getElementById(prefix + "chg");
+            const units = qtyEl ? parseFloat((qtyEl.value || "").replace(/[^0-9.]/g, "")) : NaN;
+            if (!chgEl || isNaN(units)) continue;
+            // Change proc code → T1502
+            proc.focus(); proc.value = "T1502"; fire(proc);
+            // Set covered charges = 139 * units
+            const charge = (RATE * units).toFixed(2);
+            chgEl.focus(); chgEl.value = charge; fire(chgEl);
+            rewrites.push({ rowPrefix: prefix, fromProc: val, units, charge });
+        }
+        return { rewrites, count: rewrites.length };
+    });
+}
+
+// Read the recalculated Total Charges (#FV_totalCharges span, e.g. "$373.00").
+// Returns a plain numeric string without "$"/commas (e.g. "373.00"), or "".
+async function readTotalCharges(page) {
+    return await page.evaluate(() => {
+        const el = document.getElementById("FV_totalCharges");
+        if (!el) return "";
+        const raw = (el.textContent || "").trim();
+        const cleaned = raw.replace(/[^0-9.]/g, "");
+        return cleaned;
+    });
+}
+
 // Click a Menu1 tab via its __doPostBack argument ('slv' = Service Line, 'clt' = Claim)
 // and wait for the ASP.NET postback to settle.
 async function clickMenuTab(page, arg, label) {
@@ -1278,8 +1392,12 @@ async function correctClaim(page, claim, submit, confirmFn) {
         factype: "", tobBefore: "", tobAfter: "",
         dischargeStatusBefore: "", dischargeStatusAfter: "", dischargeStatusChanged: false,
         lastServiceDate: "", tobRule: "",
+        correctionType: claim.correctionType || "duplicate", insurance: claim.insurance || "",
+        priorAuthBefore: "", priorAuthAfter: "", priorAuthChanged: false,
+        procRewrites: [], totalCharges: "", patientEstimateSet: "",
         submitted: false, skipped: false, error: null
     };
+    const isTcode = r.correctionType === "tcode";
     try {
         log(`\n  ── Claim #${claim.claimNo} (id ${claim.claimId}) ──`);
         // Navigating away from a previously-edited claim can raise a beforeunload
@@ -1310,6 +1428,21 @@ async function correctClaim(page, claim, submit, confirmFn) {
             return r;
         }
 
+        // TCODE flow only: STEP 0 — Insurance tab → strip "TCODE" from Prior Auth.
+        if (isTcode) {
+            await clickMenuTab(page, "ins", "Insurance");
+            const pa = await stripTcodeFromPriorAuth(page);
+            if (!pa.found) {
+                log(`     ⚠️  TCODE: Prior Auth field (#ins_FV2_priorauth) not found — continuing without Prior Auth edit.`);
+            } else {
+                r.priorAuthBefore = pa.before;
+                r.priorAuthAfter = pa.after;
+                r.priorAuthChanged = !!pa.changed;
+                log(`     ${pa.changed ? "✓" : "ℹ️ "} TCODE Prior Auth: "${pa.before}"${pa.changed ? ` → "${pa.after}"` : " (no TCODE token found — unchanged)"}`);
+            }
+            await screenshot(page, `TCODE_priorauth_${claim.claimNo}`);
+        }
+
         // STEP: Service Line — read rows (rev code + service date per row).
         await clickMenuTab(page, "slv", "Service Line");
         let svc = await readServiceLineRows(page);
@@ -1323,22 +1456,42 @@ async function correctClaim(page, claim, submit, confirmFn) {
         log(`     Service lines (${svc.rows.length}): ` +
             svc.rows.map((x, i) => `#${i + 1} rev=${x.revCode || "-"} date=${x.serviceDate || "-"}`).join(" | "));
 
-        // HIPPS rule: if row 1's Rev Code is 0023, set row 1's service date to the
-        // LAST row's service date (bottom row), regardless of the number of rows.
+        // TCODE flow only: rewrite G0299/G0300 → T1502 and set Covered Charges =
+        // 139 * Units for those rows. Total Charges auto-recalculates from lines.
+        if (isTcode) {
+            const rw = await rewriteSeniorWholeHealthProcCodes(page);
+            r.procRewrites = rw.rewrites || [];
+            if (rw.error) {
+                log(`     ⚠️  TCODE: proc-code rewrite skipped — ${rw.error}`);
+            } else if (rw.count > 0) {
+                rw.rewrites.forEach(x => log(`     ✓ TCODE: ${x.fromProc} → T1502, charge = 139 × ${x.units} = ${x.charge}`));
+                await page.waitForTimeout(500);
+                // Re-read rows so the date logic reflects any grid changes.
+                svc = await readServiceLineRows(page);
+            } else {
+                log(`     ℹ️  TCODE: no G0299/G0300 proc codes to rewrite.`);
+            }
+        }
+
+        // HIPPS rule: ONLY when row 1's Rev Code contains 0023. If row 1's service
+        // (from) date is EARLIER than row 2's service (from) date, copy row 2's
+        // date into row 1. (Per spec: use the SECOND row's date, not the last row.)
         r.hipps = { applied: false, revCode: svc.rows[0].revCode, from: svc.rows[0].serviceDate, to: "" };
-        if (svc.rows.length >= 2 && svc.rows[0].revCode === "0023") {
+        if (svc.rows.length >= 2 && String(svc.rows[0].revCode || "").includes("0023")) {
             const first = svc.rows[0];
-            const last = svc.rows[svc.rows.length - 1];
-            if (last.serviceDate && dateKey(first.serviceDate) !== dateKey(last.serviceDate)) {
+            const second = svc.rows[1];
+            const k1 = dateKey(first.serviceDate), k2 = dateKey(second.serviceDate);
+            const row1EarlierThanRow2 = !isNaN(k1) && !isNaN(k2) && k1 < k2;
+            if (second.serviceDate && row1EarlierThanRow2) {
                 if (!first.dateInputId) {
                     log(`     ⚠️  HIPPS: row 1 date input not locatable — cannot update top line date`);
                 } else {
                     // ASP.NET ids are [A-Za-z0-9_] only, so an attribute selector is safe.
-                    const okFinal = await setInputValue(page, `input[id='${first.dateInputId}']`, last.serviceDate);
+                    const okFinal = await setInputValue(page, `input[id='${first.dateInputId}']`, second.serviceDate);
                     if (okFinal) {
                         r.hipps.applied = true;
-                        r.hipps.to = last.serviceDate;
-                        log(`     ✓ HIPPS (Rev 0023): row 1 service date ${first.serviceDate} → ${last.serviceDate} (last row)`);
+                        r.hipps.to = second.serviceDate;
+                        log(`     ✓ HIPPS (Rev 0023): row 1 service date ${first.serviceDate} → ${second.serviceDate} (row 2)`);
                         await page.waitForTimeout(500);
                         // Re-read rows so From/To reflects the corrected top-line date.
                         svc = await readServiceLineRows(page);
@@ -1347,7 +1500,7 @@ async function correctClaim(page, claim, submit, confirmFn) {
                     }
                 }
             } else {
-                log(`     ℹ️  HIPPS: row 1 Rev 0023 but date already matches the last row — no change`);
+                log(`     ℹ️  HIPPS: row 1 Rev 0023 but row 1 date (${first.serviceDate}) is not earlier than row 2 (${second.serviceDate}) — no change`);
             }
         }
 
@@ -1455,6 +1608,24 @@ async function correctClaim(page, claim, submit, confirmFn) {
         await setInputValue(page, "#clt_tc_genTP_gen_FV_frequency", r.frequencyAfter);
         r.tobAfter = `${before.factype}${r.frequencyAfter}`;
         log(`     ✓ Type of Bill: ${r.tobBefore} → ${r.tobAfter}${r.dischargeStatusChanged ? ` | Discharge Status: ${r.dischargeStatusBefore} → ${r.dischargeStatusAfter}` : ""}`);
+
+        // TCODE flow only: if any proc code was rewritten to T1502, the line
+        // charges changed and Total Charges auto-recalculated. Copy the new Total
+        // Charges into Patient Estimated Amount Due (#clt_tc_genTP_gen_FV_patestamt).
+        if (isTcode && (r.procRewrites || []).length > 0) {
+            r.totalCharges = await readTotalCharges(page);
+            if (r.totalCharges) {
+                const ok = await setInputValue(page, "#clt_tc_genTP_gen_FV_patestamt", r.totalCharges);
+                if (ok) {
+                    r.patientEstimateSet = r.totalCharges;
+                    log(`     ✓ TCODE: Patient Estimated Amount Due set to Total Charges = ${r.totalCharges}`);
+                } else {
+                    log(`     ⚠️  TCODE: could not set Patient Estimated Amount Due (#clt_tc_genTP_gen_FV_patestamt).`);
+                }
+            } else {
+                log(`     ⚠️  TCODE: Total Charges (#FV_totalCharges) unreadable — Patient Estimated Amount Due left unchanged.`);
+            }
+        }
 
         await screenshot(page, `EDITED_${claim.claimNo}`);
 
@@ -1651,17 +1822,18 @@ async function runWaystarOnPage(page, account, opts) {
         totMatched += result.matched; totTob327 += result.tob327;
         (result.unmatched || []).forEach(u => allUnmatched.push({ ...u, insurance }));
 
-        // Correct ONLY duplicate-date 327 claims (eligible === true). TCODE/other
-        // 327s are enriched with Claim ID/URL but NOT date-corrected or resubmitted.
-        const correctable = (result.enriched || []).filter(e => e.eligible).map(e => ({ ...e, insurance }));
-        const skippedByReason = (result.enriched || []).filter(e => !e.eligible).map(e => ({ ...e, insurance }));
+        // Correct eligible 327 claims: duplicate-date 327s AND TCODE 327s for
+        // Senior Whole Health (incl. BID). Other 327s (TCODE for other payers,
+        // Partnership, etc.) are enriched with Claim ID/URL but NOT corrected.
+        const correctable = (result.enriched || []).filter(e => e.eligible).map(e => ({ ...e, insurance: e.insurance || insurance }));
+        const skippedByReason = (result.enriched || []).filter(e => !e.eligible).map(e => ({ ...e, insurance: e.insurance || insurance }));
 
         let correction = null;
         if (doCorrect && correctable.length > 0) {
             correction = await correctAllClaims(page, correctable, doSubmit, confirmFn);
         } else if (doCorrect) {
-            log(`\n  ℹ️  No DUPLICATE-DATE TOB-327 claims to correct in this file` +
-                (skippedByReason.length ? ` (${skippedByReason.length} TCODE/other 327 enriched but not corrected).` : `.`));
+            log(`\n  ℹ️  No eligible (duplicate-date or TCODE/Senior Whole Health) TOB-327 claims to correct in this file` +
+                (skippedByReason.length ? ` (${skippedByReason.length} other 327 enriched but not corrected).` : `.`));
         } else {
             log(`\n  ⏭️  Claim correction disabled (correct=false).`);
         }
