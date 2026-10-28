@@ -846,6 +846,7 @@ function writeWaystarRunReport(officeResults) {
         "Office", "State", "Waystar Account", "Insurance", "Claim #", "Claim ID",
         "Service Dates", "HIPPS Applied", "HIPPS From→To",
         "Statement From", "Statement To", "Admission Date",
+        "Discharge Before", "Discharge After",
         "TOB Before", "TOB After", "Resubmitted", "Action / Status", "Claim URL"
     ];
     const rows = [header];
@@ -864,12 +865,12 @@ function writeWaystarRunReport(officeResults) {
 
         if (office.skipped) {
             txt.push(`  (skipped: ${office.reason || "no reason"})`);
-            rows.push([officeName, office.stateCode || "", office.account || "", "", "", "", "", "", "", "", "", "", "", "", "", `Office skipped: ${office.reason || ""}`, ""]);
+            rows.push([officeName, office.stateCode || "", office.account || "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", `Office skipped: ${office.reason || ""}`, ""]);
             continue;
         }
         if (office.error && !office.files) {
             txt.push(`  (office error: ${office.error})`);
-            rows.push([officeName, office.stateCode || "", office.account || "", "", "", "", "", "", "", "", "", "", "", "", "", `Office error: ${office.error}`, ""]);
+            rows.push([officeName, office.stateCode || "", office.account || "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", `Office error: ${office.error}`, ""]);
             totals.errored++;
             continue;
         }
@@ -884,7 +885,7 @@ function writeWaystarRunReport(officeResults) {
             // Unmatched 327 rows (had no claim id in the CSV) — report them too.
             for (const u of (file.unmatched || [])) {
                 totals.unmatched327++;
-                rows.push([officeName, office.stateCode || "", office.account || "", insurance, u.claimNo || "", "", "", "", "", "", "", "", "327", "", "No", `Not matched in Waystar CSV (${u.reason || ""})`, ""]);
+                rows.push([officeName, office.stateCode || "", office.account || "", insurance, u.claimNo || "", "", "", "", "", "", "", "", "", "", "327", "", "No", `Not matched in Waystar CSV (${u.reason || ""})`, ""]);
                 txt.push(`    • Claim #${u.claimNo}: NOT matched in Waystar CSV (${u.reason || ""})`);
             }
 
@@ -892,7 +893,7 @@ function writeWaystarRunReport(officeResults) {
             // because the 327 reason is not "duplicate dates" (TCODE/Partnership/etc.).
             for (const n of (file.notCorrected || [])) {
                 totals.notCorrected = (totals.notCorrected || 0) + 1;
-                rows.push([officeName, office.stateCode || "", office.account || "", insurance, n.claimNo || "", n.claimId || "", "", "", "", "", "", "", "327", "327", "No", `Enriched only — not a duplicate-date 327 (${n.reason || ""})`, n.url || ""]);
+                rows.push([officeName, office.stateCode || "", office.account || "", insurance, n.claimNo || "", n.claimId || "", "", "", "", "", "", "", "", "", "327", "327", "No", `Enriched only — not a duplicate-date 327 (${n.reason || ""})`, n.url || ""]);
                 txt.push(`    • Claim #${n.claimNo} (id ${n.claimId}) — enriched only, NOT corrected (${n.reason || ""})`);
             }
 
@@ -911,17 +912,21 @@ function writeWaystarRunReport(officeResults) {
                     c.hipps && c.hipps.applied ? "Yes" : "No",
                     c.hipps && c.hipps.applied ? `${c.hipps.from}→${c.hipps.to}` : "",
                     c.fromDate || "", c.toDate || "", c.admissionDate || "",
+                    c.dischargeStatusBefore || "",
+                    c.dischargeStatusChanged ? `${c.dischargeStatusAfter || ""} (changed)` : (c.dischargeStatusAfter || c.dischargeStatusBefore || ""),
                     c.tobBefore || "", c.tobAfter || "",
                     c.submitted ? "Yes" : "No",
                     action, c.url || ""
                 ]);
                 txt.push(`    • Claim #${c.claimNo} (id ${c.claimId}) — ${action}`);
                 txt.push(`        TOB ${c.tobBefore || "?"}→${c.tobAfter || "?"} | statement ${c.fromDate || "?"}–${c.toDate || "?"}`
-                    + (c.hipps && c.hipps.applied ? ` | HIPPS ${c.hipps.from}→${c.hipps.to}` : ""));
+                    + (c.hipps && c.hipps.applied ? ` | HIPPS ${c.hipps.from}→${c.hipps.to}` : "")
+                    + (c.dischargeStatusBefore || c.dischargeStatusChanged ? ` | discharge ${c.dischargeStatusBefore || "?"}${c.dischargeStatusChanged ? `→${c.dischargeStatusAfter}` : ""}` : "")
+                    + (c.tobRule ? ` | rule ${c.tobRule}` : ""));
             }
             if ((file.unmatched || []).length === 0 && results.length === 0 && (file.notCorrected || []).length === 0) {
                 txt.push(`    (no TOB-327 claims to act on)`);
-                rows.push([officeName, office.stateCode || "", office.account || "", insurance, "", "", "", "", "", "", "", "", "", "", "", "No TOB-327 claims", ""]);
+                rows.push([officeName, office.stateCode || "", office.account || "", insurance, "", "", "", "", "", "", "", "", "", "", "", "", "", "No TOB-327 claims", ""]);
             }
         }
     }
@@ -1111,6 +1116,111 @@ async function setInputValue(page, selector, value) {
     return ok;
 }
 
+// ---------------------------------------------------------------------------
+// Patient Discharge Status (UB-04 FL 17) — read & write.
+// CONFIRMED from the Waystar Institutional claim editor DOM: the field is
+//   #clt_tc_genTP_gen_FV_patstatus  (value "01"/"30", maxlength 2)
+// under the "Admission / Discharge" section.
+// IMPORTANT: this is NOT the Type-of-Bill field. The TOB LAST DIGIT (2/3/4)
+// lives in #clt_tc_genTP_gen_FV_frequency, next to #..._factype ("32"), under
+// the "Type of Bill (Facility & Frequency Code)" label.
+// Extra candidates + a label/id heuristic remain as a safety net in case the
+// id ever changes.
+// ---------------------------------------------------------------------------
+async function findDischargeStatusFieldId(page) {
+    return await page.evaluate(() => {
+        const candidates = [
+            "clt_tc_genTP_gen_FV_patstatus",
+            "clt_tc_genTP_gen_FV_patientstatus",
+            "clt_tc_genTP_gen_FV_patientdischargestatus",
+            "clt_tc_genTP_gen_FV_dischargestatus",
+            "clt_tc_genTP_gen_FV_patientstat"
+        ];
+        for (const id of candidates) {
+            const el = document.getElementById(id);
+            if (el) return id;
+        }
+        // Heuristic scan: look for a labelled field about patient/discharge status.
+        const wanted = /(patient\s*(discharge\s*)?status|discharge\s*status|patient\s*stat)/i;
+        // 1) by input/select id or name
+        const fields = Array.from(document.querySelectorAll("input, select"));
+        for (const f of fields) {
+            const idn = ((f.id || "") + " " + (f.name || "")).toLowerCase();
+            if (wanted.test(idn) && f.id) return f.id;
+        }
+        // 2) by associated <label for=...> text
+        const labels = Array.from(document.querySelectorAll("label"));
+        for (const lab of labels) {
+            const txt = (lab.textContent || "").replace(/\s+/g, " ").trim();
+            if (wanted.test(txt)) {
+                const forId = lab.getAttribute("for");
+                if (forId && document.getElementById(forId)) return forId;
+                // label wrapping the control
+                const inner = lab.querySelector("input, select");
+                if (inner && inner.id) return inner.id;
+            }
+        }
+        return "";
+    });
+}
+
+// Read the current patient-discharge-status value given its field id.
+// Returns the raw 2-digit code (e.g. "01", "30") trimmed, or "" if unreadable.
+async function readDischargeStatus(page, fieldId) {
+    if (!fieldId) return "";
+    return await page.evaluate((id) => {
+        const el = document.getElementById(id);
+        if (!el) return "";
+        // For a <select>, the UB code is usually the option value (e.g. "01");
+        // if the value is non-numeric, try to parse a leading 2-digit code from
+        // the selected option's text ("01 - Discharged to home...").
+        let v = (el.value || "").trim();
+        if (el.tagName === "SELECT") {
+            const opt = el.options[el.selectedIndex];
+            const txt = opt ? (opt.textContent || "").trim() : "";
+            const codeFromText = (txt.match(/^(\d{1,2})\b/) || [])[1];
+            if (!/^\d{1,2}$/.test(v) && codeFromText) v = codeFromText;
+        }
+        const m = v.match(/^(\d{1,2})/);
+        return m ? m[1].padStart(2, "0") : v;
+    }, fieldId);
+}
+
+// Set the patient-discharge-status value. Handles both <select> (match by option
+// value or by the leading code in the option text) and text inputs.
+async function setDischargeStatus(page, fieldId, code) {
+    if (!fieldId) return false;
+    return await page.evaluate(({ id, code }) => {
+        const el = document.getElementById(id);
+        if (!el) return false;
+        const fire = (node) => {
+            node.dispatchEvent(new Event("input", { bubbles: true }));
+            node.dispatchEvent(new Event("change", { bubbles: true }));
+            node.dispatchEvent(new Event("blur", { bubbles: true }));
+        };
+        if (el.tagName === "SELECT") {
+            const want = String(code).replace(/^0+(?=\d)/, ""); // "01" -> "1" tolerance
+            const opts = Array.from(el.options);
+            // Prefer exact value match, then value without leading zeros, then
+            // an option whose text starts with the code.
+            let target =
+                opts.find(o => o.value.trim() === String(code)) ||
+                opts.find(o => o.value.trim().replace(/^0+(?=\d)/, "") === want) ||
+                opts.find(o => new RegExp("^0*" + want + "\\b").test((o.textContent || "").trim()));
+            if (!target) return false;
+            el.value = target.value;
+            el.selectedIndex = target.index;
+            fire(el);
+            return true;
+        }
+        // text input
+        el.focus();
+        el.value = String(code);
+        fire(el);
+        return true;
+    }, { id: fieldId, code });
+}
+
 // Click a Menu1 tab via its __doPostBack argument ('slv' = Service Line, 'clt' = Claim)
 // and wait for the ASP.NET postback to settle.
 async function clickMenuTab(page, arg, label) {
@@ -1166,6 +1276,8 @@ async function correctClaim(page, claim, submit, confirmFn) {
         hipps: { applied: false, revCode: "", from: "", to: "" },
         admissionDate: "", frequencyBefore: "", frequencyAfter: "",
         factype: "", tobBefore: "", tobAfter: "",
+        dischargeStatusBefore: "", dischargeStatusAfter: "", dischargeStatusChanged: false,
+        lastServiceDate: "", tobRule: "",
         submitted: false, skipped: false, error: null
     };
     try {
@@ -1285,21 +1397,64 @@ async function correctClaim(page, claim, submit, confirmFn) {
         r.frequencyBefore = before.frequency;
         r.tobBefore = `${before.factype}${before.frequency}`;
 
+        // Read Patient Discharge Status (UB-04 FL 17). Drives the 324/323 rule below.
+        const dischargeFieldId = await findDischargeStatusFieldId(page);
+        r.dischargeStatusBefore = await readDischargeStatus(page, dischargeFieldId);
+        r.dischargeStatusAfter = r.dischargeStatusBefore;
+        if (!dischargeFieldId) {
+            log(`     ⚠️  Patient Discharge Status field not found — discharge-based TOB rule cannot apply; using admission-date rule.`);
+        } else {
+            log(`     Patient Discharge Status: ${r.dischargeStatusBefore || "(blank)"} (field #${dischargeFieldId})`);
+        }
+
         // Set Statement Covers Period From/Through.
         await setInputValue(page, "#clt_tc_genTP_gen_FV_statementfromdate", r.fromDate);
         await setInputValue(page, "#clt_tc_genTP_gen_FV_statementtodate", r.toDate);
         log(`     ✓ Statement period set: ${r.fromDate} – ${r.toDate}`);
 
-        // Type of Bill frequency:
-        //   322 (frequency 2) if admission date matches ANY service-line date, else 323 (frequency 3).
+        // The ACTUAL last Service Line row's date (grid order, after any HIPPS edit),
+        // compared against the Statement Covers "To" date for the discharge-01 rule.
+        const lastRowDate = (svc.rows[svc.rows.length - 1] || {}).serviceDate || "";
+        r.lastServiceDate = lastRowDate;
+        const lastRowEqualsTo = !!lastRowDate && dateKey(lastRowDate) === dateKey(r.toDate);
+
+        // Type of Bill (Facility & Frequency) decision:
+        //   • Discharge Status == 01 (duplicate-date 327):
+        //       - last Service Line date == Statement "To" date → TOB 324 (leave discharge 01)
+        //       - last Service Line date != Statement "To" date → TOB 323 AND set Discharge Status = 30
+        //   • Otherwise (discharge != 01 / unreadable): admission-date rule —
+        //       322 (frequency 2) if admission matches a service-line date, else 323.
         const admKey = dateKey(r.admissionDate);
         const admissionInServiceDates = !isNaN(admKey) &&
             dates.some(d => dateKey(d) === admKey);
-        r.frequencyAfter = admissionInServiceDates ? "2" : "3";
+
+        if (r.dischargeStatusBefore === "01") {
+            if (lastRowEqualsTo) {
+                r.tobRule = "discharge01-lastEqualsTo→324";
+                r.frequencyAfter = "4";
+                log(`     Discharge 01 + last service date ${lastRowDate} == To ${r.toDate} → TOB ${before.factype}24`);
+            } else {
+                r.tobRule = "discharge01-lastNotEqualsTo→323+disch30";
+                r.frequencyAfter = "3";
+                // Change Patient Discharge Status 01 → 30.
+                const setOk = await setDischargeStatus(page, dischargeFieldId, "30");
+                if (setOk) {
+                    r.dischargeStatusAfter = "30";
+                    r.dischargeStatusChanged = true;
+                    log(`     Discharge 01 + last service date ${lastRowDate || "(none)"} != To ${r.toDate} → TOB ${before.factype}23 AND Discharge Status 01 → 30`);
+                } else {
+                    log(`     ⚠️  Discharge 01 + last != To: TOB ${before.factype}23, but FAILED to set Discharge Status → 30 (field #${dischargeFieldId || "?"}).`);
+                }
+            }
+        } else {
+            r.tobRule = admissionInServiceDates ? "admissionMatches→322" : "admissionNoMatch→323";
+            r.frequencyAfter = admissionInServiceDates ? "2" : "3";
+            log(`     Admission date: ${r.admissionDate} — ${admissionInServiceDates ? "MATCHES a service date → TOB 322" : "no match → TOB 323"} (discharge status ${r.dischargeStatusBefore || "n/a"})`);
+        }
+
         await setInputValue(page, "#clt_tc_genTP_gen_FV_frequency", r.frequencyAfter);
         r.tobAfter = `${before.factype}${r.frequencyAfter}`;
-        log(`     Admission date: ${r.admissionDate} — ${admissionInServiceDates ? "MATCHES a service date → TOB 322" : "no match → TOB 323"}`);
-        log(`     ✓ Type of Bill: ${r.tobBefore} → ${r.tobAfter}`);
+        log(`     ✓ Type of Bill: ${r.tobBefore} → ${r.tobAfter}${r.dischargeStatusChanged ? ` | Discharge Status: ${r.dischargeStatusBefore} → ${r.dischargeStatusAfter}` : ""}`);
 
         await screenshot(page, `EDITED_${claim.claimNo}`);
 
@@ -1312,7 +1467,7 @@ async function correctClaim(page, claim, submit, confirmFn) {
         // Ask the user to confirm this specific claim before the irreversible Resubmit.
         let proceed = true;
         if (typeof confirmFn === "function") {
-            log(`     ❓ Confirm resubmit: claim #${claim.claimNo} | ${r.tobBefore} → ${r.tobAfter} | statement ${r.fromDate}–${r.toDate}`);
+            log(`     ❓ Confirm resubmit: claim #${claim.claimNo} | ${r.tobBefore} → ${r.tobAfter} | statement ${r.fromDate}–${r.toDate}${r.dischargeStatusChanged ? ` | discharge ${r.dischargeStatusBefore}→${r.dischargeStatusAfter}` : ""}`);
             proceed = await confirmFn(r);
         }
         if (!proceed) {
