@@ -49,7 +49,9 @@ const path = __importStar(require("path"));
 // Constants
 // ---------------------------------------------------------------------------
 const WAYSTAR_LOGIN_URL = "https://login.zirmed.com/UI/Login";
-const CLAIMS_LISTING_URL = "https://claims.zirmed.com/Claims/Listing/Index?appid=1";
+// Landing page that reliably shows the header account selector. Per the manual
+// flow we start here (appid=14) before switching accounts.
+const CLAIMS_LISTING_URL = "https://claims.zirmed.com/Claims/Listing/Index?appid=14";
 // Editor URL template. We swap the editclaimid value for each claim.
 const CLAIM_EDITOR_URL_TEMPLATE =
     "https://claims.zirmed.com/Editor/V5010/Institutional/Main.aspx?&sec=0&draft=N&editclaimid={CLAIM_ID}&origin=ClaimListingNew&workgroupName=undefined&status=Rejected%20by%20Waystar";
@@ -310,9 +312,10 @@ async function handleSecurityQuestion(page) {
 // ---------------------------------------------------------------------------
 async function switchAccount(page, account) {
     log(`🏢 Switching to account: ${account.displayText}`);
-    // The account search is a ui-autocomplete input in the header. After processing
-    // a previous office we may be deep in a claim editor where this header isn't
-    // present, so first make sure we're on a page that HAS the account selector.
+    // The account search is a ui-autocomplete input in the header. Per the manual
+    // flow, ALWAYS land on the claims listing (appid=14) first so the header
+    // account selector is reliably present — whether we're fresh after login or
+    // deep inside a previous claim editor.
     const inputSelectors = [
         ".header-account-search-text",
         ".header-child-account-search-text",
@@ -329,17 +332,15 @@ async function switchAccount(page, account) {
         return null;
     };
 
+    // Step 1: go to the appid=14 listing (shows the header account selector).
+    log(`  🌐 Navigating to ${CLAIMS_LISTING_URL} for the account selector`);
+    try {
+        await page.goto(CLAIMS_LISTING_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
+        await page.waitForTimeout(3000);
+        await page.waitForLoadState("networkidle", { timeout: 20000 }).catch(() => {});
+    } catch (e) { log(`  ⚠️  Navigation to claims listing failed: ${e.message}`); }
+
     let inputSel = await findInput();
-    if (!inputSel) {
-        // Navigate to the claims listing (header with account selector) and retry.
-        log(`  ↩️  Account selector not on current page — navigating to claims listing first`);
-        try {
-            await page.goto(CLAIMS_LISTING_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
-            await page.waitForTimeout(3000);
-            await page.waitForLoadState("networkidle", { timeout: 20000 }).catch(() => {});
-        } catch (e) { log(`  ⚠️  Navigation to claims listing failed: ${e.message}`); }
-        inputSel = await findInput();
-    }
     if (!inputSel) {
         await screenshot(page, "ERROR_account_input_not_found");
         throw new Error("Waystar account search input not found");
@@ -385,22 +386,29 @@ async function switchAccount(page, account) {
         } catch (e) {}
     }
 
-    // Account switch typically reloads the header / navigates.
+    // Selecting an account navigates to the SuccessfulAccountChange confirmation
+    // page (mgmt.zirmed.com/ExternalUserManagement/SuccessfulAccountChange/Index).
     await page.waitForTimeout(4000);
     await page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {});
     await screenshot(page, "02_after_account_switch");
 
-    // Verify the input now shows the selected account.
-    try {
-        const currentVal = await page.$eval(inputSel, (el) => el.value).catch(() => "");
-        if (currentVal && (currentVal.includes(account.accountId) ||
-            currentVal.toLowerCase().includes(account.accountName.toLowerCase()))) {
-            log(`  ✓ Account confirmed: ${currentVal}`);
-        } else {
-            log(`  ⚠️  Account value is "${currentVal}" (expected to contain ${account.accountId}). Continuing.`);
+    const postSwitchUrl = page.url();
+    log(`  ℹ️  After account switch, URL: ${postSwitchUrl}`);
+    if (/SuccessfulAccountChange/i.test(postSwitchUrl)) {
+        log(`  ✓ Account change confirmed (SuccessfulAccountChange page)`);
+    } else {
+        // Fall back to reading the header account input value (if still present).
+        try {
+            const currentVal = await page.$eval(inputSel, (el) => el.value).catch(() => "");
+            if (currentVal && (currentVal.includes(account.accountId) ||
+                currentVal.toLowerCase().includes(account.accountName.toLowerCase()))) {
+                log(`  ✓ Account confirmed: ${currentVal}`);
+            } else {
+                log(`  ⚠️  Could not confirm account switch (URL "${postSwitchUrl}", input "${currentVal}"). Continuing.`);
+            }
+        } catch (e) {
+            log(`  ⚠️  Could not verify account switch. Continuing.`);
         }
-    } catch (e) {
-        log(`  ⚠️  Could not verify account value. Continuing.`);
     }
 }
 
@@ -417,48 +425,69 @@ async function readListingType(page) {
     }).catch(() => "");
 }
 
+// Click a header anchor by its visible text (case-insensitive, exact-ish match).
+// Returns true if an anchor was found and clicked. Waits for any resulting
+// navigation/postback to settle.
+async function clickAnchorByText(page, text, { waitNav = true } = {}) {
+    const handle = await page.evaluateHandle((wanted) => {
+        const norm = (s) => (s || "").replace(/\s+/g, " ").trim().toLowerCase();
+        const target = norm(wanted);
+        const anchors = Array.from(document.querySelectorAll("a"));
+        // Prefer an exact text match, then a "starts with" match.
+        return anchors.find(a => norm(a.textContent) === target)
+            || anchors.find(a => norm(a.textContent).startsWith(target))
+            || null;
+    }, text);
+    const el = handle && handle.asElement && handle.asElement();
+    if (!el) { try { await handle.dispose(); } catch (_) {} return false; }
+    await el.scrollIntoViewIfNeeded().catch(() => {});
+    if (waitNav) {
+        await Promise.all([
+            page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => {}),
+            el.click().catch(() => {})
+        ]);
+    } else {
+        await el.click().catch(() => {});
+    }
+    await page.waitForTimeout(1000);
+    try { await handle.dispose(); } catch (_) {}
+    return true;
+}
+
 async function navigateToClaims(page) {
     log(`🧭 Navigating to Institutional Claims listing...`);
-    // The reliable path: open the "CLAIMS PROCESSING" header menu so its flyout
-    // renders, then find the Claims listing anchor
-    //   <a href=".../Claims/Listing/Index?appid=NN">Claims</a>
-    // and navigate directly to its href. The appid is account/product-specific,
-    // so we READ it from the DOM instead of hardcoding it.
+    // After an account switch we land on the "SuccessfulAccountChange" confirmation
+    // page (mgmt.zirmed.com), which carries the header menu. Per the manual flow:
+    //   CLAIMS PROCESSING → Institutional Claims → Claims (appid=1).
+    // We click each header anchor by its visible text rather than guessing an href.
 
-    // 1. Open the CLAIMS PROCESSING header menu to render the flyout.
-    try {
-        const menu = page.locator("#headerTabs .header-menu > a, #headerTabs a.hovered").first();
-        if (await menu.count()) {
-            await menu.hover().catch(() => {});
-            await menu.click().catch(() => {});
-            await page.waitForTimeout(1200);
-            log(`  ✓ Opened CLAIMS PROCESSING menu`);
-        }
-    } catch (e) { log(`  ⚠️  Could not open CLAIMS PROCESSING menu: ${e.message}`); }
-
-    // 2. Find the Institutional "Claims" listing anchor and read its href.
-    //    Prefer an anchor whose text is exactly "Claims" and whose href points at
-    //    the Claims listing. Fall back to any Claims/Listing/Index anchor.
-    const claimsHref = await page.evaluate(() => {
-        const anchors = Array.from(document.querySelectorAll("a[href*='/Claims/Listing/Index']"));
-        if (anchors.length === 0) return null;
-        // Institutional Claims listing uses appid=14. Prefer it when present.
-        const inst14 = anchors.find(a => /appid=14\b/.test(a.getAttribute("href") || ""));
-        if (inst14) return inst14.getAttribute("href");
-        // Otherwise prefer an anchor whose visible text is exactly "Claims".
-        const exact = anchors.find(a => (a.textContent || "").trim().toLowerCase() === "claims");
-        return (exact || anchors[0]).getAttribute("href");
-    });
-
-    if (claimsHref) {
-        const absolute = claimsHref.startsWith("http")
-            ? claimsHref
-            : new URL(claimsHref, page.url()).toString();
-        log(`  ✓ Found Claims listing link: ${absolute}`);
-        await page.goto(absolute, { waitUntil: "domcontentloaded", timeout: 60000 });
+    // Step: CLAIMS PROCESSING (opens the menu; usually href="#", no navigation).
+    const openedMenu = await clickAnchorByText(page, "Claims Processing", { waitNav: false });
+    if (openedMenu) {
+        log(`  ✓ Clicked "Claims Processing"`);
+        await page.waitForTimeout(800);
     } else {
-        log(`  ⚠️  Claims listing anchor not found in menu — falling back to direct URL (${CLAIMS_LISTING_URL})`);
-        await page.goto(CLAIMS_LISTING_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
+        log(`  ⚠️  "Claims Processing" menu anchor not found — continuing to look for the sub-items`);
+    }
+
+    // Step: Institutional Claims (expands/selects the institutional group; href="#").
+    const clickedInst = await clickAnchorByText(page, "Institutional Claims", { waitNav: false });
+    if (clickedInst) {
+        log(`  ✓ Clicked "Institutional Claims"`);
+        await page.waitForTimeout(800);
+    } else {
+        log(`  ⚠️  "Institutional Claims" anchor not found — continuing`);
+    }
+
+    // Step: Claims (the actual listing link — navigates to appid=1).
+    const clickedClaims = await clickAnchorByText(page, "Claims", { waitNav: true });
+    if (clickedClaims) {
+        log(`  ✓ Clicked "Claims" listing link`);
+    } else {
+        // Fallback: go straight to the known listing URL (appid=1).
+        const fallback = "https://claims.zirmed.com/Claims/Listing/Index?appid=1";
+        log(`  ⚠️  "Claims" listing anchor not found — falling back to ${fallback}`);
+        await page.goto(fallback, { waitUntil: "domcontentloaded", timeout: 60000 });
     }
 
     await page.waitForTimeout(2500);
