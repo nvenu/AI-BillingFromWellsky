@@ -479,13 +479,31 @@ async function navigateToClaims(page) {
         log(`  ⚠️  "Institutional Claims" anchor not found — continuing`);
     }
 
-    // Step: Claims (the actual listing link — navigates to appid=1).
-    const clickedClaims = await clickAnchorByText(page, "Claims", { waitNav: true });
-    if (clickedClaims) {
-        log(`  ✓ Clicked "Claims" listing link`);
-    } else {
-        // Fallback: go straight to the known listing URL (appid=1).
-        const fallback = "https://claims.zirmed.com/Claims/Listing/Index?appid=1";
+    // Step: Claims (the actual listing link). The Institutional Claims listing
+    // link is <a href=".../Claims/Listing/Index?appid=14">Claims</a> — prefer the
+    // anchor whose href carries appid=14 over a plain-text match.
+    let clickedClaims = false;
+    const claimsHandle = await page.evaluateHandle(() => {
+        const anchors = Array.from(document.querySelectorAll("a[href*='/Claims/Listing/Index']"));
+        // Prefer the appid=14 (Institutional) listing link.
+        return anchors.find(a => /appid=14\b/.test(a.getAttribute("href") || ""))
+            || anchors.find(a => (a.textContent || "").replace(/\s+/g, " ").trim().toLowerCase() === "claims")
+            || null;
+    });
+    const claimsEl = claimsHandle && claimsHandle.asElement && claimsHandle.asElement();
+    if (claimsEl) {
+        await claimsEl.scrollIntoViewIfNeeded().catch(() => {});
+        await Promise.all([
+            page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => {}),
+            claimsEl.click().catch(() => {})
+        ]);
+        clickedClaims = true;
+        log(`  ✓ Clicked "Claims" listing link (appid=14 preferred)`);
+    }
+    try { if (claimsHandle) await claimsHandle.dispose(); } catch (_) {}
+    if (!clickedClaims) {
+        // Fallback: go straight to the Institutional listing URL (appid=14).
+        const fallback = "https://claims.zirmed.com/Claims/Listing/Index?appid=14";
         log(`  ⚠️  "Claims" listing anchor not found — falling back to ${fallback}`);
         await page.goto(fallback, { waitUntil: "domcontentloaded", timeout: 60000 });
     }
