@@ -1779,11 +1779,19 @@ async function runWaystarOnPage(page, account, opts) {
     // A state can have MANY selected-records files — one per insurance (e.g. MA/
     // Taunton processes each insurance separately). Process ALL of them against
     // the single rejected CSV for this account.
-    const excelFiles = findAllSelectedRecordsFiles(stateCode);
+    // opts.excelFiles (optional): an explicit list of Excel paths to process
+    // instead of auto-discovering them on disk. Used by the "upload an Excel"
+    // endpoint so a user can test the Waystar step with a specific file.
+    const excelFiles = (opts && Array.isArray(opts.excelFiles) && opts.excelFiles.length > 0)
+        ? opts.excelFiles
+        : findAllSelectedRecordsFiles(stateCode);
     if (excelFiles.length === 0) {
-        const msg = `No selected-records-${stateCode}-*.xlsx found in ${process.cwd()}. Run the Kinnser step first.`;
+        const msg = `No selected-records-${stateCode}-*.xlsx found in ${process.cwd()}. Run the Kinnser step first (or upload an Excel).`;
         log(`⚠️  ${msg}`);
         return { success: false, skipped: true, reason: msg, stateCode, account: account.displayText };
+    }
+    if (opts && Array.isArray(opts.excelFiles) && opts.excelFiles.length > 0) {
+        log(`📎 Using ${excelFiles.length} UPLOADED Excel file(s) instead of on-disk auto-discovery.`);
     }
     log(`📄 ${excelFiles.length} selected-records file(s) for ${stateCode}:`);
     excelFiles.forEach(f => log(`     • ${path.basename(f)}  [${readInsuranceFromExcel(f) || "?"}]`));

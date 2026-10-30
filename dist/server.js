@@ -817,6 +817,24 @@ app.get("/billing", (req, res) => {
               <span id="waystarAllLabel">Process All — Waystar</span>
             </button>
           </div>
+
+          <!-- Upload an Excel and run the Waystar step against it (local testing) -->
+          <div class="waystar-upload-section" style="margin-top: 16px; padding: 16px; border: 1px dashed #cbd5e0; border-radius: 8px; background: #f7fafc;">
+            <h3 style="margin: 0 0 8px; color: #1a202c; font-size: 15px;">🧪 Test Waystar with an uploaded Excel</h3>
+            <p style="margin: 0 0 12px; color: #718096; font-size: 13px;">Upload a <strong>selected-records</strong> .xlsx (must have TOB, Claim #, 327 Reason and Insurance columns). The Waystar step runs against this file instead of auto-discovering one on disk.</p>
+            <div style="display: flex; flex-wrap: wrap; gap: 10px; align-items: center;">
+              <select id="waystarUploadState" style="padding: 8px; border: 1px solid #cbd5e0; border-radius: 6px;">
+                ${waystar_config_1.WAYSTAR_ACCOUNTS.map(a => `<option value="${a.stateCode}">${a.stateCode} — ${a.officeName}</option>`).join("")}
+              </select>
+              <input type="file" id="waystarUploadFile" accept=".xlsx" style="padding: 6px; background: #fff; border: 1px solid #cbd5e0; border-radius: 6px;">
+              <label style="font-size: 13px; color: #4a5568; display: flex; align-items: center; gap: 6px;">
+                <input type="checkbox" id="waystarUploadSubmit"> Resubmit (irreversible)
+              </label>
+              <button class="waystar-all-btn" style="margin: 0;" onclick="runWaystarUpload()">
+                <span>Run with uploaded Excel</span>
+              </button>
+            </div>
+          </div>
           
           <div id="results"></div>
           
@@ -1402,6 +1420,62 @@ app.get("/billing", (req, res) => {
             refreshWaystarReady();
           }
         }
+
+        // Upload a selected-records Excel and run the Waystar step against it.
+        async function runWaystarUpload() {
+          const stateSel = document.getElementById('waystarUploadState');
+          const fileInput = document.getElementById('waystarUploadFile');
+          const submitChk = document.getElementById('waystarUploadSubmit');
+          const stateCode = stateSel ? stateSel.value : '';
+          const file = fileInput && fileInput.files && fileInput.files[0];
+          if (!file) { alert('Choose an .xlsx file to upload first.'); return; }
+          const submit = !!(submitChk && submitChk.checked);
+          if (submit && !confirm('RESUBMIT is irreversible. Run with RESUBMIT enabled for ' + stateCode + '?\\n\\nClick Cancel to run a DRY RUN instead.')) {
+            return;
+          }
+
+          const buttons = document.querySelectorAll('button');
+          buttons.forEach(btn => btn.disabled = true);
+          showConsole();
+          clearConsole();
+          autoScrollEnabled = true;
+          appendToConsole(new Date().toISOString(), '📎 Uploading ' + file.name + ' and running Waystar for ' + stateCode + ' — ' + (submit ? 'RESUBMIT MODE' : 'DRY RUN') + '...');
+          connectToLogStream();
+
+          const results = document.getElementById('results');
+          results.style.display = 'block';
+          results.className = 'loading';
+          results.innerHTML = '<div class="result-header"><div class="spinner"></div> Running Waystar with uploaded Excel for <strong>' + stateCode + '</strong>...</div>' +
+            '<p style="color:#666;margin-top:8px;">Logging in, switching account, downloading rejected CSV, enriching the UPLOADED Excel, and correcting eligible claims. Watch the live console.</p>';
+
+          try {
+            const fd = new FormData();
+            fd.append('stateCode', stateCode);
+            fd.append('submit', submit ? 'true' : 'false');
+            fd.append('file', file, file.name);
+            const response = await fetch('/run-waystar-upload', { method: 'POST', body: fd });
+            const data = await response.json();
+            if (response.ok && data.success) {
+              const r = data.result || {};
+              if (r.skipped) {
+                results.className = 'loading';
+                results.innerHTML = '<div class="result-header">Waystar step skipped</div><div class="result-details"><p style="color:#975a16;">' + escapeHtml(r.reason || 'Skipped') + '</p></div>';
+              } else {
+                results.className = 'success';
+                results.innerHTML = '<div class="result-header">✓ Waystar step completed (uploaded: ' + escapeHtml(data.uploaded || file.name) + ')</div>' +
+                  '<details open><summary>View result</summary><pre>' + escapeHtml(JSON.stringify(r, null, 2)) + '</pre></details>';
+              }
+            } else {
+              results.className = 'error';
+              results.innerHTML = '<div class="result-header">Waystar upload run failed</div><div class="result-details"><p style="color:#c53030;">' + escapeHtml(data.error || 'Unknown error') + '</p></div>';
+            }
+          } catch (error) {
+            results.className = 'error';
+            results.innerHTML = '<div class="result-header">Connection Error</div><div class="result-details"><p style="color:#c53030;">' + escapeHtml(error.message) + '</p></div>';
+          } finally {
+            buttons.forEach(btn => btn.disabled = false);
+          }
+        }
       </script>
     </body>
     </html>
@@ -1576,6 +1650,117 @@ app.post("/run-waystar", async (req, res) => {
     }
     catch (error) {
         console.error("Waystar step failed:", error);
+        res.status(500).json({
+            success: false,
+            error: error instanceof Error ? error.message : "Unknown error"
+        });
+    }
+});
+// ---------------------------------------------------------------------------
+// Upload an Excel and run the Waystar step against THAT file (local testing).
+// Accepts multipart/form-data with:
+//   - file:       the .xlsx (selected-records style: needs TOB, Claim #, 327 Reason,
+//                 Insurance columns)
+//   - stateCode:  office stateCode (e.g. MA) — required to pick the Waystar account
+//   - officeName: optional
+//   - submit:     "true" to actually resubmit (irreversible); otherwise dry run
+//   - correct:    "false" to skip correction (enrich only)
+// A minimal multipart parser is used to avoid adding a dependency (multer).
+// ---------------------------------------------------------------------------
+function parseMultipart(buffer, contentType) {
+    const m = /boundary=(?:"([^"]+)"|([^;]+))/i.exec(contentType || "");
+    const boundary = m ? (m[1] || m[2]).trim() : null;
+    if (!boundary) throw new Error("No multipart boundary in Content-Type");
+    const delimiter = Buffer.from(`--${boundary}`);
+    const parts = [];
+    let start = buffer.indexOf(delimiter);
+    if (start === -1) return { fields: {}, files: [] };
+    start += delimiter.length;
+    const fields = {};
+    const files = [];
+    while (start < buffer.length) {
+        // After a delimiter we expect either "--" (end) or CRLF then headers.
+        if (buffer[start] === 0x2d && buffer[start + 1] === 0x2d) break; // trailing "--"
+        if (buffer[start] === 0x0d && buffer[start + 1] === 0x0a) start += 2; // skip CRLF
+        const next = buffer.indexOf(delimiter, start);
+        if (next === -1) break;
+        // The part is buffer[start .. next]. It ends with a trailing CRLF before the delimiter.
+        let partEnd = next;
+        if (buffer[partEnd - 2] === 0x0d && buffer[partEnd - 1] === 0x0a) partEnd -= 2;
+        const part = buffer.slice(start, partEnd);
+        // Split headers / body at the first double CRLF.
+        const headerEnd = part.indexOf(Buffer.from("\r\n\r\n"));
+        if (headerEnd !== -1) {
+            const headerStr = part.slice(0, headerEnd).toString("utf8");
+            const body = part.slice(headerEnd + 4);
+            const disp = /content-disposition:[^\n]*/i.exec(headerStr);
+            const dispLine = disp ? disp[0] : "";
+            const nameM = /name="([^"]*)"/i.exec(dispLine);
+            const fileM = /filename="([^"]*)"/i.exec(dispLine);
+            const name = nameM ? nameM[1] : null;
+            if (fileM && fileM[1]) {
+                files.push({ field: name, filename: fileM[1], data: body });
+            } else if (name) {
+                fields[name] = body.toString("utf8").trim();
+            }
+        }
+        start = next + delimiter.length;
+    }
+    return { fields, files };
+}
+
+app.post("/run-waystar-upload", express_1.default.raw({ type: "multipart/form-data", limit: "25mb" }), async (req, res) => {
+    let savedPath = null;
+    try {
+        if (waystarLock.running) {
+            const runningFor = Math.round((Date.now() - waystarLock.startedAt) / 1000);
+            const msg = `Waystar step already running for "${waystarLock.stateCode}" (started ${runningFor}s ago).`;
+            broadcastLog(`⚠️  ${msg}`);
+            return res.status(409).json({ success: false, error: msg });
+        }
+        if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+            return res.status(400).json({ success: false, error: "No multipart body received (expected a file upload)." });
+        }
+        const { fields, files } = parseMultipart(req.body, req.headers["content-type"]);
+        const stateCode = (fields.stateCode || "").trim();
+        const officeName = (fields.officeName || "").trim() || undefined;
+        const submit = String(fields.submit) === "true";
+        const correct = String(fields.correct) === "false" ? false : true;
+        if (!stateCode) {
+            return res.status(400).json({ success: false, error: "stateCode is required" });
+        }
+        const upload = files.find(f => /\.xlsx$/i.test(f.filename || "")) || files[0];
+        if (!upload || !upload.data || upload.data.length === 0) {
+            return res.status(400).json({ success: false, error: "No .xlsx file found in the upload." });
+        }
+        // Save into an uploads dir in cwd so the processor (and report) can read it.
+        const uploadsDir = path_1.join(process.cwd(), "downloads", "waystar-uploads");
+        if (!fs_1.existsSync(uploadsDir)) fs_1.mkdirSync(uploadsDir, { recursive: true });
+        const safeName = (upload.filename || "upload.xlsx").replace(/[^a-zA-Z0-9._-]/g, "_");
+        const ts = new Date().toISOString().replace(/[:.]/g, "-");
+        savedPath = path_1.join(uploadsDir, `${stateCode}-${ts}-${safeName}`);
+        fs_1.writeFileSync(savedPath, upload.data);
+
+        waystarLock = { running: true, stateCode, startedAt: Date.now() };
+        console.log(`🔒 Waystar lock acquired (UPLOAD): ${stateCode}${submit ? " (SUBMIT ENABLED)" : " (dry run)"}`);
+        broadcastLog(`📎 Waystar upload run for ${stateCode} using ${path_1.basename(savedPath)} — ${submit ? "RESUBMIT" : "DRY RUN"}`);
+        try {
+            const result = await (0, waystar_processor_1.processWaystarForOffice)({
+                stateCode,
+                officeName,
+                submit,
+                correct,
+                excelFiles: [savedPath]
+            });
+            res.json({ success: true, result, uploaded: path_1.basename(savedPath) });
+        }
+        finally {
+            console.log(`🔓 Waystar lock released (UPLOAD): ${waystarLock.stateCode}`);
+            waystarLock = { running: false, stateCode: null, startedAt: null };
+        }
+    }
+    catch (error) {
+        console.error("Waystar upload run failed:", error);
         res.status(500).json({
             success: false,
             error: error instanceof Error ? error.message : "Unknown error"
