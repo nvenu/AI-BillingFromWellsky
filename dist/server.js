@@ -828,7 +828,7 @@ app.get("/billing", (req, res) => {
               </select>
               <input type="file" id="waystarUploadFile" accept=".xlsx" style="padding: 6px; background: #fff; border: 1px solid #cbd5e0; border-radius: 6px;">
               <label style="font-size: 13px; color: #4a5568; display: flex; align-items: center; gap: 6px;">
-                <input type="checkbox" id="waystarUploadSubmit"> Resubmit (irreversible)
+                <input type="checkbox" id="waystarUploadSubmit"> Save Draft (persist edits for review)
               </label>
               <button class="waystar-all-btn" style="margin: 0;" onclick="runWaystarUpload()">
                 <span>Run with uploaded Excel</span>
@@ -1254,19 +1254,21 @@ app.get("/billing", (req, res) => {
         
         // Debug trigger for the Waystar rejected-claims step (per office/state).
         async function runWaystar(stateCode, officeName) {
-          // Ask whether to actually Resubmit (irreversible) or run a safe dry run.
-          const submit = confirm(
+          // OK = run and SAVE DRAFT (reviewable). Cancel = abort the whole operation.
+          const proceed = confirm(
             'Waystar step for ' + officeName + ' (' + stateCode + ').\\n\\n' +
-            'Click OK to RESUBMIT corrected claims (irreversible).\\n' +
-            'Click Cancel for a DRY RUN (make edits but do NOT resubmit).'
+            'Click OK to run and SAVE DRAFT on corrected claims (for review).\\n' +
+            'Click Cancel to cancel the operation.'
           );
+          if (!proceed) return; // user cancelled the whole run
+          const submit = true;  // OK = perform the operation (Save Draft)
           const buttons = document.querySelectorAll('button');
           buttons.forEach(btn => btn.disabled = true);
           
           showConsole();
           clearConsole();
           autoScrollEnabled = true;
-          appendToConsole(new Date().toISOString(), '🏥 Starting Waystar rejected-claims step for ' + officeName + ' (' + stateCode + ') — ' + (submit ? 'RESUBMIT MODE' : 'DRY RUN') + '...');
+          appendToConsole(new Date().toISOString(), '🏥 Starting Waystar rejected-claims step for ' + officeName + ' (' + stateCode + ') — ' + (submit ? 'SAVE DRAFT MODE' : 'DRY RUN') + '...');
           connectToLogStream();
           
           const results = document.getElementById('results');
@@ -1318,7 +1320,7 @@ app.get("/billing", (req, res) => {
                     <div class="result-row"><span class="result-label">Unmatched:</span><span class="result-value">\${(r.unmatched && r.unmatched.length) || 0}</span></div>
                     \${r.correction ? \`
                     <div class="result-row"><span class="result-label">Claims edited:</span><span class="result-value">\${r.correction.edited}</span></div>
-                    <div class="result-row"><span class="result-label">Claims resubmitted:</span><span class="result-value">\${r.correction.submitted}\${r.submitEnabled ? '' : ' (dry run)'}</span></div>
+                    <div class="result-row"><span class="result-label">Claims saved as draft:</span><span class="result-value">\${r.correction.savedDraft ?? r.correction.submitted ?? 0}\${r.submitEnabled ? '' : ' (dry run)'}</span></div>
                     <div class="result-row"><span class="result-label">Skipped / errored:</span><span class="result-value">\${r.correction.skipped} / \${r.correction.errored}</span></div>
                     \` : ''}
                   </div>
@@ -1373,18 +1375,20 @@ app.get("/billing", (req, res) => {
 
         // Run Waystar across all processed offices, in processing order.
         async function runWaystarAll() {
-          const submit = confirm(
+          const proceed = confirm(
             'Run Waystar for ALL processed offices, in the order they were processed.\\n\\n' +
-            'Click OK to RESUBMIT corrected claims (irreversible).\\n' +
-            'Click Cancel for a DRY RUN (make edits but do NOT resubmit).'
+            'Click OK to run and SAVE DRAFT on corrected claims (for review).\\n' +
+            'Click Cancel to cancel the operation.'
           );
+          if (!proceed) return; // user cancelled the whole run
+          const submit = true;  // OK = perform the operation (Save Draft)
           const buttons = document.querySelectorAll('button');
           buttons.forEach(btn => btn.disabled = true);
 
           showConsole();
           clearConsole();
           autoScrollEnabled = true;
-          appendToConsole(new Date().toISOString(), '🏥 Starting Waystar for ALL offices — ' + (submit ? 'RESUBMIT MODE' : 'DRY RUN') + '...');
+          appendToConsole(new Date().toISOString(), '🏥 Starting Waystar for ALL offices — ' + (submit ? 'SAVE DRAFT MODE' : 'DRY RUN') + '...');
           connectToLogStream();
 
           const results = document.getElementById('results');
@@ -1429,17 +1433,24 @@ app.get("/billing", (req, res) => {
           const stateCode = stateSel ? stateSel.value : '';
           const file = fileInput && fileInput.files && fileInput.files[0];
           if (!file) { alert('Choose an .xlsx file to upload first.'); return; }
-          const submit = !!(submitChk && submitChk.checked);
-          if (submit && !confirm('RESUBMIT is irreversible. Run with RESUBMIT enabled for ' + stateCode + '?\\n\\nClick Cancel to run a DRY RUN instead.')) {
-            return;
-          }
+          // Checkbox checked = SAVE DRAFT mode (persist edits for review).
+          // Unchecked = pure dry run (make edits in the form, do not save).
+          const saveDraft = !!(submitChk && submitChk.checked);
+          const proceed = confirm(
+            (saveDraft
+              ? 'Run Waystar for ' + stateCode + ' and SAVE DRAFT on corrected claims (for review).'
+              : 'Run Waystar for ' + stateCode + ' as a DRY RUN (make edits but do NOT save).') +
+            '\\n\\nClick OK to proceed.\\nClick Cancel to cancel the operation.'
+          );
+          if (!proceed) return; // user cancelled the whole run
+          const submit = saveDraft; // submit=true means perform the Save Draft action
 
           const buttons = document.querySelectorAll('button');
           buttons.forEach(btn => btn.disabled = true);
           showConsole();
           clearConsole();
           autoScrollEnabled = true;
-          appendToConsole(new Date().toISOString(), '📎 Uploading ' + file.name + ' and running Waystar for ' + stateCode + ' — ' + (submit ? 'RESUBMIT MODE' : 'DRY RUN') + '...');
+          appendToConsole(new Date().toISOString(), '📎 Uploading ' + file.name + ' and running Waystar for ' + stateCode + ' — ' + (submit ? 'SAVE DRAFT MODE' : 'DRY RUN') + '...');
           connectToLogStream();
 
           const results = document.getElementById('results');

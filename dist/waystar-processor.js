@@ -930,11 +930,11 @@ function enrichSelectedRecordsExcel(excelPath, byClaimNumber) {
 // Derive a human-readable action/status for one claim result.
 function describeClaimAction(c, submitEnabled) {
     if (c.error) return c.verified ? `Error after open: ${c.error}` : `Error: ${c.error}`;
-    if (c.skipped && c.confirmDeclined) return "Edited; resubmit DECLINED by user";
-    if (c.skipped && c.verified && submitEnabled === false) return "Edited (dry run — NOT resubmitted)";
+    if (c.skipped && c.confirmDeclined) return "Edited; Save Draft DECLINED by user";
+    if (c.skipped && c.verified && submitEnabled === false) return "Edited (dry run — NOT saved)";
     if (c.skipped && !c.verified) return "Skipped (claim id mismatch — not edited)";
-    if (c.submitted) return "Edited and RESUBMITTED";
-    if (c.verified) return "Edited (not resubmitted)";
+    if (c.savedDraft) return "Edited and SAVED AS DRAFT";
+    if (c.verified) return "Edited (not saved)";
     return "Not processed";
 }
 
@@ -954,10 +954,10 @@ function writeWaystarRunReport(officeResults) {
         "Service Dates", "HIPPS Applied", "HIPPS From→To",
         "Statement From", "Statement To", "Admission Date",
         "Discharge Before", "Discharge After",
-        "TOB Before", "TOB After", "Resubmitted", "Action / Status", "Claim URL"
+        "TOB Before", "TOB After", "Saved Draft", "Action / Status", "Claim URL"
     ];
     const rows = [header];
-    const totals = { offices: 0, insuranceFiles: 0, claims: 0, edited: 0, resubmitted: 0, skipped: 0, errored: 0, unmatched327: 0, notCorrected: 0 };
+    const totals = { offices: 0, insuranceFiles: 0, claims: 0, edited: 0, savedDraft: 0, skipped: 0, errored: 0, unmatched327: 0, notCorrected: 0 };
 
     const txt = [];
     txt.push(`WAYSTAR RUN REPORT — ${new Date().toLocaleString()}`);
@@ -1007,7 +1007,7 @@ function writeWaystarRunReport(officeResults) {
             const results = (file.correction && file.correction.results) || [];
             for (const c of results) {
                 totals.claims++;
-                if (c.submitted) totals.resubmitted++;
+                if (c.savedDraft) totals.savedDraft++;
                 if (c.verified && !c.skipped) totals.edited++;
                 if (c.skipped) totals.skipped++;
                 if (c.error && !c.skipped) totals.errored++;
@@ -1022,7 +1022,7 @@ function writeWaystarRunReport(officeResults) {
                     c.dischargeStatusBefore || "",
                     c.dischargeStatusChanged ? `${c.dischargeStatusAfter || ""} (changed)` : (c.dischargeStatusAfter || c.dischargeStatusBefore || ""),
                     c.tobBefore || "", c.tobAfter || "",
-                    c.submitted ? "Yes" : "No",
+                    c.savedDraft ? "Yes" : "No",
                     action, c.url || ""
                 ]);
                 txt.push(`    • Claim #${c.claimNo} (id ${c.claimId}) — ${action}${c.correctionType ? ` [${c.correctionType}]` : ""}`);
@@ -1051,7 +1051,7 @@ function writeWaystarRunReport(officeResults) {
     txt.push("");
     txt.push("=".repeat(70));
     txt.push(`TOTALS: offices=${totals.offices}, insuranceFiles=${totals.insuranceFiles}, claims=${totals.claims}, edited=${totals.edited}, `
-        + `resubmitted=${totals.resubmitted}, skipped=${totals.skipped}, errored=${totals.errored}, `
+        + `savedDraft=${totals.savedDraft}, skipped=${totals.skipped}, errored=${totals.errored}, `
         + `enrichedOnly(TCODE/other 327)=${totals.notCorrected}, unmatched327=${totals.unmatched327}`);
 
     // Write Excel
@@ -1069,7 +1069,7 @@ function writeWaystarRunReport(officeResults) {
     log(`   • ${xlsxPath}`);
     log(`   • ${txtPath}`);
     log(`   TOTALS: ${totals.claims} claims across ${totals.offices} office(s) — `
-        + `${totals.edited} edited, ${totals.resubmitted} resubmitted, ${totals.skipped} skipped, ${totals.errored} errored, ${totals.unmatched327} unmatched`);
+        + `${totals.edited} edited, ${totals.savedDraft} saved as draft, ${totals.skipped} skipped, ${totals.errored} errored, ${totals.unmatched327} unmatched`);
 
     return { xlsxPath, txtPath, totals };
 }
@@ -1187,6 +1187,11 @@ async function readServiceLineRows(page) {
 
             const revCode = (revInput.value || "").trim();
 
+            // Proc Code input for this row (visible field id ends in "_proccode";
+            // the hidden "_proccodequal" is excluded).
+            const procInput = tr.querySelector("input[id$='_proccode'], input[name$='$proccode']");
+            const procCode = procInput ? (procInput.value || "").trim() : "";
+
             // Find the service-date input in this row: a text input whose value looks
             // like a date, or whose id/name hints at a date field. Prefer a value match.
             let dateInput = null;
@@ -1211,7 +1216,7 @@ async function readServiceLineRows(page) {
                     if (cm) serviceDate = cm[0];
                 }
             }
-            rows.push({ revCode, serviceDate, dateInputId });
+            rows.push({ revCode, procCode, serviceDate, dateInputId });
         }
         return { error: rows.length ? null : "no service line rows", rows };
     });
@@ -1383,33 +1388,53 @@ async function rewriteSeniorWholeHealthProcCodes(page) {
             node.dispatchEvent(new Event("change", { bubbles: true }));
             node.dispatchEvent(new Event("blur", { bubbles: true }));
         };
+        const setVal = (el, v) => {
+            // Set a value the way the grid expects: focus, assign, fire events.
+            el.focus();
+            el.value = v;
+            fire(el);
+        };
         const rewrites = [];
-        const procInputs = Array.from(table.querySelectorAll("input[id*='proccode' i]"))
-            // exclude the hidden proccodequal inputs
-            .filter(inp => /proccode$/i.test(inp.id || "") || /_proccode$/i.test(inp.id || "") || /\$proccode$/i.test(inp.name || ""));
+        const scan = []; // per-row diagnostics: { prefix, proc, matched, written, reason }
+        // Find every service-line Proc Code input. The visible proc field id ends
+        // in "_proccode"; the hidden qualifier ends in "_proccodequal" (excluded).
+        const procInputs = Array.from(table.querySelectorAll("input[id$='_proccode'], input[name$='$proccode']"));
         for (const proc of procInputs) {
-            const val = (proc.value || "").trim().toUpperCase();
-            if (val !== "G0299" && val !== "G0300") continue;
+            const rawVal = (proc.value || "").trim();
+            const val = rawVal.toUpperCase();
             // Derive the row prefix (e.g. "slv_FV_GV_ctl02_") from the proc input id.
             const m = (proc.id || "").match(/^(.*_)proccode$/i);
             const prefix = m ? m[1] : null;
-            if (!prefix) continue;
+            if (val !== "G0299" && val !== "G0300") {
+                scan.push({ prefix, proc: rawVal, matched: false, written: false, reason: "proc not G0299/G0300" });
+                continue;
+            }
+            if (!prefix) {
+                scan.push({ prefix: proc.id || "", proc: rawVal, matched: true, written: false, reason: "could not derive row prefix" });
+                continue;
+            }
             const qtyEl = document.getElementById(prefix + "qty");
             const chgEl = document.getElementById(prefix + "chg");
             const revEl = document.getElementById(prefix + "revcode");
-            const units = qtyEl ? parseFloat((qtyEl.value || "").replace(/[^0-9.]/g, "")) : NaN;
-            if (!chgEl || isNaN(units)) continue;
-            // Change proc code → T1502
-            proc.focus(); proc.value = "T1502"; fire(proc);
-            // Change Rev Code → 0640 (only for these G0299/G0300 rows)
+            const unitsRaw = qtyEl ? (qtyEl.value || "") : "";
+            const units = parseFloat(String(unitsRaw).replace(/[^0-9.]/g, ""));
+            if (!chgEl) { scan.push({ prefix, proc: rawVal, matched: true, written: false, reason: "charge input not found" }); continue; }
+            if (isNaN(units)) { scan.push({ prefix, proc: rawVal, matched: true, written: false, reason: `units unreadable (qty="${unitsRaw}")` }); continue; }
+            // Change proc code → T1502, Rev Code → 0640, charge → 139 * units.
+            setVal(proc, "T1502");
             let revBefore = "";
-            if (revEl) { revBefore = (revEl.value || "").trim(); revEl.focus(); revEl.value = "0640"; fire(revEl); }
-            // Set covered charges = 139 * units
+            if (revEl) { revBefore = (revEl.value || "").trim(); setVal(revEl, "0640"); }
             const charge = (RATE * units).toFixed(2);
-            chgEl.focus(); chgEl.value = charge; fire(chgEl);
+            setVal(chgEl, charge);
+            // VERIFY the writes stuck (ASP.NET grids sometimes revert).
+            const procOk = (proc.value || "").trim().toUpperCase() === "T1502";
+            const revOk = !revEl || (revEl.value || "").trim() === "0640";
+            const chgOk = (chgEl.value || "").trim() === charge;
             rewrites.push({ rowPrefix: prefix, fromProc: val, units, charge, revBefore, revAfter: revEl ? "0640" : "(rev field not found)" });
+            scan.push({ prefix, proc: rawVal, matched: true, written: procOk && revOk && chgOk,
+                reason: (procOk && revOk && chgOk) ? "ok" : `write did not stick (proc:${procOk} rev:${revOk} chg:${chgOk})` });
         }
-        return { rewrites, count: rewrites.length };
+        return { rewrites, count: rewrites.length, scan, totalProcInputs: procInputs.length };
     });
 }
 
@@ -1485,7 +1510,7 @@ async function correctClaim(page, claim, submit, confirmFn) {
         correctionType: claim.correctionType || "duplicate", insurance: claim.insurance || "",
         priorAuthBefore: "", priorAuthAfter: "", priorAuthChanged: false,
         procRewrites: [], totalCharges: "", patientEstimateSet: "",
-        submitted: false, skipped: false, error: null,
+        submitted: false, savedDraft: false, skipped: false, error: null,
         steps: []
     };
     const isTcode = r.correctionType === "tcode";
@@ -1559,24 +1584,43 @@ async function correctClaim(page, claim, submit, confirmFn) {
             return r;
         }
         step("done", "Service Line read",
-            `${svc.rows.length} row(s): ` + svc.rows.map((x, i) => `#${i + 1} rev=${x.revCode || "-"} date=${x.serviceDate || "-"}`).join(" | "));
+            `${svc.rows.length} row(s): ` + svc.rows.map((x, i) => `#${i + 1} rev=${x.revCode || "-"} proc=${x.procCode || "-"} date=${x.serviceDate || "-"}`).join(" | "));
 
-        // TCODE flow only: rewrite G0299/G0300 → T1502 and set Covered Charges =
-        // 139 * Units for those rows. Total Charges auto-recalculates from lines.
+        // TCODE flow only: rewrite G0299/G0300 → T1502, Rev → 0640, Covered Charges
+        // = 139 * Units for those rows. Total Charges auto-recalculates from lines.
         if (isTcode) {
             const rw = await rewriteSeniorWholeHealthProcCodes(page);
             r.procRewrites = rw.rewrites || [];
+            // Full per-row scan — shows EXACTLY which rows matched, were written, or skipped.
+            if (Array.isArray(rw.scan)) {
+                log(`     ── Proc scan (${rw.totalProcInputs} proc input(s)) ──`);
+                rw.scan.forEach((s, i) => log(`        row ${i + 1}: proc="${s.proc}" matched=${s.matched} written=${s.written} — ${s.reason}`));
+            }
+            const notStuck = (rw.scan || []).filter(s => s.matched && !s.written);
             if (rw.error) {
                 step("fail", "Proc rewrite", `could not rewrite proc codes — ${rw.error}`);
-            } else if (rw.count > 0) {
+            } else if (rw.count > 0 && notStuck.length === 0) {
                 step("done", "Proc rewrite",
                     rw.rewrites.map(x => `${x.fromProc}→T1502, rev ${x.revBefore || "?"}→${x.revAfter} (139 × ${x.units} = ${x.charge})`).join(", "));
-                await page.waitForTimeout(500);
-                // Re-read rows so the date logic reflects any grid changes.
-                svc = await readServiceLineRows(page);
+            } else if (rw.count > 0 && notStuck.length > 0) {
+                step("fail", "Proc rewrite",
+                    `${rw.count} row(s) changed but ${notStuck.length} matched row(s) did NOT stick: ` +
+                    notStuck.map(s => `proc="${s.proc}" (${s.reason})`).join(", "));
             } else {
-                step("info", "Proc rewrite", "no G0299/G0300 proc codes present — nothing to rewrite");
+                // count === 0: either no matching rows, or matched rows all skipped.
+                const matchedButSkipped = (rw.scan || []).filter(s => s.matched && !s.written);
+                if (matchedButSkipped.length > 0) {
+                    step("fail", "Proc rewrite",
+                        `G0299/G0300 row(s) present but NONE changed: ` +
+                        matchedButSkipped.map(s => `proc="${s.proc}" (${s.reason})`).join(", "));
+                } else {
+                    step("info", "Proc rewrite", "no G0299/G0300 proc codes present — nothing to rewrite");
+                }
             }
+            await screenshot(page, `TCODE_serviceline_${claim.claimNo}`);
+            await page.waitForTimeout(500);
+            // Re-read rows so the date logic reflects any grid changes.
+            svc = await readServiceLineRows(page);
         }
 
         // HIPPS rule: ONLY when row 1's Rev Code contains 0023. If row 1's service
@@ -1744,45 +1788,49 @@ async function correctClaim(page, claim, submit, confirmFn) {
 
         await screenshot(page, `EDITED_${claim.claimNo}`);
 
-        // RESUBMIT (irreversible) — only when submission is enabled AND confirmed.
+        // SAVE DRAFT (NOT Resubmit) — saves the edits so a human can review the
+        // claim before it is submitted. This is non-destructive. We save when the
+        // run is not a pure dry run (submit=true); submit=false leaves edits
+        // un-saved so you can eyeball the form without persisting anything.
         if (!submit) {
             r.skipped = true;
-            step("skip", "Resubmit", "DRY RUN — edits made but NOT resubmitted");
+            step("skip", "Save Draft", "DRY RUN — edits made in the form but NOT saved");
             logClaimSummary(r);
             return r;
         }
-        // Ask the user to confirm this specific claim before the irreversible Resubmit.
+        // Optional per-claim confirmation (same gating as before). Save Draft is
+        // reversible, so this will usually be auto-confirmed.
         let proceed = true;
         if (typeof confirmFn === "function") {
-            log(`     ❓ Confirm resubmit: claim #${claim.claimNo} | ${r.tobBefore} → ${r.tobAfter} | statement ${r.fromDate}–${r.toDate}${r.dischargeStatusChanged ? ` | discharge ${r.dischargeStatusBefore}→${r.dischargeStatusAfter}` : ""}`);
+            log(`     ❓ Confirm Save Draft: claim #${claim.claimNo} | ${r.tobBefore} → ${r.tobAfter} | statement ${r.fromDate}–${r.toDate}${r.dischargeStatusChanged ? ` | discharge ${r.dischargeStatusBefore}→${r.dischargeStatusAfter}` : ""}`);
             proceed = await confirmFn(r);
         }
         if (!proceed) {
             r.skipped = true;
             r.confirmDeclined = true;
-            step("skip", "Resubmit", "declined by user — claim left edited but NOT submitted");
+            step("skip", "Save Draft", "declined by user — claim left edited but NOT saved");
             logClaimSummary(r);
             return r;
         }
-        const resubmitted = await page.evaluate(() => {
-            const btn = document.querySelector("#ResubmitButton");
+        const savedDraft = await page.evaluate(() => {
+            const btn = document.querySelector("#SaveDraftButton");
             if (!btn) return false;
             btn.click();
             return true;
         });
-        if (!resubmitted) {
-            r.error = "Resubmit button (#ResubmitButton) not found";
-            step("fail", "Resubmit", r.error);
-            await screenshot(page, `NORESUBMIT_${claim.claimNo}`);
+        if (!savedDraft) {
+            r.error = "Save Draft button (#SaveDraftButton) not found";
+            step("fail", "Save Draft", r.error);
+            await screenshot(page, `NOSAVEDRAFT_${claim.claimNo}`);
             logClaimSummary(r);
             return r;
         }
-        // Resubmit may raise a JS confirm() — the page-level dialog handler accepts it.
+        // Save Draft triggers an ASP.NET postback; wait for it to settle.
         await page.waitForTimeout(4000);
         await page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {});
-        r.submitted = true;
-        step("done", "Resubmit", `claim #${claim.claimNo} resubmitted`);
-        await screenshot(page, `RESUBMITTED_${claim.claimNo}`);
+        r.savedDraft = true;
+        step("done", "Save Draft", `claim #${claim.claimNo} saved as draft for review`);
+        await screenshot(page, `SAVEDDRAFT_${claim.claimNo}`);
         logClaimSummary(r);
         return r;
     } catch (e) {
@@ -1802,10 +1850,10 @@ function logClaimSummary(r) {
         log(`     │ ${icon} ${s.name}${s.detail ? ` — ${s.detail}` : ""}`);
     }
     const fails = (r.steps || []).filter(s => s.status === "fail");
-    const outcome = r.submitted ? "RESUBMITTED"
-        : r.confirmDeclined ? "edited, resubmit declined"
+    const outcome = r.savedDraft ? "SAVED AS DRAFT"
+        : r.confirmDeclined ? "edited, Save Draft declined"
         : r.skipped && !r.verified ? "SKIPPED (not edited)"
-        : r.skipped ? "edited (dry run / not resubmitted)"
+        : r.skipped ? "edited (dry run / not saved)"
         : r.error ? "ERROR" : "edited";
     log(`     └─ Outcome: ${outcome}${fails.length ? ` | ${fails.length} step(s) NOT DONE: ${fails.map(f => f.name).join(", ")}` : ""}${r.error ? ` | error: ${r.error}` : ""}\n`);
 }
@@ -1834,12 +1882,12 @@ async function correctAllClaims(page, enriched, submit, confirmFn) {
         // Guard the inter-claim pause so a dead context doesn't abort the batch.
         try { await page.waitForTimeout(1200); } catch (_) {}
     }
-    const submitted = results.filter(x => x.submitted).length;
+    const savedDraft = results.filter(x => x.savedDraft).length;
     const edited = results.filter(x => x.verified && !x.skipped).length;
     const skipped = results.filter(x => x.skipped).length;
     const errored = results.filter(x => x.error && !x.skipped).length;
-    log(`\n=== Correction summary: ${edited} edited, ${submitted} resubmitted, ${skipped} skipped, ${errored} errored ===`);
-    return { results, submitted, edited, skipped, errored };
+    log(`\n=== Correction summary: ${edited} edited, ${savedDraft} saved as draft, ${skipped} skipped, ${errored} errored ===`);
+    return { results, savedDraft, submitted: savedDraft, edited, skipped, errored };
 }
 
 // ---------------------------------------------------------------------------
@@ -1992,7 +2040,7 @@ async function runWaystarOnPage(page, account, opts) {
             notCorrected: skippedByReason.map(e => ({ claimNo: e.claimNo, claimId: e.claimId, url: e.url, reason: e.reason, insurance })),
             unmatched: (result.unmatched || []).map(u => ({ ...u, insurance })),
             correction: correction ? {
-                edited: correction.edited, submitted: correction.submitted,
+                edited: correction.edited, savedDraft: correction.savedDraft, submitted: correction.submitted,
                 skipped: correction.skipped, errored: correction.errored, results: correction.results
             } : null
         });
