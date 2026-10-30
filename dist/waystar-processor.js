@@ -998,6 +998,11 @@ function writeWaystarRunReport(officeResults) {
                         + ((c.procRewrites || []).length ? ` | proc rewrites: ${c.procRewrites.map(x => `${x.fromProc}→T1502 @${x.charge}`).join(", ")}` : " | no G0299/G0300 rows")
                         + (c.patientEstimateSet ? ` | patient estimate = ${c.patientEstimateSet} (total charges)` : ""));
                 }
+                // Per-step DONE / NOT DONE trace (helps diagnose a stuck claim).
+                for (const s of (c.steps || [])) {
+                    const tag = s.status === "done" ? "DONE " : s.status === "fail" ? "NOT DONE" : s.status === "skip" ? "SKIP " : "INFO ";
+                    txt.push(`          - [${tag}] ${s.name}${s.detail ? ` — ${s.detail}` : ""}`);
+                }
             }
             if ((file.unmatched || []).length === 0 && results.length === 0 && (file.notCorrected || []).length === 0) {
                 txt.push(`    (no TOB-327 claims to act on)`);
@@ -1437,11 +1442,19 @@ async function correctClaim(page, claim, submit, confirmFn) {
         correctionType: claim.correctionType || "duplicate", insurance: claim.insurance || "",
         priorAuthBefore: "", priorAuthAfter: "", priorAuthChanged: false,
         procRewrites: [], totalCharges: "", patientEstimateSet: "",
-        submitted: false, skipped: false, error: null
+        submitted: false, skipped: false, error: null,
+        steps: []
     };
     const isTcode = r.correctionType === "tcode";
+    // Record a step outcome for the per-claim "what was done / not done" summary.
+    // status: "done" | "skip" | "fail" | "info"
+    const step = (status, name, detail) => {
+        r.steps.push({ status, name, detail: detail || "" });
+        const icon = status === "done" ? "✅" : status === "fail" ? "❌" : status === "skip" ? "⏭️ " : "ℹ️ ";
+        log(`     ${icon} [${name}] ${detail || ""}`);
+    };
     try {
-        log(`\n  ── Claim #${claim.claimNo} (id ${claim.claimId}) ──`);
+        log(`\n  ── Claim #${claim.claimNo} (id ${claim.claimId}) — type: ${r.correctionType}${r.insurance ? ` | insurance: ${r.insurance}` : ""} ──`);
         // Navigating away from a previously-edited claim can raise a beforeunload
         // prompt. Playwright auto-handles it, but guard with a single retry.
         try {
@@ -1461,26 +1474,32 @@ async function correctClaim(page, claim, submit, confirmFn) {
         const onPageId = m ? m[1] : "";
         if (onPageId && onPageId === String(claim.claimId)) {
             r.verified = true;
-            log(`     ✓ Verified claim id ${onPageId} is open`);
+            step("done", "Open/verify claim", `claim id ${onPageId} open`);
         } else {
             r.skipped = true;
             r.error = `Open claim id "${onPageId}" != expected "${claim.claimId}" — skipping (no edits made)`;
-            log(`     ⚠️  ${r.error}`);
+            step("fail", "Open/verify claim", r.error);
             await screenshot(page, `SKIP_verify_${claim.claimNo}`);
+            logClaimSummary(r);
             return r;
         }
 
         // TCODE flow only: STEP 0 — Insurance tab → strip "TCODE" from Prior Auth.
         if (isTcode) {
-            await clickMenuTab(page, "ins", "Insurance");
+            try {
+                await clickMenuTab(page, "ins", "Insurance");
+            } catch (e) {
+                step("fail", "Insurance tab", `could not open Insurance tab: ${e.message}`);
+            }
             const pa = await stripTcodeFromPriorAuth(page);
             if (!pa.found) {
-                log(`     ⚠️  TCODE: Prior Auth field (#ins_FV2_priorauth) not found — continuing without Prior Auth edit.`);
+                step("fail", "Prior Auth", "field #ins_FV2_priorauth NOT found on Insurance tab — Prior Auth NOT edited");
             } else {
                 r.priorAuthBefore = pa.before;
                 r.priorAuthAfter = pa.after;
                 r.priorAuthChanged = !!pa.changed;
-                log(`     ${pa.changed ? "✓" : "ℹ️ "} TCODE Prior Auth: "${pa.before}"${pa.changed ? ` → "${pa.after}"` : " (no TCODE token found — unchanged)"}`);
+                if (pa.changed) step("done", "Prior Auth", `"${pa.before}" → "${pa.after}"`);
+                else step("info", "Prior Auth", `"${pa.before}" — no TCODE/T CODE token found, left unchanged`);
             }
             await screenshot(page, `TCODE_priorauth_${claim.claimNo}`);
         }
@@ -1491,12 +1510,13 @@ async function correctClaim(page, claim, submit, confirmFn) {
         if (svc.error || svc.rows.length === 0) {
             r.error = `Could not read Service Line rows (${svc.error || "0 rows"})`;
             r.skipped = true;
-            log(`     ⚠️  ${r.error} — skipping`);
+            step("fail", "Service Line read", r.error);
             await screenshot(page, `SKIP_nosvc_${claim.claimNo}`);
+            logClaimSummary(r);
             return r;
         }
-        log(`     Service lines (${svc.rows.length}): ` +
-            svc.rows.map((x, i) => `#${i + 1} rev=${x.revCode || "-"} date=${x.serviceDate || "-"}`).join(" | "));
+        step("done", "Service Line read",
+            `${svc.rows.length} row(s): ` + svc.rows.map((x, i) => `#${i + 1} rev=${x.revCode || "-"} date=${x.serviceDate || "-"}`).join(" | "));
 
         // TCODE flow only: rewrite G0299/G0300 → T1502 and set Covered Charges =
         // 139 * Units for those rows. Total Charges auto-recalculates from lines.
@@ -1504,14 +1524,15 @@ async function correctClaim(page, claim, submit, confirmFn) {
             const rw = await rewriteSeniorWholeHealthProcCodes(page);
             r.procRewrites = rw.rewrites || [];
             if (rw.error) {
-                log(`     ⚠️  TCODE: proc-code rewrite skipped — ${rw.error}`);
+                step("fail", "Proc rewrite", `could not rewrite proc codes — ${rw.error}`);
             } else if (rw.count > 0) {
-                rw.rewrites.forEach(x => log(`     ✓ TCODE: ${x.fromProc} → T1502, charge = 139 × ${x.units} = ${x.charge}`));
+                step("done", "Proc rewrite",
+                    rw.rewrites.map(x => `${x.fromProc}→T1502 (139 × ${x.units} = ${x.charge})`).join(", "));
                 await page.waitForTimeout(500);
                 // Re-read rows so the date logic reflects any grid changes.
                 svc = await readServiceLineRows(page);
             } else {
-                log(`     ℹ️  TCODE: no G0299/G0300 proc codes to rewrite.`);
+                step("info", "Proc rewrite", "no G0299/G0300 proc codes present — nothing to rewrite");
             }
         }
 
@@ -1526,32 +1547,35 @@ async function correctClaim(page, claim, submit, confirmFn) {
             const row1EarlierThanRow2 = !isNaN(k1) && !isNaN(k2) && k1 < k2;
             if (second.serviceDate && row1EarlierThanRow2) {
                 if (!first.dateInputId) {
-                    log(`     ⚠️  HIPPS: row 1 date input not locatable — cannot update top line date`);
+                    step("fail", "HIPPS", "row 1 date input not locatable — top line date NOT updated");
                 } else {
                     // ASP.NET ids are [A-Za-z0-9_] only, so an attribute selector is safe.
                     const okFinal = await setInputValue(page, `input[id='${first.dateInputId}']`, second.serviceDate);
                     if (okFinal) {
                         r.hipps.applied = true;
                         r.hipps.to = second.serviceDate;
-                        log(`     ✓ HIPPS (Rev 0023): row 1 service date ${first.serviceDate} → ${second.serviceDate} (row 2)`);
+                        step("done", "HIPPS", `Rev 0023: row 1 date ${first.serviceDate} → ${second.serviceDate} (row 2)`);
                         await page.waitForTimeout(500);
                         // Re-read rows so From/To reflects the corrected top-line date.
                         svc = await readServiceLineRows(page);
                     } else {
-                        log(`     ⚠️  HIPPS: failed to set row 1 date input (#${first.dateInputId})`);
+                        step("fail", "HIPPS", `failed to set row 1 date input (#${first.dateInputId})`);
                     }
                 }
             } else {
-                log(`     ℹ️  HIPPS: row 1 Rev 0023 but row 1 date (${first.serviceDate}) is not earlier than row 2 (${second.serviceDate}) — no change`);
+                step("info", "HIPPS", `row 1 Rev 0023 but row 1 date (${first.serviceDate}) not earlier than row 2 (${second.serviceDate}) — no change`);
             }
+        } else {
+            step("info", "HIPPS", `not applicable (row 1 Rev = ${svc.rows[0].revCode || "-"}, rows = ${svc.rows.length})`);
         }
 
         const dates = svc.rows.map(x => x.serviceDate).filter(Boolean);
         if (dates.length === 0) {
             r.error = "No usable service dates after reading rows";
             r.skipped = true;
-            log(`     ⚠️  ${r.error} — skipping`);
+            step("fail", "Service dates", r.error);
             await screenshot(page, `SKIP_nodates_${claim.claimNo}`);
+            logClaimSummary(r);
             return r;
         }
         r.serviceDates = dates;
@@ -1564,7 +1588,7 @@ async function correctClaim(page, claim, submit, confirmFn) {
         });
         r.fromDate = sorted[0];
         r.toDate = sorted[sorted.length - 1];
-        log(`     → From = ${r.fromDate} (earliest), To = ${r.toDate} (latest)`);
+        step("info", "Statement dates", `From = ${r.fromDate} (earliest), To = ${r.toDate} (latest)${dates.length === 1 ? " [single service row]" : ""}`);
 
         // STEP: Claim — set statement period + read admission date + set TOB.
         await clickMenuTab(page, "clt", "Claim");
@@ -1583,29 +1607,32 @@ async function correctClaim(page, claim, submit, confirmFn) {
         if (before.frequency == null || before.factype == null) {
             r.error = "Claim tab fields not found (factype/frequency)";
             r.skipped = true;
-            log(`     ⚠️  ${r.error} — skipping`);
+            step("fail", "Claim tab read", r.error);
             await screenshot(page, `SKIP_noclaimfields_${claim.claimNo}`);
+            logClaimSummary(r);
             return r;
         }
         r.admissionDate = normDate(before.admission);
         r.factype = before.factype;
         r.frequencyBefore = before.frequency;
         r.tobBefore = `${before.factype}${before.frequency}`;
+        step("done", "Claim tab read", `TOB before = ${r.tobBefore}, admission = ${r.admissionDate || "(blank)"}`);
 
         // Read Patient Discharge Status (UB-04 FL 17). Drives the 324/323 rule below.
         const dischargeFieldId = await findDischargeStatusFieldId(page);
         r.dischargeStatusBefore = await readDischargeStatus(page, dischargeFieldId);
         r.dischargeStatusAfter = r.dischargeStatusBefore;
         if (!dischargeFieldId) {
-            log(`     ⚠️  Patient Discharge Status field not found — discharge-based TOB rule cannot apply; using admission-date rule.`);
+            step("fail", "Discharge read", "Patient Discharge Status field not found — discharge rule cannot apply; using admission-date rule");
         } else {
-            log(`     Patient Discharge Status: ${r.dischargeStatusBefore || "(blank)"} (field #${dischargeFieldId})`);
+            step("done", "Discharge read", `status = ${r.dischargeStatusBefore || "(blank)"} (field #${dischargeFieldId})`);
         }
 
         // Set Statement Covers Period From/Through.
-        await setInputValue(page, "#clt_tc_genTP_gen_FV_statementfromdate", r.fromDate);
-        await setInputValue(page, "#clt_tc_genTP_gen_FV_statementtodate", r.toDate);
-        log(`     ✓ Statement period set: ${r.fromDate} – ${r.toDate}`);
+        const okFrom = await setInputValue(page, "#clt_tc_genTP_gen_FV_statementfromdate", r.fromDate);
+        const okTo = await setInputValue(page, "#clt_tc_genTP_gen_FV_statementtodate", r.toDate);
+        if (okFrom && okTo) step("done", "Statement period set", `${r.fromDate} – ${r.toDate}`);
+        else step("fail", "Statement period set", `from:${okFrom ? "ok" : "FAIL"} to:${okTo ? "ok" : "FAIL"} (field missing?)`);
 
         // The ACTUAL last Service Line row's date (grid order, after any HIPPS edit),
         // compared against the Statement Covers "To" date for the discharge-01 rule.
@@ -1636,20 +1663,21 @@ async function correctClaim(page, claim, submit, confirmFn) {
                 if (setOk) {
                     r.dischargeStatusAfter = "30";
                     r.dischargeStatusChanged = true;
-                    log(`     Discharge 01 + last service date ${lastRowDate || "(none)"} != To ${r.toDate} → TOB ${before.factype}23 AND Discharge Status 01 → 30`);
+                    step("done", "Discharge set", `01 → 30 (last date ${lastRowDate || "(none)"} != To ${r.toDate})`);
                 } else {
-                    log(`     ⚠️  Discharge 01 + last != To: TOB ${before.factype}23, but FAILED to set Discharge Status → 30 (field #${dischargeFieldId || "?"}).`);
+                    step("fail", "Discharge set", `wanted 01 → 30 but FAILED to write (field #${dischargeFieldId || "?"})`);
                 }
             }
         } else {
             r.tobRule = admissionInServiceDates ? "admissionMatches→322" : "admissionNoMatch→323";
             r.frequencyAfter = admissionInServiceDates ? "2" : "3";
-            log(`     Admission date: ${r.admissionDate} — ${admissionInServiceDates ? "MATCHES a service date → TOB 322" : "no match → TOB 323"} (discharge status ${r.dischargeStatusBefore || "n/a"})`);
+            step("info", "TOB rule", `discharge=${r.dischargeStatusBefore || "n/a"} → admission ${admissionInServiceDates ? "matches a service date → 322" : "no match → 323"}`);
         }
 
-        await setInputValue(page, "#clt_tc_genTP_gen_FV_frequency", r.frequencyAfter);
+        const okFreq = await setInputValue(page, "#clt_tc_genTP_gen_FV_frequency", r.frequencyAfter);
         r.tobAfter = `${before.factype}${r.frequencyAfter}`;
-        log(`     ✓ Type of Bill: ${r.tobBefore} → ${r.tobAfter}${r.dischargeStatusChanged ? ` | Discharge Status: ${r.dischargeStatusBefore} → ${r.dischargeStatusAfter}` : ""}`);
+        if (okFreq) step("done", "TOB set", `${r.tobBefore} → ${r.tobAfter}${r.dischargeStatusChanged ? ` | discharge ${r.dischargeStatusBefore}→${r.dischargeStatusAfter}` : ""} (rule ${r.tobRule})`);
+        else step("fail", "TOB set", `could not write frequency (#clt_tc_genTP_gen_FV_frequency) — target ${r.tobAfter}`);
 
         // TCODE flow only: if any proc code was rewritten to T1502, the line
         // charges changed and Total Charges auto-recalculated. Copy the new Total
@@ -1660,13 +1688,15 @@ async function correctClaim(page, claim, submit, confirmFn) {
                 const ok = await setInputValue(page, "#clt_tc_genTP_gen_FV_patestamt", r.totalCharges);
                 if (ok) {
                     r.patientEstimateSet = r.totalCharges;
-                    log(`     ✓ TCODE: Patient Estimated Amount Due set to Total Charges = ${r.totalCharges}`);
+                    step("done", "Patient estimate set", `= Total Charges ${r.totalCharges}`);
                 } else {
-                    log(`     ⚠️  TCODE: could not set Patient Estimated Amount Due (#clt_tc_genTP_gen_FV_patestamt).`);
+                    step("fail", "Patient estimate set", "field #clt_tc_genTP_gen_FV_patestamt not writable");
                 }
             } else {
-                log(`     ⚠️  TCODE: Total Charges (#FV_totalCharges) unreadable — Patient Estimated Amount Due left unchanged.`);
+                step("fail", "Patient estimate set", "Total Charges (#FV_totalCharges) unreadable — estimate left unchanged");
             }
+        } else if (isTcode) {
+            step("info", "Patient estimate set", "skipped (no proc code rewritten, so charges unchanged)");
         }
 
         await screenshot(page, `EDITED_${claim.claimNo}`);
@@ -1674,7 +1704,8 @@ async function correctClaim(page, claim, submit, confirmFn) {
         // RESUBMIT (irreversible) — only when submission is enabled AND confirmed.
         if (!submit) {
             r.skipped = true;
-            log(`     ⏸️  Submission disabled (dry run) — edits made but NOT resubmitted.`);
+            step("skip", "Resubmit", "DRY RUN — edits made but NOT resubmitted");
+            logClaimSummary(r);
             return r;
         }
         // Ask the user to confirm this specific claim before the irreversible Resubmit.
@@ -1686,7 +1717,8 @@ async function correctClaim(page, claim, submit, confirmFn) {
         if (!proceed) {
             r.skipped = true;
             r.confirmDeclined = true;
-            log(`     🚫 Resubmit declined by user — claim left edited but NOT submitted.`);
+            step("skip", "Resubmit", "declined by user — claim left edited but NOT submitted");
+            logClaimSummary(r);
             return r;
         }
         const resubmitted = await page.evaluate(() => {
@@ -1697,23 +1729,42 @@ async function correctClaim(page, claim, submit, confirmFn) {
         });
         if (!resubmitted) {
             r.error = "Resubmit button (#ResubmitButton) not found";
-            log(`     ⚠️  ${r.error}`);
+            step("fail", "Resubmit", r.error);
             await screenshot(page, `NORESUBMIT_${claim.claimNo}`);
+            logClaimSummary(r);
             return r;
         }
         // Resubmit may raise a JS confirm() — the page-level dialog handler accepts it.
         await page.waitForTimeout(4000);
         await page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {});
         r.submitted = true;
-        log(`     ✅ Resubmitted claim #${claim.claimNo}`);
+        step("done", "Resubmit", `claim #${claim.claimNo} resubmitted`);
         await screenshot(page, `RESUBMITTED_${claim.claimNo}`);
+        logClaimSummary(r);
         return r;
     } catch (e) {
         r.error = e.message;
-        log(`     ❌ Error correcting claim #${claim.claimNo}: ${e.message}`);
+        step("fail", "Unhandled error", e.message);
         try { await screenshot(page, `ERROR_${claim.claimNo}`); } catch (_) {}
+        logClaimSummary(r);
         return r;
     }
+}
+
+// Print a compact "what was done / not done" summary for one claim result.
+function logClaimSummary(r) {
+    log(`\n     ┌─ Claim #${r.claimNo} (${r.correctionType}) — step summary ─`);
+    for (const s of (r.steps || [])) {
+        const icon = s.status === "done" ? "✅ DONE " : s.status === "fail" ? "❌ NOT DONE" : s.status === "skip" ? "⏭️  SKIP " : "ℹ️  INFO ";
+        log(`     │ ${icon} ${s.name}${s.detail ? ` — ${s.detail}` : ""}`);
+    }
+    const fails = (r.steps || []).filter(s => s.status === "fail");
+    const outcome = r.submitted ? "RESUBMITTED"
+        : r.confirmDeclined ? "edited, resubmit declined"
+        : r.skipped && !r.verified ? "SKIPPED (not edited)"
+        : r.skipped ? "edited (dry run / not resubmitted)"
+        : r.error ? "ERROR" : "edited";
+    log(`     └─ Outcome: ${outcome}${fails.length ? ` | ${fails.length} step(s) NOT DONE: ${fails.map(f => f.name).join(", ")}` : ""}${r.error ? ` | error: ${r.error}` : ""}\n`);
 }
 
 /**
