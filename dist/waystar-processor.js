@@ -425,104 +425,81 @@ async function readListingType(page) {
     }).catch(() => "");
 }
 
-// Click a header anchor by its visible text (case-insensitive, exact-ish match).
-// Returns true if an anchor was found and clicked. Waits for any resulting
-// navigation/postback to settle.
-async function clickAnchorByText(page, text, { waitNav = true } = {}) {
-    const handle = await page.evaluateHandle((wanted) => {
-        const norm = (s) => (s || "").replace(/\s+/g, " ").trim().toLowerCase();
-        const target = norm(wanted);
-        const anchors = Array.from(document.querySelectorAll("a"));
-        // Prefer an exact text match, then a "starts with" match.
-        return anchors.find(a => norm(a.textContent) === target)
-            || anchors.find(a => norm(a.textContent).startsWith(target))
-            || null;
-    }, text);
-    const el = handle && handle.asElement && handle.asElement();
-    if (!el) { try { await handle.dispose(); } catch (_) {} return false; }
-    await el.scrollIntoViewIfNeeded().catch(() => {});
-    if (waitNav) {
-        await Promise.all([
-            page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => {}),
-            el.click().catch(() => {})
-        ]);
-    } else {
-        await el.click().catch(() => {});
-    }
-    await page.waitForTimeout(1000);
-    try { await handle.dispose(); } catch (_) {}
-    return true;
-}
-
-// Locate the "Claims" listing anchor (href=.../Claims/Listing/Index?appid=14).
-// Returns the href string if present in the DOM, else "". The CLAIMS PROCESSING
-// flyout renders these anchors on hover; call after hovering that menu.
-async function findInstitutionalClaimsHref(page) {
-    return await page.evaluate(() => {
-        const anchors = Array.from(document.querySelectorAll("a[href*='/Claims/Listing/Index']"));
-        // Prefer the appid=14 (Institutional) listing link.
-        const inst14 = anchors.find(a => /appid=14\b/.test(a.getAttribute("href") || ""));
-        if (inst14) return inst14.getAttribute("href");
-        const exact = anchors.find(a => (a.textContent || "").replace(/\s+/g, " ").trim().toLowerCase() === "claims");
-        return exact ? exact.getAttribute("href") : "";
-    });
-}
-
 async function navigateToClaims(page) {
     log(`🧭 Navigating to Institutional Claims listing...`);
     // After an account switch we land on the "SuccessfulAccountChange" page, which
-    // carries the full header menu. The CLAIMS PROCESSING flyout renders its
-    // sub-links (Institutional Claims → Claims) ONLY on hover — a plain click
-    // doesn't expose them, which previously left us stranded on the account page.
-    // So: HOVER the CLAIMS PROCESSING menu, then read the Institutional "Claims"
-    // listing href (appid=14) and navigate to it directly. Hovering Institutional
-    // Claims first (if present) helps reveal nested links.
+    // carries the full header menu. Per the manual flow we CLICK, in order:
+    //   CLAIMS PROCESSING → Institutional Claims → Claims (href appid=14).
+    // The flyout reveals each level as you hover/click into it, so we hover-then-
+    // click each step and wait for the next item to appear before proceeding.
 
+    // Hover an element (menu opener) by exact/startsWith visible text.
     const hoverByText = async (text) => {
         const handle = await page.evaluateHandle((wanted) => {
             const norm = (s) => (s || "").replace(/\s+/g, " ").trim().toLowerCase();
             const t = norm(wanted);
-            const els = Array.from(document.querySelectorAll("a, span, li, div"));
+            const els = Array.from(document.querySelectorAll("a, span, li, div, button"));
             return els.find(e => norm(e.textContent) === t)
                 || els.find(e => norm(e.textContent).startsWith(t)) || null;
         }, text);
         const el = handle && handle.asElement && handle.asElement();
-        if (el) { await el.hover().catch(() => {}); }
+        if (el) { await el.scrollIntoViewIfNeeded().catch(() => {}); await el.hover().catch(() => {}); }
         try { if (handle) await handle.dispose(); } catch (_) {}
         return !!el;
     };
 
-    // 1. Hover CLAIMS PROCESSING to open its flyout.
-    if (await hoverByText("Claims Processing")) {
-        log(`  ✓ Hovered "Claims Processing" menu`);
-    } else {
-        log(`  ⚠️  "Claims Processing" menu not found — will still try to read the Claims link`);
-    }
-    await page.waitForTimeout(1000);
+    // Click an element by EXACT visible text (menu togglers; href="#"). Does not
+    // wait for navigation (these only expand the menu).
+    const clickExactText = async (text) => {
+        const handle = await page.evaluateHandle((wanted) => {
+            const norm = (s) => (s || "").replace(/\s+/g, " ").trim().toLowerCase();
+            const t = norm(wanted);
+            const els = Array.from(document.querySelectorAll("a, span, li, button"));
+            // EXACT match only — avoids "Claims" matching "Claims Processing".
+            return els.find(e => norm(e.textContent) === t) || null;
+        }, text);
+        const el = handle && handle.asElement && handle.asElement();
+        if (el) {
+            await el.scrollIntoViewIfNeeded().catch(() => {});
+            await el.hover().catch(() => {});
+            await el.click().catch(() => {});
+        }
+        try { if (handle) await handle.dispose(); } catch (_) {}
+        return !!el;
+    };
 
-    // 2. Hover Institutional Claims (reveals the nested "Claims" listing link).
-    if (await hoverByText("Institutional Claims")) {
-        log(`  ✓ Hovered "Institutional Claims"`);
-    }
-    await page.waitForTimeout(1000);
+    // 1. CLAIMS PROCESSING — hover + click to open the menu.
+    await hoverByText("Claims Processing");
+    const c1 = await clickExactText("Claims Processing");
+    log(c1 ? `  ✓ Clicked "Claims Processing"` : `  ⚠️  "Claims Processing" not found`);
+    await page.waitForTimeout(1200);
 
-    // 3. Read the appid=14 Claims listing href and navigate to it.
-    let claimsHref = await findInstitutionalClaimsHref(page);
-    if (!claimsHref) {
-        // Try once more after a short settle — the flyout may still be rendering.
-        await page.waitForTimeout(1200);
-        claimsHref = await findInstitutionalClaimsHref(page);
-    }
+    // 2. Institutional Claims — hover + click to expand the institutional group.
+    await hoverByText("Institutional Claims");
+    const c2 = await clickExactText("Institutional Claims");
+    log(c2 ? `  ✓ Clicked "Institutional Claims"` : `  ⚠️  "Institutional Claims" not found`);
+    await page.waitForTimeout(1200);
 
-    if (claimsHref) {
-        const absolute = claimsHref.startsWith("http")
-            ? claimsHref
-            : new URL(claimsHref, page.url()).toString();
-        log(`  ✓ Found Claims listing link: ${absolute}`);
-        await page.goto(absolute, { waitUntil: "domcontentloaded", timeout: 60000 });
-    } else {
+    // 3. Claims — click the actual listing anchor (href contains appid=14). This
+    //    one navigates. Wait for it to appear (menu may still be rendering).
+    const claimsSel = "a[href*='/Claims/Listing/Index?appid=14'], a[href*='/Claims/Listing/Index'][href*='appid=14']";
+    let clickedClaims = false;
+    try {
+        await page.waitForSelector(claimsSel, { timeout: 8000 });
+    } catch (_) { /* fall through to retry/fallback */ }
+    const claimsHandle = await page.$(claimsSel).catch(() => null);
+    if (claimsHandle) {
+        await claimsHandle.scrollIntoViewIfNeeded().catch(() => {});
+        await Promise.all([
+            page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => {}),
+            claimsHandle.click().catch(() => {})
+        ]);
+        clickedClaims = true;
+        log(`  ✓ Clicked "Claims" listing link (appid=14)`);
+    }
+    if (!clickedClaims) {
         const fallback = "https://claims.zirmed.com/Claims/Listing/Index?appid=14";
-        log(`  ⚠️  Claims listing link not found in the menu — navigating directly to ${fallback}`);
+        log(`  ⚠️  "Claims" (appid=14) anchor not found — navigating directly to ${fallback}`);
         await page.goto(fallback, { waitUntil: "domcontentloaded", timeout: 60000 });
     }
 
