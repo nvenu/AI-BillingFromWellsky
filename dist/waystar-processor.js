@@ -98,6 +98,22 @@ async function waystarLogin(page) {
     await page.goto(WAYSTAR_LOGIN_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
     await page.waitForTimeout(2000);
 
+    // ALREADY LOGGED IN? The persistent browser profile keeps the session, so
+    // hitting the login URL may redirect straight to a zirmed app page (no login
+    // form). In that case skip the login entirely — otherwise we'd fail looking
+    // for a username field that isn't there.
+    const curUrl0 = page.url();
+    const hasUserField = await page.evaluate(() => {
+        const sels = ["#username", "input[name='username' i]", "input[name='UserName']", "input[type='email']"];
+        return sels.some(s => { const el = document.querySelector(s); return el && el.offsetParent !== null; });
+    }).catch(() => false);
+    if (!/login\.zirmed\.com|\/UI\/Login/i.test(curUrl0) && !hasUserField) {
+        log(`  ✓ Already logged in (redirected to ${curUrl0}) — skipping login form`);
+        // Still handle a security-question challenge if one is shown.
+        await handleSecurityQuestion(page);
+        return;
+    }
+
     // Username field - try several common selectors
     const userSelectors = [
         "#username", "input[name='username']", "input[name='Username']",
@@ -117,6 +133,13 @@ async function waystarLogin(page) {
         } catch (e) { /* try next */ }
     }
     if (!userFilled) {
+        // Could be an already-authenticated redirect that landed late — re-check.
+        const nowUrl = page.url();
+        if (!/login\.zirmed\.com|\/UI\/Login/i.test(nowUrl)) {
+            log(`  ✓ No login form and not on the login page (URL ${nowUrl}) — treating as already logged in`);
+            await handleSecurityQuestion(page);
+            return;
+        }
         await screenshot(page, "ERROR_username_not_found");
         throw new Error("Waystar username field not found");
     }
@@ -480,31 +503,45 @@ async function navigateToClaims(page) {
     log(c2 ? `  ✓ Clicked "Institutional Claims"` : `  ⚠️  "Institutional Claims" not found`);
     await page.waitForTimeout(1200);
 
-    // 3. Claims — click the actual listing anchor (href contains appid=14). This
-    //    one navigates. Wait for it to appear (menu may still be rendering).
-    const claimsSel = "a[href*='/Claims/Listing/Index?appid=14'], a[href*='/Claims/Listing/Index'][href*='appid=14']";
-    let clickedClaims = false;
-    try {
-        await page.waitForSelector(claimsSel, { timeout: 8000 });
-    } catch (_) { /* fall through to retry/fallback */ }
-    const claimsHandle = await page.$(claimsSel).catch(() => null);
-    if (claimsHandle) {
-        await claimsHandle.scrollIntoViewIfNeeded().catch(() => {});
-        await Promise.all([
-            page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => {}),
-            claimsHandle.click().catch(() => {})
-        ]);
-        clickedClaims = true;
-        log(`  ✓ Clicked "Claims" listing link (appid=14)`);
-    }
-    if (!clickedClaims) {
-        const fallback = "https://claims.zirmed.com/Claims/Listing/Index?appid=14";
-        log(`  ⚠️  "Claims" (appid=14) anchor not found — navigating directly to ${fallback}`);
-        await page.goto(fallback, { waitUntil: "domcontentloaded", timeout: 60000 });
-    }
+    // 3. Claims — the "Claims" link lives inside the Institutional Claims block of
+    //    the CLAIMS PROCESSING flyout. That flyout is class="hidden" by default,
+    //    so a plain .click() on the anchor doesn't fire navigation (it reports
+    //    success but we stay on the account-change page — the exact bug seen).
+    //    Since the anchor carries a full absolute href, we READ that href from the
+    //    Institutional block and navigate to it directly. We prefer the "Claims"
+    //    anchor that sits under the "Institutional Claims" group (appid=14), and
+    //    specifically the Claims/Listing/Index link (not Dashboard/Batches/etc.).
+    const LISTING_URL_14 = "https://claims.zirmed.com/Claims/Listing/Index?appid=14";
+    const claimsHref = await page.evaluate(() => {
+        const norm = (s) => (s || "").replace(/\s+/g, " ").trim().toLowerCase();
+        // All anchors that point at the Institutional (appid=14) Claims listing.
+        const anchors = Array.from(document.querySelectorAll("a[href*='/Claims/Listing/Index']"));
+        // Prefer one whose visible text is exactly "Claims" AND href has appid=14.
+        const inst = anchors.find(a => /appid=14\b/.test(a.getAttribute("href") || "") && norm(a.textContent) === "claims");
+        if (inst) return inst.href || inst.getAttribute("href");
+        // Else any appid=14 Claims/Listing link.
+        const any14 = anchors.find(a => /appid=14\b/.test(a.getAttribute("href") || ""));
+        return any14 ? (any14.href || any14.getAttribute("href")) : "";
+    });
 
+    const targetUrl = claimsHref
+        ? (claimsHref.startsWith("http") ? claimsHref : new URL(claimsHref, page.url()).toString())
+        : LISTING_URL_14;
+    log(`  🌐 Navigating to Institutional Claims listing: ${targetUrl}${claimsHref ? " (from menu anchor)" : " (default appid=14)"}`);
+    await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
     await page.waitForTimeout(2500);
     await page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {});
+
+    // GUARD: if somehow still not on the claims listing host, force the appid=14 URL.
+    let curUrl = page.url();
+    if (!/claims\.zirmed\.com\/Claims\/Listing/i.test(curUrl)) {
+        log(`  ↪️  Still not on the claims listing (URL: ${curUrl}) — navigating directly to ${LISTING_URL_14}`);
+        await page.goto(LISTING_URL_14, { waitUntil: "domcontentloaded", timeout: 60000 });
+        await page.waitForTimeout(2500);
+        await page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {});
+        curUrl = page.url();
+        log(`  ℹ️  After direct navigation, URL: ${curUrl}`);
+    }
 
     const listingType = await readListingType(page);
     log(`  ℹ️  Listing type: "${listingType}" | URL: ${page.url()}`);
@@ -995,7 +1032,7 @@ function writeWaystarRunReport(officeResults) {
                     + (c.tobRule ? ` | rule ${c.tobRule}` : ""));
                 if (c.correctionType === "tcode") {
                     txt.push(`        TCODE: prior auth "${c.priorAuthBefore || ""}"${c.priorAuthChanged ? ` → "${c.priorAuthAfter}"` : " (unchanged)"}`
-                        + ((c.procRewrites || []).length ? ` | proc rewrites: ${c.procRewrites.map(x => `${x.fromProc}→T1502 @${x.charge}`).join(", ")}` : " | no G0299/G0300 rows")
+                        + ((c.procRewrites || []).length ? ` | proc rewrites: ${c.procRewrites.map(x => `${x.fromProc}→T1502 rev${x.revAfter || "0640"} @${x.charge}`).join(", ")}` : " | no G0299/G0300 rows")
                         + (c.patientEstimateSet ? ` | patient estimate = ${c.patientEstimateSet} (total charges)` : ""));
                 }
                 // Per-step DONE / NOT DONE trace (helps diagnose a stuck claim).
@@ -1330,8 +1367,10 @@ async function stripTcodeFromPriorAuth(page) {
 
 // On the Service Line tab, for every row whose Proc Code is G0299 or G0300:
 //   • change the Proc Code to T1502
+//   • change the Rev Code to 0640
 //   • set Covered Charges = 139 * Units (formatted to 2 decimals)
-// Returns { rewrites: [{ row, fromProc, units, charge }], count }.
+// Only these matching rows are touched; other rows are left unchanged.
+// Returns { rewrites: [{ rowPrefix, fromProc, units, charge, revBefore, revAfter }], count }.
 // NOTE: Total Charges (#FV_totalCharges) auto-recalculates from the line charges.
 async function rewriteSeniorWholeHealthProcCodes(page) {
     return await page.evaluate(() => {
@@ -1357,14 +1396,18 @@ async function rewriteSeniorWholeHealthProcCodes(page) {
             if (!prefix) continue;
             const qtyEl = document.getElementById(prefix + "qty");
             const chgEl = document.getElementById(prefix + "chg");
+            const revEl = document.getElementById(prefix + "revcode");
             const units = qtyEl ? parseFloat((qtyEl.value || "").replace(/[^0-9.]/g, "")) : NaN;
             if (!chgEl || isNaN(units)) continue;
             // Change proc code → T1502
             proc.focus(); proc.value = "T1502"; fire(proc);
+            // Change Rev Code → 0640 (only for these G0299/G0300 rows)
+            let revBefore = "";
+            if (revEl) { revBefore = (revEl.value || "").trim(); revEl.focus(); revEl.value = "0640"; fire(revEl); }
             // Set covered charges = 139 * units
             const charge = (RATE * units).toFixed(2);
             chgEl.focus(); chgEl.value = charge; fire(chgEl);
-            rewrites.push({ rowPrefix: prefix, fromProc: val, units, charge });
+            rewrites.push({ rowPrefix: prefix, fromProc: val, units, charge, revBefore, revAfter: revEl ? "0640" : "(rev field not found)" });
         }
         return { rewrites, count: rewrites.length };
     });
@@ -1527,7 +1570,7 @@ async function correctClaim(page, claim, submit, confirmFn) {
                 step("fail", "Proc rewrite", `could not rewrite proc codes — ${rw.error}`);
             } else if (rw.count > 0) {
                 step("done", "Proc rewrite",
-                    rw.rewrites.map(x => `${x.fromProc}→T1502 (139 × ${x.units} = ${x.charge})`).join(", "));
+                    rw.rewrites.map(x => `${x.fromProc}→T1502, rev ${x.revBefore || "?"}→${x.revAfter} (139 × ${x.units} = ${x.charge})`).join(", "));
                 await page.waitForTimeout(500);
                 // Re-read rows so the date logic reflects any grid changes.
                 svc = await readServiceLineRows(page);
