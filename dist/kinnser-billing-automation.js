@@ -6226,14 +6226,30 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
     else {
         console.log("✓ No Community health Group records found");
     }
-    // Check for SENIOR WHOLE HEALTH (BID) records - need SN visit validation
+    // Check for SENIOR WHOLE HEALTH (BID) records - need SN visit validation.
+    // Gate: run the validation whenever there is no insurance filter OR the filter
+    // includes a Senior Whole Health (BID) label. We match the SELECTED labels by
+    // substring (not exact equality) so a slightly different label — e.g. missing
+    // the parentheses or extra spacing — still enables the check. Then the records
+    // themselves are matched by substring on insurance text.
     console.log("\n=== CHECKING FOR SENIOR WHOLE HEALTH (BID) RECORDS ===");
-    const seniorWholeHealthRecords = isInsuranceSelected('senior whole health (bid)')
+    const bidSelected = !normalizedSelectedInsurances ||
+        normalizedSelectedInsurances.some(s => s.includes('senior whole health') && s.includes('bid'));
+    const seniorWholeHealthRecords = bidSelected
         ? records.filter(r => r.insurance.toLowerCase().includes('senior whole health') && r.insurance.toLowerCase().includes('bid'))
         : [];
-    const recordsFailingSNCheck = []; // Track records that have > 2 SN visits per day
+    const recordsFailingSNCheck = []; // Track records that have > 2 SN visits/day (now objects: { index, mrn, billingPeriod, insurance })
     // Note: recordsMultipleSNStayInPA is declared at the top of this function (function scope).
     // It tracks UHC MA / CCA / Tufts records with 2+ SN visits on same day (stay in PA after TOB 327 change).
+    // Map the SN-failure entries to the reported shape. Entries are objects since the
+    // MRN-based fix; the bare-index fallback is kept for safety.
+    const snFailuresReport = () => recordsFailingSNCheck.map(rec => {
+        if (rec && typeof rec === 'object') {
+            return { mrn: rec.mrn || 'Unknown', billingPeriod: rec.billingPeriod || 'Unknown', insurance: rec.insurance || 'Senior whole Health (BID)' };
+        }
+        const record = validRecords[rec] || records[rec];
+        return { mrn: record ? record.mrn : 'Unknown', billingPeriod: record ? record.billingPeriodText : 'Unknown', insurance: record ? record.insurance : 'Senior whole Health (BID)' };
+    });
     if (seniorWholeHealthRecords.length > 0) {
         console.log(`\n⚠️  Found ${seniorWholeHealthRecords.length} Senior whole Health (BID) record(s)`);
         console.log("  These records require Skilled Nursing visit validation (max 2 per day)");
@@ -6317,7 +6333,10 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                 if (snVisitCheck.hasExceeded) {
                     console.log(`  ❌ FAILED: Record has > 2 SN visits on at least one date`);
                     console.log(`  → This record will NOT be approved (will stay in Pending Approval)`);
-                    recordsFailingSNCheck.push(record.index);
+                    // Deselect by MRN + billing period (NOT positional index): the Pending
+                    // Approval table is reloaded/re-sorted many times after extraction, so a
+                    // stale row index would deselect the wrong row (or none). Match on MRN.
+                    recordsFailingSNCheck.push({ index: record.index, mrn: record.mrn, billingPeriod: record.billingPeriodText, insurance: record.insurance });
                 } else {
                     console.log(`  ✓ PASSED: All dates have ≤ 2 SN visits`);
                     console.log(`  → This record will be approved normally`);
@@ -6358,7 +6377,7 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
     if (ccaSkipRecords.length > 0) {
         console.log(`\n=== CCA RECORDS EXCLUDED FROM APPROVAL (>2 SN visits/day) ===`);
         for (const record of ccaSkipRecords) {
-            recordsFailingSNCheck.push(record.index);
+            recordsFailingSNCheck.push({ index: record.index, mrn: record.mrn, billingPeriod: record.billingPeriodText, insurance: record.insurance });
             console.log(`  ⊘ Record [${record.index}] MRN: ${record.mrn}, Period: ${record.billingPeriodText} - will NOT be approved`);
         }
         console.log(`  Total CCA records excluded: ${ccaSkipRecords.length}`);
@@ -6369,7 +6388,7 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
     if (fallonSkipRecords.length > 0) {
         console.log(`\n=== FALLON RECORDS EXCLUDED FROM APPROVAL (>2 SN visits/day) ===`);
         for (const record of fallonSkipRecords) {
-            recordsFailingSNCheck.push(record.index);
+            recordsFailingSNCheck.push({ index: record.index, mrn: record.mrn, billingPeriod: record.billingPeriodText, insurance: record.insurance });
             console.log(`  ⊘ Record [${record.index}] MRN: ${record.mrn}, Period: ${record.billingPeriodText} - will NOT be approved`);
         }
         console.log(`  Total Fallon records excluded: ${fallonSkipRecords.length}`);
@@ -6380,7 +6399,7 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
     if (sharpRecords.length > 0) {
         console.log(`\n=== SHARP RECORDS EXCLUDED FROM APPROVAL (stay in Pending Approval) ===`);
         for (const record of sharpRecords) {
-            recordsFailingSNCheck.push(record.index);
+            recordsFailingSNCheck.push({ index: record.index, mrn: record.mrn, billingPeriod: record.billingPeriodText, insurance: record.insurance });
             console.log(`  ⊘ Record [${record.index}] MRN: ${record.mrn}, Insurance: ${record.insurance}, Period: ${record.billingPeriodText} - will NOT be approved`);
         }
         console.log(`  Total Sharp records excluded: ${sharpRecords.length}`);
@@ -6429,10 +6448,7 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
     console.log(`  Records in Pending Approval table: ${totalRecordsInTable}`);
     if (totalRecordsInTable === 0) {
         console.log("  ✓ No records in Pending Approval - nothing to approve");
-        return { changedRecords, manualReviewRecords, recordDetails, tob327Failed: [], totalRecords: validRecords.length, snFailures: recordsFailingSNCheck.map(idx => {
-            const record = validRecords[idx];
-            return { mrn: record ? record.mrn : 'Unknown', billingPeriod: record ? record.billingPeriodText : 'Unknown', insurance: record ? record.insurance : 'Unknown' };
-        })};
+        return { changedRecords, manualReviewRecords, recordDetails, tob327Failed: [], totalRecords: validRecords.length, snFailures: snFailuresReport() };
     }
     // Try to find and click the "Select All" checkbox
     console.log("Looking for 'Select All' checkbox...");
@@ -6504,10 +6520,7 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
         console.log("⚠️  'Select All' checkbox not found with any selector");
         console.log("⚠️  This is unexpected - Pending Approval should have a Select All checkbox");
         console.log("⚠️  Skipping approval to avoid errors");
-        return { changedRecords, manualReviewRecords, recordDetails, tob327Failed: tob327Failed || [], totalRecords: validRecords.length, snFailures: recordsFailingSNCheck.map(idx => {
-            const record = records[idx];
-            return { mrn: record ? record.mrn : 'Unknown', billingPeriod: record ? record.billingPeriodText : 'Unknown', insurance: record ? record.insurance : 'Senior whole Health (BID)' };
-        })};
+        return { changedRecords, manualReviewRecords, recordDetails, tob327Failed: tob327Failed || [], totalRecords: validRecords.length, snFailures: snFailuresReport() };
     }
     // Verify how many checkboxes are actually checked
     const checkedCount = await page.evaluate(() => {
@@ -6517,24 +6530,52 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
         return checked.length;
     });
     console.log(`✓ Verified: ${checkedCount} records are selected`);
-    // Deselect Senior whole Health (BID) records that failed SN visit check
+    // Deselect records that failed the SN visit check (>2 SN/day: Senior Whole
+    // Health (BID), CCA, Fallon, and Sharp excludes). Match by MRN + billing
+    // period in the LIVE table — NOT a stale positional index. The Pending
+    // Approval table is reloaded/re-sorted/paginated between extraction and here,
+    // so a row index captured at extraction time no longer maps to the same row.
     if (recordsFailingSNCheck.length > 0) {
         console.log(`\n=== DESELECTING ${recordsFailingSNCheck.length} RECORDS THAT FAILED SN VISIT CHECK ===`);
-        console.log(`These records have > 2 Skilled Nursing visits per day and will stay in Pending Approval`);
-        for (const recordIndex of recordsFailingSNCheck) {
+        console.log(`These records have > 2 Skilled Nursing visits per day (or are hold-only) and will stay in Pending Approval`);
+        for (const rec of recordsFailingSNCheck) {
+            // Backward-compat: accept either an object { mrn, billingPeriod } or a bare index.
+            const mrn = (rec && typeof rec === 'object') ? rec.mrn : null;
+            const billingPeriod = (rec && typeof rec === 'object') ? rec.billingPeriod : null;
             try {
-                await page.evaluate((rowIdx) => {
-                    const rows = Array.from(document.querySelectorAll('table tbody tr'));
-                    if (rowIdx < rows.length) {
-                        const checkbox = rows[rowIdx].querySelector('input[type="checkbox"]');
-                        if (checkbox && checkbox.checked) {
-                            checkbox.click();
+                if (mrn) {
+                    const deselected = await page.evaluate(({ mrn, billingPeriod }) => {
+                        const rows = Array.from(document.querySelectorAll('table tbody tr'));
+                        for (const row of rows) {
+                            const text = row.textContent || '';
+                            // Prefer a row that matches BOTH MRN and billing period (handles the
+                            // same patient with multiple periods); fall back to MRN only.
+                            const mrnMatch = text.includes(mrn);
+                            const periodMatch = !billingPeriod || text.includes(billingPeriod);
+                            if (mrnMatch && periodMatch) {
+                                const checkbox = row.querySelector('input[type="checkbox"]');
+                                if (checkbox && checkbox.checked) { checkbox.click(); return true; }
+                                return false; // found the row but it was already unchecked
+                            }
                         }
-                    }
-                }, recordIndex);
-                console.log(`  ✓ Deselected record [${recordIndex}] (failed SN visit check)`);
+                        return false;
+                    }, { mrn, billingPeriod });
+                    console.log(deselected
+                        ? `  ✓ Deselected MRN ${mrn}${billingPeriod ? ` (${billingPeriod})` : ''} (failed SN visit check)`
+                        : `  ⚠️  MRN ${mrn} not found or already unchecked`);
+                } else {
+                    // Legacy fallback: positional index (shouldn't happen after this fix).
+                    await page.evaluate((rowIdx) => {
+                        const rows = Array.from(document.querySelectorAll('table tbody tr'));
+                        if (rowIdx < rows.length) {
+                            const checkbox = rows[rowIdx].querySelector('input[type="checkbox"]');
+                            if (checkbox && checkbox.checked) checkbox.click();
+                        }
+                    }, rec);
+                    console.log(`  ✓ Deselected record [${rec}] (failed SN visit check, index fallback)`);
+                }
             } catch (error) {
-                console.log(`  ⚠️  Could not deselect record [${recordIndex}]`);
+                console.log(`  ⚠️  Could not deselect ${mrn ? `MRN ${mrn}` : `record [${rec}]`}: ${error.message}`);
             }
         }
         await page.waitForTimeout(1000);
@@ -6843,10 +6884,7 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
         console.log("✗ Failed to click Approve button - skipping approval");
     }
     // Return the list of changed records and SN failures
-    return { changedRecords, manualReviewRecords, recordDetails, tob327Failed: tob327Failed || [], totalRecords: validRecords.length, snFailures: recordsFailingSNCheck.map(idx => {
-        const record = records[idx];
-        return { mrn: record ? record.mrn : 'Unknown', billingPeriod: record ? record.billingPeriodText : 'Unknown', insurance: record ? record.insurance : 'Senior whole Health (BID)' };
-    })};
+    return { changedRecords, manualReviewRecords, recordDetails, tob327Failed: tob327Failed || [], totalRecords: validRecords.length, snFailures: snFailuresReport() };
 }
 async function processReadyToSend(page, insuranceHelper, selectedInsurances = null, officeInfo = {}) {
     console.log("\n=== PROCESSING READY TO SEND ===");
