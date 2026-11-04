@@ -1438,6 +1438,171 @@ async function rewriteSeniorWholeHealthProcCodes(page) {
     });
 }
 
+// ---------------------------------------------------------------------------
+// TCODE: merge duplicate-date Service Line rows
+// ---------------------------------------------------------------------------
+// Snapshot of the Service Line grid (#slv_FV_GV), in DOM order. `prefix` is the
+// row's id prefix (e.g. "slv_FV_GV_ctl02_") used to reach its qty/chg/etc inputs.
+async function scanServiceLineGrid(page) {
+    return await page.evaluate(() => {
+        const table = document.getElementById("slv_FV_GV");
+        if (!table) return { error: "service line grid not found", rows: [] };
+        const rows = [];
+        for (const proc of Array.from(table.querySelectorAll("input[id$='_proccode']"))) {
+            const m = (proc.id || "").match(/^(.*_)proccode$/i);
+            if (!m) continue;
+            const prefix = m[1];
+            const val = (suffix) => {
+                const el = document.getElementById(prefix + suffix);
+                return el ? (el.value || "").trim() : "";
+            };
+            rows.push({
+                prefix,
+                proc: (proc.value || "").trim().toUpperCase(),
+                rev: val("revcode"),
+                date: val("servicefromdate"),
+                qty: val("qty"),
+                chg: val("chg")
+            });
+        }
+        return { rows };
+    });
+}
+
+// Delete one Service Line row: open the "• • •" menu in the row's left-most (#)
+// cell, then click its Delete item (<a id="<prefix>DeleteButton">). Delete is an
+// ASP.NET postback, so wait for the page to settle and make sure we are still on
+// the Service Line tab afterwards. Returns true if the Delete was clicked.
+async function deleteServiceLineRow(page, prefix) {
+    const delSel = `#${prefix}DeleteButton`;
+    // Open the popover (it opens on hover; the anchor is hidden until then).
+    try {
+        const ellipsis = page.locator(`tr:has(${delSel}) .moreEllipsis`).first();
+        await ellipsis.scrollIntoViewIfNeeded().catch(() => {});
+        await ellipsis.hover({ timeout: 5000 }).catch(() => {});
+        await page.waitForTimeout(400);
+    } catch (_) { /* fall through to the direct click below */ }
+
+    const nav = page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 20000 }).catch(() => {});
+    let clicked = false;
+    try {
+        await page.locator(delSel).click({ timeout: 4000 });
+        clicked = true;
+    } catch (_) {
+        // Popover not interactable — click the anchor programmatically.
+        clicked = await page.evaluate((s) => {
+            const a = document.querySelector(s);
+            if (!a) return false;
+            a.click();
+            return true;
+        }, delSel).catch(() => false);
+    }
+    if (!clicked) return false;
+    await nav;
+    await page.waitForTimeout(2500);
+    await page.waitForLoadState("networkidle", { timeout: 20000 }).catch(() => {});
+    // The postback may drop us off the Service Line tab; get back to it.
+    const gridThere = await page.evaluate(() => !!document.getElementById("slv_FV_GV")).catch(() => false);
+    if (!gridThere) await clickMenuTab(page, "slv", "Service Line");
+    return true;
+}
+
+// Rows that share the SAME service date + proc code + rev code are one visit
+// entered several times. Merge them: add up their units, write the total into
+// the FIRST such row, set its Covered Charges = new units × unit price (the first
+// row's charge ÷ its units), then delete the other rows (bottom-up).
+// Returns { merges: [...], deleted, failures: [...], error }.
+async function mergeDuplicateDateServiceLines(page) {
+    const out = { merges: [], deleted: 0, failures: [], error: null };
+    const num = (s) => parseFloat(String(s == null ? "" : s).replace(/[^0-9.]/g, ""));
+    const keyOf = (x) => `${x.date}|${x.proc}|${x.rev}`;
+
+    let scan = await scanServiceLineGrid(page);
+    if (scan.error) { out.error = scan.error; return out; }
+
+    // Group by date + proc + rev (rows with no date are ignored).
+    const groups = new Map();
+    for (const x of scan.rows) {
+        if (!x.date) continue;
+        const k = keyOf(x);
+        if (!groups.has(k)) groups.set(k, []);
+        groups.get(k).push(x);
+    }
+    const dupGroups = Array.from(groups.entries()).filter(([, rs]) => rs.length > 1);
+    if (dupGroups.length === 0) return out;
+
+    // 1) Write the combined units + charge into the first row of each group.
+    const planned = [];
+    for (const [key, rs] of dupGroups) {
+        const first = rs[0];
+        const units = rs.map(x => num(x.qty));
+        const firstChg = num(first.chg);
+        if (units.some(isNaN) || isNaN(firstChg) || !(units[0] > 0)) {
+            out.failures.push({ key, reason: `units/charge unreadable (qty=${rs.map(x => x.qty).join("+")}, first chg=${first.chg})` });
+            continue;
+        }
+        const total = units.reduce((a, b) => a + b, 0);
+        const unitPrice = firstChg / units[0];
+        const newCharge = (unitPrice * total).toFixed(2);
+        const okQty = await setInputValue(page, `#${first.prefix}qty`, String(total));
+        const okChg = await setInputValue(page, `#${first.prefix}chg`, newCharge);
+        if (!okQty || !okChg) {
+            out.failures.push({ key, reason: `could not write first row (qty:${okQty ? "ok" : "FAIL"} chg:${okChg ? "ok" : "FAIL"})` });
+            continue;
+        }
+        planned.push({
+            key, date: first.date, proc: first.proc, rev: first.rev,
+            rowsMerged: rs.length, unitsBefore: units, totalUnits: total,
+            unitPrice: unitPrice.toFixed(2), newCharge, verified: false
+        });
+    }
+    if (planned.length === 0) return out;
+
+    // 2) Delete the extra rows, last one first. Re-scan after every delete because
+    //    each delete is a postback and the ctlNN row ids shift.
+    const mergedKeys = new Set(planned.map(p => p.key));
+    for (let guard = 0; guard < 80; guard++) {
+        scan = await scanServiceLineGrid(page);
+        if (scan.error) { out.failures.push({ key: "(grid)", reason: scan.error }); break; }
+        const seen = new Set();
+        let victim = null;
+        for (const x of scan.rows) {
+            const k = keyOf(x);
+            if (!mergedKeys.has(k)) continue;
+            if (seen.has(k)) victim = x; else seen.add(k);   // ends as the LAST duplicate
+        }
+        if (!victim) break;
+        const ok = await deleteServiceLineRow(page, victim.prefix);
+        if (!ok) {
+            out.failures.push({ key: keyOf(victim), reason: `Delete not clickable for row ${victim.prefix}` });
+            break;
+        }
+        out.deleted++;
+    }
+
+    // 3) Verify the merged first rows kept their combined units + charge across the
+    //    delete postbacks; re-apply once if a postback reverted them.
+    scan = await scanServiceLineGrid(page);
+    for (const p of planned) {
+        let row = (scan.rows || []).find(x => keyOf(x) === p.key);
+        if (!row) {
+            out.failures.push({ key: p.key, reason: "merged row not found after deletes (proc/rev may have reverted)" });
+            continue;
+        }
+        const good = () => num(row.qty) === p.totalUnits && num(row.chg).toFixed(2) === p.newCharge;
+        if (!good()) {
+            await setInputValue(page, `#${row.prefix}qty`, String(p.totalUnits));
+            await setInputValue(page, `#${row.prefix}chg`, p.newCharge);
+            scan = await scanServiceLineGrid(page);
+            row = (scan.rows || []).find(x => keyOf(x) === p.key) || row;
+        }
+        p.verified = good();
+        if (!p.verified) out.failures.push({ key: p.key, reason: `merged row shows qty=${row.qty} chg=${row.chg}, expected ${p.totalUnits} / ${p.newCharge}` });
+        out.merges.push(p);
+    }
+    return out;
+}
+
 // Read the recalculated Total Charges (#FV_totalCharges span, e.g. "$373.00").
 // Returns a plain numeric string without "$"/commas (e.g. "373.00"), or "".
 async function readTotalCharges(page) {
@@ -1509,7 +1674,7 @@ async function correctClaim(page, claim, submit, confirmFn) {
         lastServiceDate: "", tobRule: "",
         correctionType: claim.correctionType || "duplicate", insurance: claim.insurance || "",
         priorAuthBefore: "", priorAuthAfter: "", priorAuthChanged: false,
-        procRewrites: [], totalCharges: "", patientEstimateSet: "",
+        procRewrites: [], lineMerges: [], totalCharges: "", patientEstimateSet: "",
         submitted: false, savedDraft: false, skipped: false, error: null,
         steps: []
     };
@@ -1616,6 +1781,28 @@ async function correctClaim(page, claim, submit, confirmFn) {
                 } else {
                     step("info", "Proc rewrite", "no G0299/G0300 proc codes present — nothing to rewrite");
                 }
+            }
+            // Merge rows that repeat the same service date + proc code + rev code:
+            // sum units into the first row, recompute its charge, delete the rest.
+            // Runs AFTER the T1502/0640 rewrite so merged rows price at 139 × units.
+            try {
+                const mg = await mergeDuplicateDateServiceLines(page);
+                r.lineMerges = mg.merges || [];
+                if (mg.error) {
+                    step("fail", "Merge duplicate rows", `could not scan the grid — ${mg.error}`);
+                } else if (mg.failures.length > 0) {
+                    step("fail", "Merge duplicate rows",
+                        `${mg.merges.length} group(s) merged, ${mg.failures.length} problem(s): ` +
+                        mg.failures.map(f => `[${f.key}] ${f.reason}`).join("; "));
+                } else if (mg.merges.length > 0) {
+                    step("done", "Merge duplicate rows",
+                        mg.merges.map(m => `${m.date} ${m.proc}/rev ${m.rev}: ${m.rowsMerged} rows (units ${m.unitsBefore.join("+")}) → 1 row, units ${m.totalUnits} × ${m.unitPrice} = ${m.newCharge}`).join(" | ") +
+                        ` — ${mg.deleted} row(s) deleted`);
+                } else {
+                    step("info", "Merge duplicate rows", "no rows share the same date + proc code + rev code — nothing to merge");
+                }
+            } catch (e) {
+                step("fail", "Merge duplicate rows", `unexpected error: ${e.message}`);
             }
             await screenshot(page, `TCODE_serviceline_${claim.claimNo}`);
             await page.waitForTimeout(500);
@@ -1769,7 +1956,7 @@ async function correctClaim(page, claim, submit, confirmFn) {
         // TCODE flow only: if any proc code was rewritten to T1502, the line
         // charges changed and Total Charges auto-recalculated. Copy the new Total
         // Charges into Patient Estimated Amount Due (#clt_tc_genTP_gen_FV_patestamt).
-        if (isTcode && (r.procRewrites || []).length > 0) {
+        if (isTcode && ((r.procRewrites || []).length > 0 || (r.lineMerges || []).length > 0)) {
             r.totalCharges = await readTotalCharges(page);
             if (r.totalCharges) {
                 const ok = await setInputValue(page, "#clt_tc_genTP_gen_FV_patestamt", r.totalCharges);
@@ -1783,7 +1970,7 @@ async function correctClaim(page, claim, submit, confirmFn) {
                 step("fail", "Patient estimate set", "Total Charges (#FV_totalCharges) unreadable — estimate left unchanged");
             }
         } else if (isTcode) {
-            step("info", "Patient estimate set", "skipped (no proc code rewritten, so charges unchanged)");
+            step("info", "Patient estimate set", "skipped (no proc code rewritten or rows merged, so charges unchanged)");
         }
 
         await screenshot(page, `EDITED_${claim.claimNo}`);
