@@ -1035,6 +1035,9 @@ function writeWaystarRunReport(officeResults) {
                         + ((c.procRewrites || []).length ? ` | proc rewrites: ${c.procRewrites.map(x => `${x.fromProc}→T1502 rev${x.revAfter || "0640"} @${x.charge}`).join(", ")}` : " | no G0299/G0300 rows")
                         + (c.patientEstimateSet ? ` | patient estimate = ${c.patientEstimateSet} (total charges)` : ""));
                 }
+                if (c.correctionType !== "tcode" && c.priorAuthChanged) {
+                    txt.push(`        Prior auth "${c.priorAuthBefore || ""}" → "${c.priorAuthAfter}"`);
+                }
                 // Per-step DONE / NOT DONE trace (helps diagnose a stuck claim).
                 for (const s of (c.steps || [])) {
                     const tag = s.status === "done" ? "DONE " : s.status === "fail" ? "NOT DONE" : s.status === "skip" ? "SKIP " : "INFO ";
@@ -1717,8 +1720,10 @@ async function correctClaim(page, claim, submit, confirmFn) {
             return r;
         }
 
-        // TCODE flow only: STEP 0 — Insurance tab → strip "TCODE" from Prior Auth.
-        if (isTcode) {
+        // STEP 0 (TCODE AND duplicate-MRN claims) — Insurance tab → if Prior Auth
+        // contains "TCODE"/"T CODE", remove that token and keep the rest; if it does
+        // not contain it, leave the field untouched.
+        {
             try {
                 await clickMenuTab(page, "ins", "Insurance");
             } catch (e) {
@@ -1734,7 +1739,7 @@ async function correctClaim(page, claim, submit, confirmFn) {
                 if (pa.changed) step("done", "Prior Auth", `"${pa.before}" → "${pa.after}"`);
                 else step("info", "Prior Auth", `"${pa.before}" — no TCODE/T CODE token found, left unchanged`);
             }
-            await screenshot(page, `TCODE_priorauth_${claim.claimNo}`);
+            await screenshot(page, `PRIORAUTH_${claim.claimNo}`);
         }
 
         // STEP: Service Line — read rows (rev code + service date per row).
