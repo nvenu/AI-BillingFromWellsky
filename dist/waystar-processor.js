@@ -902,7 +902,9 @@ function enrichSelectedRecordsExcel(excelPath, byClaimNumber) {
             } else {
                 skippedReasonCount++;
             }
-            enriched.push({ claimNo, claimId: String(claimId).trim(), url, reason: reason327, insurance, eligible, correctionType });
+            // isSwh: Senior Whole Health / BID (matched from the Excel's Insurance columns).
+            // Used to gate the T1502 / rev 0640 / 139×units package for duplicate-MRN claims.
+            enriched.push({ claimNo, claimId: String(claimId).trim(), url, reason: reason327, insurance, eligible, correctionType, isSwh: swh });
         } else {
             unmatched.push({ row: r + 1, claimNo, reason: "claim # not in CSV" });
         }
@@ -1030,12 +1032,12 @@ function writeWaystarRunReport(officeResults) {
                     + (c.hipps && c.hipps.applied ? ` | HIPPS ${c.hipps.from}→${c.hipps.to}` : "")
                     + (c.dischargeStatusBefore || c.dischargeStatusChanged ? ` | discharge ${c.dischargeStatusBefore || "?"}${c.dischargeStatusChanged ? `→${c.dischargeStatusAfter}` : ""}` : "")
                     + (c.tobRule ? ` | rule ${c.tobRule}` : ""));
-                if (c.correctionType === "tcode") {
-                    txt.push(`        TCODE: prior auth "${c.priorAuthBefore || ""}"${c.priorAuthChanged ? ` → "${c.priorAuthAfter}"` : " (unchanged)"}`
+                if (c.correctionType === "tcode" || c.swhPricing) {
+                    txt.push(`        ${c.correctionType === "tcode" ? "TCODE" : "Duplicate-MRN (Senior Whole Health)"}: prior auth "${c.priorAuthBefore || ""}"${c.priorAuthChanged ? ` → "${c.priorAuthAfter}"` : " (unchanged)"}`
                         + ((c.procRewrites || []).length ? ` | proc rewrites: ${c.procRewrites.map(x => `${x.fromProc}→T1502 rev${x.revAfter || "0640"} @${x.charge}`).join(", ")}` : " | no G0299/G0300 rows")
                         + (c.patientEstimateSet ? ` | patient estimate = ${c.patientEstimateSet} (total charges)` : ""));
                 }
-                if (c.correctionType !== "tcode" && c.priorAuthChanged) {
+                if (c.correctionType !== "tcode" && !c.swhPricing && c.priorAuthChanged) {
                     txt.push(`        Prior auth "${c.priorAuthBefore || ""}" → "${c.priorAuthAfter}"`);
                 }
                 // Per-step DONE / NOT DONE trace (helps diagnose a stuck claim).
@@ -1682,6 +1684,13 @@ async function correctClaim(page, claim, submit, confirmFn) {
         steps: []
     };
     const isTcode = r.correctionType === "tcode";
+    // The G0299/G0300 → T1502 + rev 0640 + 139×units rewrite, the duplicate-row merge
+    // and the Patient Estimate update apply ONLY to Senior Whole Health / BID:
+    //   • TCODE claims (always Senior Whole Health by eligibility), and
+    //   • duplicate-MRN claims whose insurance is Senior Whole Health / BID.
+    // Duplicate-MRN claims for any other insurance do NOT get these changes.
+    const useSwhPricing = isTcode || (r.correctionType === "duplicate" && claim.isSwh === true);
+    r.swhPricing = useSwhPricing;
     // Record a step outcome for the per-claim "what was done / not done" summary.
     // status: "done" | "skip" | "fail" | "info"
     const step = (status, name, detail) => {
@@ -1756,9 +1765,10 @@ async function correctClaim(page, claim, submit, confirmFn) {
         step("done", "Service Line read",
             `${svc.rows.length} row(s): ` + svc.rows.map((x, i) => `#${i + 1} rev=${x.revCode || "-"} proc=${x.procCode || "-"} date=${x.serviceDate || "-"}`).join(" | "));
 
-        // TCODE flow only: rewrite G0299/G0300 → T1502, Rev → 0640, Covered Charges
-        // = 139 * Units for those rows. Total Charges auto-recalculates from lines.
-        if (isTcode) {
+        // Senior Whole Health / BID only (TCODE or duplicate-MRN): rewrite
+        // G0299/G0300 → T1502, Rev → 0640, Covered Charges = 139 * Units for those
+        // rows. Total Charges auto-recalculates from lines.
+        if (useSwhPricing) {
             const rw = await rewriteSeniorWholeHealthProcCodes(page);
             r.procRewrites = rw.rewrites || [];
             // Full per-row scan — shows EXACTLY which rows matched, were written, or skipped.
@@ -1961,7 +1971,7 @@ async function correctClaim(page, claim, submit, confirmFn) {
         // TCODE flow only: if any proc code was rewritten to T1502, the line
         // charges changed and Total Charges auto-recalculated. Copy the new Total
         // Charges into Patient Estimated Amount Due (#clt_tc_genTP_gen_FV_patestamt).
-        if (isTcode && ((r.procRewrites || []).length > 0 || (r.lineMerges || []).length > 0)) {
+        if (useSwhPricing && ((r.procRewrites || []).length > 0 || (r.lineMerges || []).length > 0)) {
             r.totalCharges = await readTotalCharges(page);
             if (r.totalCharges) {
                 const ok = await setInputValue(page, "#clt_tc_genTP_gen_FV_patestamt", r.totalCharges);
@@ -1974,8 +1984,10 @@ async function correctClaim(page, claim, submit, confirmFn) {
             } else {
                 step("fail", "Patient estimate set", "Total Charges (#FV_totalCharges) unreadable — estimate left unchanged");
             }
-        } else if (isTcode) {
+        } else if (useSwhPricing) {
             step("info", "Patient estimate set", "skipped (no proc code rewritten or rows merged, so charges unchanged)");
+        } else if (r.correctionType === "duplicate") {
+            step("info", "Senior Whole Health pricing", `not applied — insurance "${r.insurance || "?"}" is not Senior Whole Health / BID`);
         }
 
         await screenshot(page, `EDITED_${claim.claimNo}`);
