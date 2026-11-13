@@ -836,6 +836,11 @@ app.get("/billing", (req, res) => {
             </div>
           </div>
           
+          <p style="margin: 12px 0 0; font-size: 13px;">
+            <a href="/files/today" target="_blank" style="color:#2b6cb0;">⬇ Download today's processed files</a>
+            <span style="color:#718096;"> (Excel/PDF from today's runs, for sending manually if email fails)</span>
+          </p>
+
           <div id="results"></div>
           
           <!-- Live Console Window -->
@@ -1855,6 +1860,157 @@ app.get("/automation-status", (req, res) => {
         res.json({ running: false });
     }
 });
+// ---------------------------------------------------------------------------
+// Download a day's processed files (use when email is not working).
+//   GET /files/today               → page listing the files with download links
+//   GET /files/today.zip           → all of them in one zip
+//   GET /files/download?f=<key>    → a single file
+// Optional ?date=YYYY-MM-DD (default: today) and ?q=<text> (filename contains).
+// File selection mirrors /send-email: .xlsx/.pdf in the project folder whose name
+// contains the date, plus .pdf files in downloads/ whose name contains the date.
+// Only files found by this scan can be downloaded (no arbitrary paths).
+// ---------------------------------------------------------------------------
+function listFilesForDate(dateStr, q) {
+    const cwd = process.cwd();
+    const out = [];
+    const add = (dir, name, prefix) => {
+        try {
+            const full = path_1.join(dir, name);
+            const st = fs_1.statSync(full);
+            if (!st.isFile()) return;
+            out.push({ key: prefix + name, name, full, size: st.size, mtime: st.mtime });
+        } catch (e) { /* skip unreadable */ }
+    };
+    try {
+        for (const f of fs_1.readdirSync(cwd)) {
+            if (f.includes(dateStr) && (f.endsWith(".xlsx") || f.endsWith(".pdf"))) add(cwd, f, "root/");
+        }
+    } catch (e) { /* ignore */ }
+    const dl = path_1.join(cwd, "downloads");
+    try {
+        if (fs_1.existsSync(dl)) {
+            for (const f of fs_1.readdirSync(dl)) {
+                if (f.includes(dateStr) && f.endsWith(".pdf")) add(dl, f, "downloads/");
+            }
+        }
+    } catch (e) { /* ignore */ }
+    const needle = (q || "").toLowerCase();
+    const filtered = needle ? out.filter(x => x.name.toLowerCase().includes(needle)) : out;
+    return filtered.sort((a, b) => b.mtime - a.mtime);
+}
+
+// Minimal ZIP writer (stored, no compression — xlsx/pdf are already compressed).
+const ZIP_CRC_TABLE = (() => {
+    const t = new Uint32Array(256);
+    for (let n = 0; n < 256; n++) {
+        let c = n;
+        for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+        t[n] = c >>> 0;
+    }
+    return t;
+})();
+function zipCrc32(buf) {
+    let c = 0xFFFFFFFF;
+    for (let i = 0; i < buf.length; i++) c = ZIP_CRC_TABLE[(c ^ buf[i]) & 0xFF] ^ (c >>> 8);
+    return (c ^ 0xFFFFFFFF) >>> 0;
+}
+function buildStoredZip(entries) {
+    const locals = [], centrals = [];
+    let offset = 0;
+    const used = new Set();
+    for (const e of entries) {
+        let name = e.name;
+        if (used.has(name)) name = e.dupPrefix + "_" + name;   // keep names unique
+        used.add(name);
+        const nameBuf = Buffer.from(name, "utf8");
+        const data = e.data;
+        const crc = zipCrc32(data);
+        const d = e.mtime instanceof Date ? e.mtime : new Date();
+        const dosTime = ((d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1)) & 0xFFFF;
+        const dosDate = (((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate()) & 0xFFFF;
+        const lh = Buffer.alloc(30);
+        lh.writeUInt32LE(0x04034b50, 0); lh.writeUInt16LE(20, 4); lh.writeUInt16LE(0x0800, 6);
+        lh.writeUInt16LE(0, 8); lh.writeUInt16LE(dosTime, 10); lh.writeUInt16LE(dosDate, 12);
+        lh.writeUInt32LE(crc, 14); lh.writeUInt32LE(data.length, 18); lh.writeUInt32LE(data.length, 22);
+        lh.writeUInt16LE(nameBuf.length, 26); lh.writeUInt16LE(0, 28);
+        locals.push(lh, nameBuf, data);
+        const ch = Buffer.alloc(46);
+        ch.writeUInt32LE(0x02014b50, 0); ch.writeUInt16LE(20, 4); ch.writeUInt16LE(20, 6); ch.writeUInt16LE(0x0800, 8);
+        ch.writeUInt16LE(0, 10); ch.writeUInt16LE(dosTime, 12); ch.writeUInt16LE(dosDate, 14);
+        ch.writeUInt32LE(crc, 16); ch.writeUInt32LE(data.length, 20); ch.writeUInt32LE(data.length, 24);
+        ch.writeUInt16LE(nameBuf.length, 28); ch.writeUInt16LE(0, 30); ch.writeUInt16LE(0, 32);
+        ch.writeUInt16LE(0, 34); ch.writeUInt16LE(0, 36); ch.writeUInt32LE(0, 38); ch.writeUInt32LE(offset, 42);
+        centrals.push(ch, nameBuf);
+        offset += lh.length + nameBuf.length + data.length;
+    }
+    const centralBuf = Buffer.concat(centrals);
+    const eocd = Buffer.alloc(22);
+    eocd.writeUInt32LE(0x06054b50, 0); eocd.writeUInt16LE(0, 4); eocd.writeUInt16LE(0, 6);
+    eocd.writeUInt16LE(entries.length, 8); eocd.writeUInt16LE(entries.length, 10);
+    eocd.writeUInt32LE(centralBuf.length, 12); eocd.writeUInt32LE(offset, 16); eocd.writeUInt16LE(0, 20);
+    return Buffer.concat([...locals, centralBuf, eocd]);
+}
+function filesDateParam(req) {
+    const d = String((req.query && req.query.date) || "").trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
+    const { format } = require("date-fns");
+    return format(new Date(), "yyyy-MM-dd");
+}
+app.get("/files/today", (req, res) => {
+    const date = filesDateParam(req);
+    const q = String(req.query.q || "").trim();
+    const files = listFilesForDate(date, q);
+    const esc = (s) => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+    const qs = `date=${encodeURIComponent(date)}${q ? `&q=${encodeURIComponent(q)}` : ""}`;
+    const rows = files.map(f =>
+        `<tr><td><a href="/files/download?f=${encodeURIComponent(f.key)}">${esc(f.name)}</a></td>` +
+        `<td style="text-align:right">${(f.size / 1024).toFixed(1)} KB</td><td>${esc(f.mtime.toLocaleString())}</td></tr>`).join("");
+    res.send(`<!doctype html><html><head><meta charset="utf-8"><title>Files for ${esc(date)}</title>
+<style>body{font-family:system-ui,sans-serif;margin:24px;max-width:900px}table{border-collapse:collapse;width:100%}
+td,th{padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:left}a.btn{display:inline-block;padding:8px 14px;background:#2b6cb0;color:#fff;border-radius:6px;text-decoration:none}</style></head><body>
+<h2>Processed files for ${esc(date)}</h2>
+<form method="get" style="margin-bottom:14px">Date <input type="date" name="date" value="${esc(date)}"> Filter <input name="q" value="${esc(q)}" placeholder="e.g. MA or Taunton"> <button>Show</button></form>
+${files.length
+        ? `<p><a class="btn" href="/files/today.zip?${qs}">Download all ${files.length} file(s) as .zip</a></p>
+<table><thead><tr><th>File</th><th style="text-align:right">Size</th><th>Modified</th></tr></thead><tbody>${rows}</tbody></table>`
+        : `<p>No .xlsx/.pdf files found for ${esc(date)}${q ? ` matching "${esc(q)}"` : ""}.</p>`}
+<p><a href="/billing">← Back to billing</a></p></body></html>`);
+});
+app.get("/files/download", (req, res) => {
+    const date = filesDateParam(req);
+    const key = String(req.query.f || "");
+    // Look the key up in a fresh scan of every date-matching file; never build a path from input.
+    const all = listFilesForDate(date, "");
+    let hit = all.find(x => x.key === key);
+    if (!hit) {
+        // key may belong to a different date than "today": scan the dated token inside the key.
+        const m = key.match(/(\d{4}-\d{2}-\d{2})/);
+        if (m) hit = listFilesForDate(m[1], "").find(x => x.key === key);
+    }
+    if (!hit) return res.status(404).send("File not found");
+    res.download(hit.full, hit.name);
+});
+app.get("/files/today.zip", (req, res) => {
+    const date = filesDateParam(req);
+    const q = String(req.query.q || "").trim();
+    const files = listFilesForDate(date, q);
+    if (files.length === 0) return res.status(404).send(`No files found for ${date}`);
+    try {
+        const entries = files.map(f => ({
+            name: f.name, data: fs_1.readFileSync(f.full), mtime: f.mtime,
+            dupPrefix: f.key.startsWith("downloads/") ? "downloads" : "root"
+        }));
+        const zip = buildStoredZip(entries);
+        res.setHeader("Content-Type", "application/zip");
+        res.setHeader("Content-Disposition", `attachment; filename="billing-files-${date}.zip"`);
+        res.setHeader("Content-Length", zip.length);
+        res.end(zip);
+    } catch (e) {
+        console.error("zip build failed:", e);
+        res.status(500).send("Could not build zip: " + (e.message || e));
+    }
+});
+
 // API endpoint to manually send email with today's files
 app.post("/send-email", async (req, res) => {
     try {
