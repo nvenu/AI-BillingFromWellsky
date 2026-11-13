@@ -1861,42 +1861,85 @@ app.get("/automation-status", (req, res) => {
     }
 });
 // ---------------------------------------------------------------------------
-// Download a day's processed files (use when email is not working).
-//   GET /files/today               → page listing the files with download links
-//   GET /files/today.zip           → all of them in one zip
-//   GET /files/download?f=<key>    → a single file
-// Optional ?date=YYYY-MM-DD (default: today) and ?q=<text> (filename contains).
-// File selection mirrors /send-email: .xlsx/.pdf in the project folder whose name
-// contains the date, plus .pdf files in downloads/ whose name contains the date.
-// Only files found by this scan can be downloaded (no arbitrary paths).
+// Download the files each run EMAILED (use when email is not working).
+//   GET  /files/today            → page: attachments grouped by email run, tick + zip
+//   POST /files/zip              → zip of the ticked files
+//   GET  /files/today.zip        → every emailed file for the day
+//   GET  /files/download?f=<key> → a single file
+// Optional ?date=YYYY-MM-DD (default: today, server time) and ?q=<text> filter.
+// Source of truth is downloads/email-manifest.json, written by the Kinnser run just
+// before it sends the email (so failed sends are still listed). Downloads resolve
+// only against that list — never against an arbitrary path from the request.
 // ---------------------------------------------------------------------------
-function listFilesForDate(dateStr, q) {
-    const cwd = process.cwd();
-    const out = [];
-    const add = (dir, name, prefix) => {
-        try {
-            const full = path_1.join(dir, name);
-            const st = fs_1.statSync(full);
-            if (!st.isFile()) return;
-            out.push({ key: prefix + name, name, full, size: st.size, mtime: st.mtime });
-        } catch (e) { /* skip unreadable */ }
-    };
+function emailFileType(name) {
+    const n = name.toLowerCase();
+    if (n.endsWith(".pdf")) return "Paper claim PDF";
+    if (n.startsWith("ready-to-send-summary")) return "Ready To Send summary";
+    if (n.startsWith("ready-to-send-electronic")) return "Electronic claims";
+    if (n.startsWith("summary-")) return "All-offices summary";
+    if (n.startsWith("selected-records")) return "Ready tab (selected records)";
+    return "File";
+}
+function readEmailManifestFile() {
     try {
-        for (const f of fs_1.readdirSync(cwd)) {
-            if (f.includes(dateStr) && (f.endsWith(".xlsx") || f.endsWith(".pdf"))) add(cwd, f, "root/");
-        }
-    } catch (e) { /* ignore */ }
-    const dl = path_1.join(cwd, "downloads");
+        const p = path_1.join(process.cwd(), "downloads", "email-manifest.json");
+        if (!fs_1.existsSync(p)) return [];
+        const d = JSON.parse(fs_1.readFileSync(p, "utf8"));
+        return Array.isArray(d) ? d : [];
+    } catch (e) { return []; }
+}
+function fileInfo(full) {
+    const base = path_1.basename(full);
     try {
-        if (fs_1.existsSync(dl)) {
-            for (const f of fs_1.readdirSync(dl)) {
-                if (f.includes(dateStr) && f.endsWith(".pdf")) add(dl, f, "downloads/");
-            }
-        }
-    } catch (e) { /* ignore */ }
+        const st = fs_1.statSync(full);
+        if (!st.isFile()) return null;
+        return { key: full, name: base, full, size: st.size, mtime: st.mtime, missing: false, type: emailFileType(base) };
+    } catch (e) {
+        return { key: full, name: base, full, size: 0, mtime: null, missing: true, type: emailFileType(base) };
+    }
+}
+// The files each Kinnser run EMAILED on the given (server-local) day, taken from
+// downloads/email-manifest.json — exactly the attachments of that run's email:
+// per-office selected-records Excel, the all-offices SUMMARY Excel (multi-office
+// runs), the Ready-To-Send summary + electronic-claims Excel, and paper-claim PDFs.
+// Runs from before the manifest existed fall back to the old name-contains-date scan.
+function emailRunsForDate(dateStr, q) {
+    const { format } = require("date-fns");
     const needle = (q || "").toLowerCase();
-    const filtered = needle ? out.filter(x => x.name.toLowerCase().includes(needle)) : out;
-    return filtered.sort((a, b) => b.mtime - a.mtime);
+    const keep = (f) => f && (!needle || f.name.toLowerCase().includes(needle));
+    const runs = readEmailManifestFile()
+        .filter(e => { try { return format(new Date(e.at), "yyyy-MM-dd") === dateStr; } catch (x) { return false; } })
+        .map(e => ({
+            id: e.id, legacy: false, at: new Date(e.at), offices: e.offices || [],
+            emailSent: !!e.emailSent, error: e.error || null,
+            files: (e.files || []).map(fileInfo).filter(keep)
+        }))
+        .filter(r => r.files.length > 0);
+    if (runs.length > 0) return runs;
+    // Fallback (no manifest entries for this date): name contains the date.
+    const cwd = process.cwd();
+    const files = [];
+    const scan = (dir, exts) => {
+        try {
+            for (const f of fs_1.readdirSync(dir)) {
+                if (f.includes(dateStr) && exts.some(x => f.endsWith(x))) {
+                    const fi = fileInfo(path_1.join(dir, f));
+                    if (keep(fi)) files.push(fi);
+                }
+            }
+        } catch (e) { /* ignore */ }
+    };
+    scan(cwd, [".xlsx", ".pdf"]);
+    if (fs_1.existsSync(path_1.join(cwd, "downloads"))) scan(path_1.join(cwd, "downloads"), [".pdf"]);
+    if (files.length === 0) return [];
+    return [{ id: "legacy", legacy: true, at: null, offices: [], emailSent: null, error: null, files }];
+}
+function listFilesForDate(dateStr, q) {
+    const seen = new Set(), out = [];
+    for (const r of emailRunsForDate(dateStr, q)) {
+        for (const f of r.files) if (!seen.has(f.key)) { seen.add(f.key); out.push(f); }
+    }
+    return out.sort((a, b) => (b.mtime || 0) - (a.mtime || 0));
 }
 
 // Minimal ZIP writer (stored, no compression — xlsx/pdf are already compressed).
@@ -1951,64 +1994,98 @@ function buildStoredZip(entries) {
     return Buffer.concat([...locals, centralBuf, eocd]);
 }
 function filesDateParam(req) {
-    const d = String((req.query && req.query.date) || "").trim();
+    const src = Object.assign({}, req.query || {}, req.body || {});
+    const d = String(src.date || "").trim();
     if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
     const { format } = require("date-fns");
     return format(new Date(), "yyyy-MM-dd");
 }
+function sendZip(res, files, date) {
+    const entries = files.map(f => ({ name: f.name, data: fs_1.readFileSync(f.full), mtime: f.mtime || new Date(), dupPrefix: "dup" }));
+    const zip = buildStoredZip(entries);
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", `attachment; filename="billing-files-${date}.zip"`);
+    res.setHeader("Content-Length", zip.length);
+    res.end(zip);
+}
 app.get("/files/today", (req, res) => {
     const date = filesDateParam(req);
     const q = String(req.query.q || "").trim();
-    const files = listFilesForDate(date, q);
+    const runs = emailRunsForDate(date, q);
     const esc = (s) => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-    const qs = `date=${encodeURIComponent(date)}${q ? `&q=${encodeURIComponent(q)}` : ""}`;
-    const rows = files.map(f =>
-        `<tr><td><a href="/files/download?f=${encodeURIComponent(f.key)}">${esc(f.name)}</a></td>` +
-        `<td style="text-align:right">${(f.size / 1024).toFixed(1)} KB</td><td>${esc(f.mtime.toLocaleString())}</td></tr>`).join("");
-    res.send(`<!doctype html><html><head><meta charset="utf-8"><title>Files for ${esc(date)}</title>
-<style>body{font-family:system-ui,sans-serif;margin:24px;max-width:900px}table{border-collapse:collapse;width:100%}
-td,th{padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:left}a.btn{display:inline-block;padding:8px 14px;background:#2b6cb0;color:#fff;border-radius:6px;text-decoration:none}</style></head><body>
-<h2>Processed files for ${esc(date)}</h2>
-<form method="get" style="margin-bottom:14px">Date <input type="date" name="date" value="${esc(date)}"> Filter <input name="q" value="${esc(q)}" placeholder="e.g. MA or Taunton"> <button>Show</button></form>
-${files.length
-        ? `<p><a class="btn" href="/files/today.zip?${qs}">Download all ${files.length} file(s) as .zip</a></p>
-<table><thead><tr><th>File</th><th style="text-align:right">Size</th><th>Modified</th></tr></thead><tbody>${rows}</tbody></table>`
-        : `<p>No .xlsx/.pdf files found for ${esc(date)}${q ? ` matching "${esc(q)}"` : ""}.</p>`}
-<p><a href="/billing">← Back to billing</a></p></body></html>`);
+    const fmtSize = (n) => n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : (n / 1024).toFixed(1) + " KB";
+    const total = listFilesForDate(date, q);
+    const sections = runs.map(r => {
+        const status = r.legacy
+            ? `<span style="color:#975a16">found by file name (no email record for this date)</span>`
+            : r.emailSent
+                ? `<span style="color:#276749">email sent ✓</span>`
+                : `<span style="color:#c53030">email NOT sent${r.error ? " — " + esc(r.error) : ""}</span>`;
+        const title = r.legacy ? "Files for this date" : `${esc(r.at.toLocaleTimeString())} — ${esc((r.offices || []).join(", ") || "run")}`;
+        const rows = r.files.map(f => f.missing
+            ? `<tr style="color:#a0aec0"><td style="width:28px"></td><td>${esc(f.name)} <em>(missing on disk)</em></td><td>${esc(f.type)}</td><td></td></tr>`
+            : `<tr><td style="width:28px"><input type="checkbox" name="k" value="${esc(f.key)}" class="fchk" checked></td>` +
+              `<td><a href="/files/download?date=${encodeURIComponent(date)}&f=${encodeURIComponent(f.key)}">${esc(f.name)}</a></td>` +
+              `<td>${esc(f.type)}</td><td style="text-align:right;white-space:nowrap">${fmtSize(f.size)}</td></tr>`).join("");
+        return `<h3 style="margin:22px 0 4px">${title}</h3><div style="font-size:13px;margin-bottom:4px">${status}</div><table><tbody>${rows}</tbody></table>`;
+    }).join("");
+    res.send(`<!doctype html><html><head><meta charset="utf-8"><title>Emailed files ${esc(date)}</title>
+<style>body{font-family:system-ui,sans-serif;margin:24px;max-width:980px}table{border-collapse:collapse;width:100%}
+td{padding:5px 10px;border-bottom:1px solid #edf2f7;font-size:14px}
+.btn{display:inline-block;padding:9px 16px;background:#2b6cb0;color:#fff;border:0;border-radius:6px;text-decoration:none;font-size:14px;cursor:pointer}
+.btn.alt{background:#edf2f7;color:#2d3748}.bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:14px 0}</style></head><body>
+<h2 style="margin-bottom:4px">Files sent by email — ${esc(date)}</h2>
+<div style="color:#718096;font-size:13px">The same Excel and PDF attachments each run emails: Ready-tab selected-records, all-offices SUMMARY, Ready To Send summary, electronic claims and paper-claim PDFs. ${total.length} file(s) · server time.</div>
+<form method="get" class="bar">Date <input type="date" name="date" value="${esc(date)}"> Filter <input name="q" value="${esc(q)}" placeholder="e.g. Taunton, MA, paper-claim"> <button class="btn alt">Show / refresh</button></form>
+${total.length ? `<form method="post" action="/files/zip" id="zf">
+<input type="hidden" name="date" value="${esc(date)}">
+<div class="bar"><button class="btn" type="submit">⬇ Download selected as .zip</button>
+<a class="btn alt" href="/files/today.zip?date=${encodeURIComponent(date)}${q ? "&q=" + encodeURIComponent(q) : ""}">Download all as .zip</a>
+<a href="#" class="btn alt" id="selAll">Select all</a><a href="#" class="btn alt" id="selNone">Select none</a>
+<span id="cnt" style="color:#718096;font-size:13px"></span></div>
+${sections}</form>` : `<p>No emailed files found for ${esc(date)}${q ? ` matching "${esc(q)}"` : ""}. Run an office first, or pick another date.</p>`}
+<p style="margin-top:24px"><a href="/billing">← Back to billing</a></p>
+<script>
+(function(){
+  var boxes=[].slice.call(document.querySelectorAll('.fchk'));
+  function upd(){var n=boxes.filter(function(b){return b.checked}).length;var c=document.getElementById('cnt');if(c)c.textContent=n+' selected';}
+  boxes.forEach(function(b){b.addEventListener('change',upd)});
+  var a=document.getElementById('selAll'),z=document.getElementById('selNone');
+  if(a)a.onclick=function(e){e.preventDefault();boxes.forEach(function(b){b.checked=true});upd()};
+  if(z)z.onclick=function(e){e.preventDefault();boxes.forEach(function(b){b.checked=false});upd()};
+  var f=document.getElementById('zf');
+  if(f)f.addEventListener('submit',function(e){if(!boxes.some(function(b){return b.checked})){e.preventDefault();alert('Select at least one file.')}});
+  upd();
+})();
+</script></body></html>`);
+});
+// Zip exactly the files that were ticked (keys are re-resolved against the day's list).
+app.post("/files/zip", express_1.default.urlencoded({ extended: false, limit: "1mb" }), (req, res) => {
+    const date = filesDateParam(req);
+    let keys = req.body && req.body.k;
+    keys = Array.isArray(keys) ? keys : (keys ? [keys] : []);
+    const want = new Set(keys.map(String));
+    const files = listFilesForDate(date, "").filter(f => !f.missing && want.has(f.key));
+    if (files.length === 0) return res.status(404).send("No matching files (they may have changed — go back and refresh).");
+    try { sendZip(res, files, date); }
+    catch (e) { console.error("zip build failed:", e); res.status(500).send("Could not build zip: " + (e.message || e)); }
+});
+// Every emailed file for the day in one zip.
+app.get("/files/today.zip", (req, res) => {
+    const date = filesDateParam(req);
+    const q = String(req.query.q || "").trim();
+    const files = listFilesForDate(date, q).filter(f => !f.missing);
+    if (files.length === 0) return res.status(404).send(`No files found for ${date}`);
+    try { sendZip(res, files, date); }
+    catch (e) { console.error("zip build failed:", e); res.status(500).send("Could not build zip: " + (e.message || e)); }
 });
 app.get("/files/download", (req, res) => {
     const date = filesDateParam(req);
     const key = String(req.query.f || "");
-    // Look the key up in a fresh scan of every date-matching file; never build a path from input.
-    const all = listFilesForDate(date, "");
-    let hit = all.find(x => x.key === key);
-    if (!hit) {
-        // key may belong to a different date than "today": scan the dated token inside the key.
-        const m = key.match(/(\d{4}-\d{2}-\d{2})/);
-        if (m) hit = listFilesForDate(m[1], "").find(x => x.key === key);
-    }
+    // Resolve only against the day's emailed-file list; never use the input as a path.
+    const hit = listFilesForDate(date, "").find(x => x.key === key && !x.missing);
     if (!hit) return res.status(404).send("File not found");
     res.download(hit.full, hit.name);
-});
-app.get("/files/today.zip", (req, res) => {
-    const date = filesDateParam(req);
-    const q = String(req.query.q || "").trim();
-    const files = listFilesForDate(date, q);
-    if (files.length === 0) return res.status(404).send(`No files found for ${date}`);
-    try {
-        const entries = files.map(f => ({
-            name: f.name, data: fs_1.readFileSync(f.full), mtime: f.mtime,
-            dupPrefix: f.key.startsWith("downloads/") ? "downloads" : "root"
-        }));
-        const zip = buildStoredZip(entries);
-        res.setHeader("Content-Type", "application/zip");
-        res.setHeader("Content-Disposition", `attachment; filename="billing-files-${date}.zip"`);
-        res.setHeader("Content-Length", zip.length);
-        res.end(zip);
-    } catch (e) {
-        console.error("zip build failed:", e);
-        res.status(500).send("Could not build zip: " + (e.message || e));
-    }
 });
 
 // API endpoint to manually send email with today's files

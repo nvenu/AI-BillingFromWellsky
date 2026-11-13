@@ -45,6 +45,49 @@ const XLSX = __importStar(require("xlsx"));
 const date_fns_1 = require("date-fns");
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
+// ---------------------------------------------------------------------------
+// Email attachment manifest: downloads/email-manifest.json
+// One entry per Kinnser run email: { id, at, offices, files:[absolute paths],
+// emailSent, error }. Written BEFORE sending so the files stay downloadable from
+// /files/today when email is down. Best effort — never throws into a run.
+// ---------------------------------------------------------------------------
+function emailManifestPath() {
+    return path.join(process.cwd(), 'downloads', 'email-manifest.json');
+}
+function readEmailManifest() {
+    try {
+        const p = emailManifestPath();
+        if (!fs.existsSync(p)) return [];
+        const data = JSON.parse(fs.readFileSync(p, 'utf8'));
+        return Array.isArray(data) ? data : [];
+    } catch (e) { return []; }
+}
+function writeEmailManifest(entries) {
+    const p = emailManifestPath();
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, JSON.stringify(entries.slice(-500), null, 2));
+}
+function recordEmailManifest({ offices, files }) {
+    try {
+        const entries = readEmailManifest();
+        const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+        const abs = (files || []).filter(Boolean).map(f => path.isAbsolute(f) ? f : path.join(process.cwd(), f));
+        entries.push({ id, at: new Date().toISOString(), offices: offices || [], files: abs, emailSent: false, error: null });
+        writeEmailManifest(entries);
+        return id;
+    } catch (e) {
+        console.log(`⚠️  Could not write email manifest: ${e.message}`);
+        return null;
+    }
+}
+function updateEmailManifest(id, patch) {
+    if (!id) return;
+    try {
+        const entries = readEmailManifest();
+        const hit = entries.find(e => e.id === id);
+        if (hit) { Object.assign(hit, patch); writeEmailManifest(entries); }
+    } catch (e) { /* best effort */ }
+}
 // Version tracking
 const APP_VERSION = "2.3.0"; // Headless + 327 tracking + Partnership Health Plan + Detailed 327 reporting
 const BUILD_DATE = "2026-04-10";
@@ -1084,6 +1127,12 @@ async function loginAndProcessOffices(officeValue = 'all', selectedInsurances = 
         // 5. Send email with all Excel files and PDFs
         let emailSent = false;
         const allAttachments = [...excelFiles, ...allReadyToSendFiles];
+        // Record exactly which files this email carries BEFORE sending, so they can be
+        // downloaded from /files/today even when the email fails (or is never sent).
+        const manifestId = recordEmailManifest({
+            offices: officesToProcess.map(o => o.name),
+            files: allAttachments
+        });
         // ALWAYS send email, even if no records processed
         console.log(`\n=== Sending Email ===`);
         try {
@@ -1196,6 +1245,7 @@ No action was taken as no records met the processing criteria.
                 attachments: allAttachments
             });
             emailSent = true;
+            updateEmailManifest(manifestId, { emailSent: true });
             console.log(`✓ Email sent successfully to ${process.env.EMAIL_RECIPIENTS || "nvenu@solifetec.com"}`);
             if (allAttachments.length > 0) {
                 console.log(`  Total attachments: ${allAttachments.length}`);
@@ -1209,6 +1259,7 @@ No action was taken as no records met the processing criteria.
         }
         catch (emailError) {
             console.error(`✗ Failed to send email:`, emailError);
+            updateEmailManifest(manifestId, { emailSent: false, error: String((emailError && emailError.message) || emailError).slice(0, 300) });
             if (allAttachments.length > 0) {
                 console.log(`Files saved locally: ${allAttachments.join(', ')}`);
             }
