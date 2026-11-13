@@ -816,12 +816,6 @@ app.get("/billing", (req, res) => {
               </svg>
               <span id="waystarAllLabel">Process All — Waystar</span>
             </button>
-
-            <a href="/files/today" id="downloadFilesBtn" target="_blank" rel="noopener"
-               title="Download the Excel/PDF files each run emails (use when email is not working)"
-               style="display:inline-flex;align-items:center;gap:8px;padding:12px 20px;margin-left:8px;background:#2f855a;color:#fff;border-radius:8px;font-weight:600;font-size:15px;text-decoration:none;">
-              ⬇ Download Emailed Files
-            </a>
           </div>
 
           <!-- Upload an Excel and run the Waystar step against it (local testing) -->
