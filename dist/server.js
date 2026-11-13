@@ -1864,6 +1864,7 @@ app.get("/automation-status", (req, res) => {
 // Download the files each run EMAILED (use when email is not working).
 //   GET  /files/today            → page: attachments grouped by email run, tick + zip
 //   POST /files/zip              → zip of the ticked files
+//   POST /files/delete           → delete the ticked files (confirm dialog in the page)
 //   GET  /files/today.zip        → every emailed file for the day
 //   GET  /files/download?f=<key> → a single file
 // Optional ?date=YYYY-MM-DD (default: today, server time) and ?q=<text> filter.
@@ -1907,23 +1908,28 @@ function emailRunsForDate(dateStr, q) {
     const { format } = require("date-fns");
     const needle = (q || "").toLowerCase();
     const keep = (f) => f && (!needle || f.name.toLowerCase().includes(needle));
-    const runs = readEmailManifestFile()
-        .filter(e => { try { return format(new Date(e.at), "yyyy-MM-dd") === dateStr; } catch (x) { return false; } })
+    const dayEntries = readEmailManifestFile()
+        .filter(e => { try { return format(new Date(e.at), "yyyy-MM-dd") === dateStr; } catch (x) { return false; } });
+    const runs = dayEntries
         .map(e => ({
             id: e.id, legacy: false, at: new Date(e.at), offices: e.offices || [],
             emailSent: !!e.emailSent, error: e.error || null,
             files: (e.files || []).map(fileInfo).filter(keep)
         }))
         .filter(r => r.files.length > 0);
-    if (runs.length > 0) return runs;
-    // Fallback (no manifest entries for this date): name contains the date.
+    // If the manifest knows about this date at all (even after every file was deleted or
+    // the filter matched nothing), trust it — do NOT fall back, or deleted/other files
+    // that merely have the date in their name would reappear.
+    if (dayEntries.length > 0) return runs;
+    // Fallback (no manifest entries for this date — runs from before the manifest existed):
+    // only the file kinds the email attaches, with the date in the name.
     const cwd = process.cwd();
     const files = [];
-    const scan = (dir, exts) => {
+    const EMAIL_NAME = /^(selected-records|summary-|ready-to-send-)/i;
+    const scan = (dir, exts, nameRe) => {
         try {
             for (const f of fs_1.readdirSync(dir)) {
-                // FAILED-records-*.xlsx are written but never attached to the email.
-                if (f.toLowerCase().startsWith("failed-records")) continue;
+                if (!nameRe.test(f)) continue;     // also skips FAILED-records / waystar reports, etc.
                 if (f.includes(dateStr) && exts.some(x => f.endsWith(x))) {
                     const fi = fileInfo(path_1.join(dir, f));
                     if (keep(fi)) files.push(fi);
@@ -1931,8 +1937,8 @@ function emailRunsForDate(dateStr, q) {
             }
         } catch (e) { /* ignore */ }
     };
-    scan(cwd, [".xlsx", ".pdf"]);
-    if (fs_1.existsSync(path_1.join(cwd, "downloads"))) scan(path_1.join(cwd, "downloads"), [".pdf"]);
+    scan(cwd, [".xlsx"], EMAIL_NAME);
+    if (fs_1.existsSync(path_1.join(cwd, "downloads"))) scan(path_1.join(cwd, "downloads"), [".pdf"], /^paper-claim-/i);
     if (files.length === 0) return [];
     return [{ id: "legacy", legacy: true, at: null, offices: [], emailSent: null, error: null, files }];
 }
@@ -2016,50 +2022,219 @@ app.get("/files/today", (req, res) => {
     const runs = emailRunsForDate(date, q);
     const esc = (s) => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
     const fmtSize = (n) => n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : (n / 1024).toFixed(1) + " KB";
-    const total = listFilesForDate(date, q);
-    const sections = runs.map(r => {
-        const status = r.legacy
-            ? `<span style="color:#975a16">found by file name (no email record for this date)</span>`
+    const all = listFilesForDate(date, q);
+    const present = all.filter(f => !f.missing);
+    const totalBytes = present.reduce((a, f) => a + f.size, 0);
+
+    // Result banner after a delete (numbers + an optional error text from the server redirect).
+    const num = (v) => { const n = parseInt(v, 10); return isFinite(n) && n > 0 ? n : 0; };
+    const nDel = num(req.query.deleted), nClean = num(req.query.cleaned);
+    const errText = String(req.query.err || "").slice(0, 300);
+    let flash = "";
+    if (nDel || nClean) {
+        const parts = [];
+        if (nDel) parts.push("deleted " + nDel + " file" + (nDel === 1 ? "" : "s"));
+        if (nClean) parts.push("removed " + nClean + " stale entr" + (nClean === 1 ? "y" : "ies") + " from the list");
+        const msg = parts.join(", ");
+        flash += `<div class="flash ok" role="status">✓ ${esc(msg.charAt(0).toUpperCase() + msg.slice(1))}.</div>`;
+    }
+    if (errText) flash += `<div class="flash bad" role="alert">⚠ ${esc(errText)}</div>`;
+
+    const cards = runs.map((r, ri) => {
+        const badge = r.legacy
+            ? `<span class="badge warn">found by file name</span>`
             : r.emailSent
-                ? `<span style="color:#276749">email sent ✓</span>`
-                : `<span style="color:#c53030">email NOT sent${r.error ? " — " + esc(r.error) : ""}</span>`;
-        const title = r.legacy ? "Files for this date" : `${esc(r.at.toLocaleTimeString())} — ${esc((r.offices || []).join(", ") || "run")}`;
-        const rows = r.files.map(f => f.missing
-            ? `<tr style="color:#a0aec0"><td style="width:28px"></td><td>${esc(f.name)} <em>(missing on disk)</em></td><td>${esc(f.type)}</td><td></td></tr>`
-            : `<tr><td style="width:28px"><input type="checkbox" name="k" value="${esc(f.key)}" class="fchk" checked></td>` +
-              `<td><a href="/files/download?date=${encodeURIComponent(date)}&f=${encodeURIComponent(f.key)}">${esc(f.name)}</a></td>` +
-              `<td>${esc(f.type)}</td><td style="text-align:right;white-space:nowrap">${fmtSize(f.size)}</td></tr>`).join("");
-        return `<h3 style="margin:22px 0 4px">${title}</h3><div style="font-size:13px;margin-bottom:4px">${status}</div><table><tbody>${rows}</tbody></table>`;
+                ? `<span class="badge ok">email sent</span>`
+                : `<span class="badge bad">email NOT sent</span>`;
+        const sub = r.legacy
+            ? "No email record for this date — listed by the date in the file name."
+            : esc((r.offices || []).join(", ") || "run") + (!r.emailSent && r.error ? " · " + esc(r.error) : "");
+        const title = r.legacy ? "Files for this date" : esc(r.at.toLocaleTimeString());
+        const rows = r.files.map(f => {
+            const cb = `<input type="checkbox" name="k" value="${esc(f.key)}" class="fchk" data-run="${ri}" data-size="${f.missing ? 0 : f.size}" data-name="${esc(f.name)}" data-missing="${f.missing ? 1 : 0}" aria-label="Select ${esc(f.name)}" checked>`;
+            return f.missing
+                ? `<tr class="gone"><td class="c">${cb}</td><td>${esc(f.name)}<div class="hint">already deleted — selecting it removes it from this list</div></td><td>${esc(f.type)}</td><td class="r">—</td></tr>`
+                : `<tr><td class="c">${cb}</td><td><a href="/files/download?date=${encodeURIComponent(date)}&amp;f=${encodeURIComponent(f.key)}">${esc(f.name)}</a></td><td>${esc(f.type)}</td><td class="r">${fmtSize(f.size)}</td></tr>`;
+        }).join("");
+        return `<section class="card"><header class="cardhead"><label class="runsel"><input type="checkbox" class="runchk" data-run="${ri}" aria-label="Select all files in this run"><span class="rtitle">${title}</span></label><span class="rsub">${sub}</span>${badge}</header><table><tbody>${rows}</tbody></table></section>`;
     }).join("");
-    res.send(`<!doctype html><html><head><meta charset="utf-8"><title>Emailed files ${esc(date)}</title>
-<style>body{font-family:system-ui,sans-serif;margin:24px;max-width:980px}table{border-collapse:collapse;width:100%}
-td{padding:5px 10px;border-bottom:1px solid #edf2f7;font-size:14px}
-.btn{display:inline-block;padding:9px 16px;background:#2b6cb0;color:#fff;border:0;border-radius:6px;text-decoration:none;font-size:14px;cursor:pointer}
-.btn.alt{background:#edf2f7;color:#2d3748}.bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:14px 0}</style></head><body>
-<h2 style="margin-bottom:4px">Files sent by email — ${esc(date)}</h2>
-<div style="color:#718096;font-size:13px">The same Excel and PDF attachments each run emails: Ready-tab selected-records, all-offices SUMMARY, Ready To Send summary, electronic claims and paper-claim PDFs. ${total.length} file(s) · server time.</div>
-<form method="get" class="bar">Date <input type="date" name="date" value="${esc(date)}"> Filter <input name="q" value="${esc(q)}" placeholder="e.g. Taunton, MA, paper-claim"> <button class="btn alt">Show / refresh</button></form>
-${total.length ? `<form method="post" action="/files/zip" id="zf">
+
+    res.send(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Emailed files ${esc(date)}</title>
+<style>
+*{box-sizing:border-box}[hidden]{display:none!important}
+body{font-family:system-ui,-apple-system,Segoe UI,sans-serif;margin:0;background:#f7fafc;color:#2d3748}
+.wrap{max-width:1040px;margin:0 auto;padding:24px 20px 60px}
+h1{font-size:22px;margin:0 0 4px}.sub{color:#718096;font-size:13px;line-height:1.5}
+.filters{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:16px 0}
+.filters input{padding:7px 9px;border:1px solid #cbd5e0;border-radius:6px;font-size:14px}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:7px;border:1px solid #cbd5e0;background:#fff;color:#2d3748;font-size:14px;font-weight:600;text-decoration:none;cursor:pointer}
+.btn:hover{background:#edf2f7}.btn.primary{background:#2b6cb0;border-color:#2b6cb0;color:#fff}.btn.primary:hover{background:#2c5282}
+.btn.danger{background:#fff5f5;border-color:#feb2b2;color:#c53030}.btn.danger:hover{background:#fed7d7}
+.btn.danger.solid{background:#c53030;border-color:#c53030;color:#fff}.btn.danger.solid:hover{background:#9b2c2c}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.toolbar{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:10px 14px;margin:0 0 16px;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+.toolbar .spacer{flex:1}.master{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600}
+.card{background:#fff;border:1px solid #e2e8f0;border-radius:10px;margin:0 0 14px;overflow:hidden}
+.cardhead{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:10px 14px;background:#f7fafc;border-bottom:1px solid #e2e8f0}
+.runsel{display:flex;align-items:center;gap:8px;font-weight:700;font-size:14px}.rsub{color:#718096;font-size:13px;flex:1;min-width:120px}
+.badge{font-size:12px;font-weight:600;padding:3px 9px;border-radius:999px}
+.badge.ok{background:#c6f6d5;color:#22543d}.badge.bad{background:#fed7d7;color:#9b2c2c}.badge.warn{background:#feebc8;color:#7b341e}
+table{border-collapse:collapse;width:100%}td{padding:8px 14px;border-bottom:1px solid #edf2f7;font-size:14px;vertical-align:top}
+tr:last-child td{border-bottom:0}td.c{width:36px}td.r{text-align:right;white-space:nowrap;color:#4a5568}
+tr.gone td{color:#a0aec0}.hint{font-size:12px;color:#a0aec0}
+a{color:#2b6cb0}input[type=checkbox]{width:16px;height:16px;cursor:pointer}
+.flash{padding:10px 14px;border-radius:8px;font-size:14px;margin:0 0 12px}.flash.ok{background:#f0fff4;border:1px solid #9ae6b4;color:#22543d}.flash.bad{background:#fff5f5;border:1px solid #feb2b2;color:#9b2c2c}
+.empty{background:#fff;border:1px dashed #cbd5e0;border-radius:10px;padding:28px;text-align:center;color:#718096}
+dialog{border:0;border-radius:12px;padding:22px 24px;max-width:480px;width:calc(100% - 32px);box-shadow:0 20px 50px rgba(0,0,0,.3)}
+dialog::backdrop{background:rgba(26,32,44,.55)}dialog h2{margin:0 0 8px;font-size:18px}dialog p{margin:0 0 10px;font-size:14px;color:#4a5568;line-height:1.5}
+dialog ul{margin:0 0 12px;padding:8px 8px 8px 26px;background:#f7fafc;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;max-height:180px;overflow:auto;word-break:break-all}
+.ack{display:flex;align-items:center;gap:8px;font-size:14px;margin:0 0 14px}.dlgbtns{display:flex;justify-content:flex-end;gap:10px}
+</style></head><body><div class="wrap">
+<h1>Files sent by email — ${esc(date)}</h1>
+<div class="sub">The Excel and PDF attachments each run emails: Ready-tab selected-records, all-offices SUMMARY, Ready To Send summary, electronic claims and paper-claim PDFs. ${present.length} file(s), ${fmtSize(totalBytes)} · server time.</div>
+<form method="get" class="filters" aria-label="Filter files"><label>Date <input type="date" name="date" value="${esc(date)}"></label>
+<label>Filter <input name="q" value="${esc(q)}" placeholder="e.g. Taunton, MA, paper-claim"></label><button class="btn">Show / refresh</button>
+${present.length ? `<a class="btn" href="/files/today.zip?date=${encodeURIComponent(date)}${q ? "&amp;q=" + encodeURIComponent(q) : ""}">Download all as .zip</a>` : ""}</form>
+${flash}
+${all.length ? `<form method="post" action="/files/zip" id="zf">
 <input type="hidden" name="date" value="${esc(date)}">
-<div class="bar"><button class="btn" type="submit">⬇ Download selected as .zip</button>
-<a class="btn alt" href="/files/today.zip?date=${encodeURIComponent(date)}${q ? "&q=" + encodeURIComponent(q) : ""}">Download all as .zip</a>
-<a href="#" class="btn alt" id="selAll">Select all</a><a href="#" class="btn alt" id="selNone">Select none</a>
-<span id="cnt" style="color:#718096;font-size:13px"></span></div>
-${sections}</form>` : `<p>No emailed files found for ${esc(date)}${q ? ` matching "${esc(q)}"` : ""}. Run an office first, or pick another date.</p>`}
-<p style="margin-top:24px"><a href="/billing">← Back to billing</a></p>
+<div class="toolbar" role="toolbar" aria-label="Bulk actions">
+<label class="master"><input type="checkbox" id="master" aria-label="Select all files"><span id="selText">0 selected</span></label>
+<span class="spacer"></span>
+<button type="submit" class="btn primary" id="zipBtn">⬇ Download selected (.zip)</button>
+<button type="button" class="btn danger" id="delBtn">🗑 Delete selected…</button>
+</div>
+${cards}
+</form>
+<form method="post" action="/files/delete" id="df"><input type="hidden" name="date" value="${esc(date)}"><input type="hidden" name="q" value="${esc(q)}"></form>
+<dialog id="delDlg" aria-labelledby="delTitle" aria-describedby="delDesc">
+<h2 id="delTitle">Delete files?</h2><p id="delDesc"></p><ul id="delList"></ul>
+<label class="ack" id="ackRow" hidden><input type="checkbox" id="ack"> I understand this cannot be undone</label>
+<div class="dlgbtns"><button type="button" class="btn" id="delCancel">Cancel</button><button type="button" class="btn danger solid" id="delConfirm">Delete permanently</button></div>
+</dialog>` : `<div class="empty">No emailed files found for ${esc(date)}${q ? " matching &quot;" + esc(q) + "&quot;" : ""}.<br>Run an office first, or pick another date.</div>`}
+<p style="margin-top:26px"><a href="/billing">← Back to billing</a></p>
+</div>
 <script>
 (function(){
-  var boxes=[].slice.call(document.querySelectorAll('.fchk'));
-  function upd(){var n=boxes.filter(function(b){return b.checked}).length;var c=document.getElementById('cnt');if(c)c.textContent=n+' selected';}
-  boxes.forEach(function(b){b.addEventListener('change',upd)});
-  var a=document.getElementById('selAll'),z=document.getElementById('selNone');
-  if(a)a.onclick=function(e){e.preventDefault();boxes.forEach(function(b){b.checked=true});upd()};
-  if(z)z.onclick=function(e){e.preventDefault();boxes.forEach(function(b){b.checked=false});upd()};
-  var f=document.getElementById('zf');
-  if(f)f.addEventListener('submit',function(e){if(!boxes.some(function(b){return b.checked})){e.preventDefault();alert('Select at least one file.')}});
-  upd();
+  var form=document.getElementById('zf'); if(!form) return;
+  var boxes=[].slice.call(form.querySelectorAll('.fchk'));
+  var runBoxes=[].slice.call(form.querySelectorAll('.runchk'));
+  var master=document.getElementById('master'), selText=document.getElementById('selText');
+  var zipBtn=document.getElementById('zipBtn'), delBtn=document.getElementById('delBtn');
+  var dlg=document.getElementById('delDlg'), df=document.getElementById('df');
+  var list=document.getElementById('delList'), ackRow=document.getElementById('ackRow'), ack=document.getElementById('ack');
+  var confirmBtn=document.getElementById('delConfirm'), cancelBtn=document.getElementById('delCancel');
+  function fmt(n){return n>=1048576?(n/1048576).toFixed(1)+' MB':(n/1024).toFixed(1)+' KB';}
+  function uniq(onlyChecked){var seen={},out=[];boxes.forEach(function(b){if((!onlyChecked||b.checked)&&!seen[b.value]){seen[b.value]=1;out.push(b);}});return out;}
+  function refresh(){
+    var sel=uniq(true), tot=uniq(false).length;
+    var bytes=sel.reduce(function(a,b){return a+Number(b.getAttribute('data-size')||0);},0);
+    selText.textContent=sel.length===0?'None selected':(sel.length+' of '+tot+' selected \u00b7 '+fmt(bytes));
+    master.checked=tot>0&&sel.length===tot; master.indeterminate=sel.length>0&&sel.length<tot;
+    zipBtn.disabled=sel.length===0; delBtn.disabled=sel.length===0;
+    runBoxes.forEach(function(rb){
+      var rs=boxes.filter(function(b){return b.getAttribute('data-run')===rb.getAttribute('data-run');});
+      var n=rs.filter(function(b){return b.checked;}).length;
+      rb.checked=rs.length>0&&n===rs.length; rb.indeterminate=n>0&&n<rs.length;
+    });
+  }
+  boxes.forEach(function(b){b.addEventListener('change',refresh);});
+  master.addEventListener('change',function(){boxes.forEach(function(b){b.checked=master.checked;});refresh();});
+  runBoxes.forEach(function(rb){rb.addEventListener('change',function(){
+    boxes.forEach(function(b){if(b.getAttribute('data-run')===rb.getAttribute('data-run'))b.checked=rb.checked;});refresh();});});
+  function submitDelete(sel){
+    [].slice.call(df.querySelectorAll('input[name=k]')).forEach(function(n){n.remove();});
+    sel.forEach(function(b){var i=document.createElement('input');i.type='hidden';i.name='k';i.value=b.value;df.appendChild(i);});
+    df.submit();
+  }
+  delBtn.addEventListener('click',function(){
+    var sel=uniq(true); if(!sel.length) return;
+    var real=sel.filter(function(b){return b.getAttribute('data-missing')!=='1';});
+    var stale=sel.length-real.length;
+    var bytes=real.reduce(function(a,b){return a+Number(b.getAttribute('data-size')||0);},0);
+    var staleTxt=stale+' already-deleted entr'+(stale===1?'y':'ies');
+    document.getElementById('delTitle').textContent=real.length
+      ? 'Delete '+real.length+' file'+(real.length===1?'':'s')+'?'
+      : 'Remove '+stale+' stale entr'+(stale===1?'y':'ies')+'?';
+    document.getElementById('delDesc').textContent=real.length
+      ? 'This permanently deletes '+fmt(bytes)+' from the server. It cannot be undone.'+(stale?' '+staleTxt+' will also be removed from the list.':'')
+      : 'These files are already gone from the server; this only clears them from the list.';
+    list.textContent='';
+    real.slice(0,8).forEach(function(b){var li=document.createElement('li');li.textContent=b.getAttribute('data-name');list.appendChild(li);});
+    if(real.length>8){var more=document.createElement('li');more.textContent='\u2026and '+(real.length-8)+' more';list.appendChild(more);}
+    list.hidden=real.length===0;
+    ackRow.hidden=!(sel.length>=5); ack.checked=false; confirmBtn.disabled=!ackRow.hidden;
+    if(typeof dlg.showModal!=='function'){ if(window.confirm('Permanently delete '+real.length+' file(s)? This cannot be undone.')) submitDelete(sel); return; }
+    dlg.showModal(); cancelBtn.focus();
+  });
+  ack.addEventListener('change',function(){confirmBtn.disabled=!ack.checked;});
+  cancelBtn.addEventListener('click',function(){dlg.close();});
+  dlg.addEventListener('click',function(e){if(e.target===dlg)dlg.close();});
+  confirmBtn.addEventListener('click',function(){var sel=uniq(true);dlg.close();submitDelete(sel);});
+  refresh();
 })();
 </script></body></html>`);
+});
+// Delete the selected files. Only files on the day's emailed list can be removed (the
+// request carries keys, never trusted as paths), only inside the project folder, never
+// while a billing run is active, and same-origin only. Also prunes them (and any
+// already-missing entries that were selected) from downloads/email-manifest.json.
+app.post("/files/delete", express_1.default.urlencoded({ extended: false, limit: "1mb" }), (req, res) => {
+    const date = filesDateParam(req);
+    const q = String((req.body && req.body.q) || "").trim();
+    const back = (params) => res.redirect(303, "/files/today?date=" + encodeURIComponent(date) + (q ? "&q=" + encodeURIComponent(q) : "") + (params || ""));
+    const origin = req.headers.origin;
+    if (origin) {
+        try { if (new URL(origin).host !== req.headers.host) return res.status(403).send("Cross-site request blocked."); }
+        catch (e) { return res.status(403).send("Bad origin."); }
+    }
+    if (automationLock.running) {
+        return back("&err=" + encodeURIComponent("A billing run is in progress — wait for it to finish before deleting files."));
+    }
+    let keys = req.body && req.body.k;
+    keys = Array.isArray(keys) ? keys : (keys ? [keys] : []);
+    const want = new Set(keys.map(String));
+    if (want.size === 0) return back("&err=" + encodeURIComponent("No files were selected."));
+    const targets = listFilesForDate(date, "").filter(f => want.has(f.key));
+    if (targets.length === 0) return back("&err=" + encodeURIComponent("Those files are no longer in the list — nothing was deleted."));
+
+    let root = process.cwd();
+    try { root = fs_1.realpathSync(root); } catch (e) { /* keep cwd */ }
+    const removed = new Set();
+    const failures = [];
+    let deleted = 0, cleaned = 0;
+    for (const f of targets) {
+        if (f.missing) { removed.add(f.full); cleaned++; continue; }
+        try {
+            const real = fs_1.realpathSync(f.full);
+            if (real !== root && !real.startsWith(root + path_1.sep)) throw Object.assign(new Error("outside the project folder"), { code: "OUTSIDE" });
+            fs_1.unlinkSync(f.full);
+            removed.add(f.full);
+            deleted++;
+        } catch (e) {
+            if (e && e.code === "ENOENT") { removed.add(f.full); cleaned++; }
+            else failures.push(f.name + " (" + ((e && (e.code || e.message)) || "error") + ")");
+        }
+    }
+    if (removed.size > 0) {
+        try {
+            const mp = path_1.join(process.cwd(), "downloads", "email-manifest.json");
+            if (fs_1.existsSync(mp)) {
+                const abs = (p) => path_1.isAbsolute(p) ? p : path_1.join(process.cwd(), p);
+                const next = readEmailManifestFile()
+                    // Keep an entry even when it ends up with no files: its existence tells the
+                    // list page this date is manifest-covered, so it shows "no files" instead
+                    // of falling back to scanning file names.
+                    .map(e => Object.assign({}, e, { files: (e.files || []).filter(p => !removed.has(abs(p))) }));
+                fs_1.writeFileSync(mp, JSON.stringify(next, null, 2));
+            }
+        } catch (e) { console.error("manifest prune failed:", e.message || e); }
+    }
+    console.log(`🗑️  /files/delete (${date}): deleted ${deleted}, cleaned ${cleaned}, failed ${failures.length}`);
+    failures.forEach(f => console.log(`   ✗ ${f}`));
+    const extra = (deleted ? "&deleted=" + deleted : "") + (cleaned ? "&cleaned=" + cleaned : "") +
+        (failures.length ? "&err=" + encodeURIComponent(failures.length + " file" + (failures.length === 1 ? "" : "s") + " could not be deleted: " + failures.slice(0, 3).join(", ") + (failures.length > 3 ? ", …" : "")) : "");
+    return back(extra);
 });
 // Zip exactly the files that were ticked (keys are re-resolved against the day's list).
 app.post("/files/zip", express_1.default.urlencoded({ extended: false, limit: "1mb" }), (req, res) => {
