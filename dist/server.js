@@ -1863,6 +1863,7 @@ app.get("/automation-status", (req, res) => {
 // ---------------------------------------------------------------------------
 // Download the files each run EMAILED (use when email is not working).
 //   GET  /files/today            → page: attachments grouped by email run, tick + zip
+//                                  (?from=YYYY-MM-DD&to=YYYY-MM-DD range; ?date= still works)
 //   POST /files/zip              → zip of the ticked files
 //   POST /files/delete           → delete the ticked files (confirm dialog in the page)
 //   GET  /files/today.zip        → every emailed file for the day
@@ -1904,12 +1905,15 @@ function fileInfo(full) {
 // per-office selected-records Excel, the all-offices SUMMARY Excel (multi-office
 // runs), the Ready-To-Send summary + electronic-claims Excel, and paper-claim PDFs.
 // Runs from before the manifest existed fall back to the old name-contains-date scan.
-function emailRunsForDate(dateStr, q) {
+function emailRunsForDate(range, q) {
     const { format } = require("date-fns");
     const needle = (q || "").toLowerCase();
     const keep = (f) => f && (!needle || f.name.toLowerCase().includes(needle));
-    const dayEntries = readEmailManifestFile()
-        .filter(e => { try { return format(new Date(e.at), "yyyy-MM-dd") === dateStr; } catch (x) { return false; } });
+    const dayOf = (e) => { try { return format(new Date(e.at), "yyyy-MM-dd"); } catch (x) { return ""; } };
+    const inRange = (d) => d >= range.from && d <= range.to;     // yyyy-MM-dd compares correctly as text
+    const dayEntries = readEmailManifestFile().filter(e => { const d = dayOf(e); return d && inRange(d); });
+    // Days the manifest knows about (even if every file was later deleted / filtered out).
+    const coveredDays = new Set(dayEntries.map(dayOf));
     const runs = dayEntries
         .map(e => ({
             id: e.id, legacy: false, at: new Date(e.at), offices: e.offices || [],
@@ -1917,12 +1921,10 @@ function emailRunsForDate(dateStr, q) {
             files: (e.files || []).map(fileInfo).filter(keep)
         }))
         .filter(r => r.files.length > 0);
-    // If the manifest knows about this date at all (even after every file was deleted or
-    // the filter matched nothing), trust it — do NOT fall back, or deleted/other files
-    // that merely have the date in their name would reappear.
-    if (dayEntries.length > 0) return runs;
-    // Fallback (no manifest entries for this date — runs from before the manifest existed):
-    // only the file kinds the email attaches, with the date in the name.
+    // For days the manifest covers, trust it — do NOT fall back, or deleted/other files that
+    // merely have that date in their name would reappear.
+    // Fallback ONLY for days in the range with no manifest entries (runs from before the
+    // manifest existed): just the file kinds the email attaches, with the date in the name.
     const cwd = process.cwd();
     const files = [];
     const EMAIL_NAME = /^(selected-records|summary-|ready-to-send-)/i;
@@ -1930,7 +1932,8 @@ function emailRunsForDate(dateStr, q) {
         try {
             for (const f of fs_1.readdirSync(dir)) {
                 if (!nameRe.test(f)) continue;     // also skips FAILED-records / waystar reports, etc.
-                if (f.includes(dateStr) && exts.some(x => f.endsWith(x))) {
+                const dm = f.match(/(\d{4}-\d{2}-\d{2})/);
+                if (dm && inRange(dm[1]) && !coveredDays.has(dm[1]) && exts.some(x => f.endsWith(x))) {
                     const fi = fileInfo(path_1.join(dir, f));
                     if (keep(fi)) files.push(fi);
                 }
@@ -1939,12 +1942,12 @@ function emailRunsForDate(dateStr, q) {
     };
     scan(cwd, [".xlsx"], EMAIL_NAME);
     if (fs_1.existsSync(path_1.join(cwd, "downloads"))) scan(path_1.join(cwd, "downloads"), [".pdf"], /^paper-claim-/i);
-    if (files.length === 0) return [];
-    return [{ id: "legacy", legacy: true, at: null, offices: [], emailSent: null, error: null, files }];
+    if (files.length === 0) return runs;
+    return runs.concat([{ id: "legacy", legacy: true, at: null, offices: [], emailSent: null, error: null, files }]);
 }
-function listFilesForDate(dateStr, q) {
+function listFilesForDate(range, q) {
     const seen = new Set(), out = [];
-    for (const r of emailRunsForDate(dateStr, q)) {
+    for (const r of emailRunsForDate(range, q)) {
         for (const f of r.files) if (!seen.has(f.key)) { seen.add(f.key); out.push(f); }
     }
     return out.sort((a, b) => (b.mtime || 0) - (a.mtime || 0));
@@ -2001,29 +2004,68 @@ function buildStoredZip(entries) {
     eocd.writeUInt32LE(centralBuf.length, 12); eocd.writeUInt32LE(offset, 16); eocd.writeUInt16LE(0, 20);
     return Buffer.concat([...locals, centralBuf, eocd]);
 }
-function filesDateParam(req) {
-    const src = Object.assign({}, req.query || {}, req.body || {});
-    const d = String(src.date || "").trim();
-    if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
+// Date range for the files pages: ?from=YYYY-MM-DD&to=YYYY-MM-DD (either may be omitted;
+// the old single ?date= still works). Defaults to today; a reversed range is swapped; the
+// span is capped at 366 days. Dates are server-local, like the rest of the page.
+function filesRangeParam(req) {
     const { format } = require("date-fns");
-    return format(new Date(), "yyyy-MM-dd");
+    const src = Object.assign({}, req.query || {}, req.body || {});
+    const valid = (v) => {
+        const t = String(v || "").trim();
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(t)) return "";
+        const [y, m, d] = t.split("-").map(Number);
+        const dt = new Date(y, m - 1, d);
+        return format(dt, "yyyy-MM-dd") === t ? t : "";     // rejects 2026-02-31 etc.
+    };
+    const today = format(new Date(), "yyyy-MM-dd");
+    let from = valid(src.from), to = valid(src.to);
+    const single = valid(src.date);
+    if (!from && !to && single) from = to = single;
+    if (!from && !to) from = to = today;
+    if (!from) from = to;
+    if (!to) to = from;
+    if (from > to) { const t = from; from = to; to = t; }
+    let clamped = false;
+    const [ty, tm, td] = to.split("-").map(Number);
+    const floor = format(new Date(ty, tm - 1, td - 365), "yyyy-MM-dd");
+    if (from < floor) { from = floor; clamped = true; }
+    const same = from === to;
+    return {
+        from, to, clamped, same,
+        label: same ? from : from + " → " + to,
+        slug: same ? from : from + "_to_" + to,
+        qs: "from=" + from + "&to=" + to
+    };
 }
-function sendZip(res, files, date) {
+function sendZip(res, files, range) {
     const entries = files.map(f => ({ name: f.name, data: fs_1.readFileSync(f.full), mtime: f.mtime || new Date(), dupPrefix: "dup" }));
     const zip = buildStoredZip(entries);
     res.setHeader("Content-Type", "application/zip");
-    res.setHeader("Content-Disposition", `attachment; filename="billing-files-${date}.zip"`);
+    res.setHeader("Content-Disposition", `attachment; filename="billing-files-${range.slug}.zip"`);
     res.setHeader("Content-Length", zip.length);
     res.end(zip);
 }
 app.get("/files/today", (req, res) => {
-    const date = filesDateParam(req);
+    const range = filesRangeParam(req);
     const q = String(req.query.q || "").trim();
-    const runs = emailRunsForDate(date, q);
+    const runs = emailRunsForDate(range, q);
     const esc = (s) => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
     const fmtSize = (n) => n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : (n / 1024).toFixed(1) + " KB";
-    const all = listFilesForDate(date, q);
+    const all = listFilesForDate(range, q);
     const present = all.filter(f => !f.missing);
+    const rq = range.qs;                                      // from=..&to=..
+    // Quick ranges (server-local dates).
+    const { format: fmtDate } = require("date-fns");
+    const dayAgo = (n) => { const d = new Date(); return fmtDate(new Date(d.getFullYear(), d.getMonth(), d.getDate() - n), "yyyy-MM-dd"); };
+    const monthStart = (() => { const d = new Date(); return fmtDate(new Date(d.getFullYear(), d.getMonth(), 1), "yyyy-MM-dd"); })();
+    const todayStr = dayAgo(0);
+    const chips = [
+        ["Today", todayStr, todayStr], ["Yesterday", dayAgo(1), dayAgo(1)],
+        ["Last 7 days", dayAgo(6), todayStr], ["Last 30 days", dayAgo(29), todayStr], ["This month", monthStart, todayStr]
+    ].map(([label, f, t]) => {
+        const on = range.from === f && range.to === t;
+        return `<a class="chip${on ? " on" : ""}" href="/files/today?from=${f}&amp;to=${t}${q ? "&amp;q=" + encodeURIComponent(q) : ""}"${on ? ' aria-current="true"' : ""}>${label}</a>`;
+    }).join("");
     const totalBytes = present.reduce((a, f) => a + f.size, 0);
 
     // Result banner after a delete (numbers + an optional error text from the server redirect).
@@ -2047,19 +2089,19 @@ app.get("/files/today", (req, res) => {
                 ? `<span class="badge ok">email sent</span>`
                 : `<span class="badge bad">email NOT sent</span>`;
         const sub = r.legacy
-            ? "No email record for this date — listed by the date in the file name."
+            ? "No email record for " + (range.same ? "this date" : "these dates") + " — listed by the date in the file name."
             : esc((r.offices || []).join(", ") || "run") + (!r.emailSent && r.error ? " · " + esc(r.error) : "");
-        const title = r.legacy ? "Files for this date" : esc(r.at.toLocaleTimeString());
+        const title = r.legacy ? "Files without an email record" : esc(range.same ? r.at.toLocaleTimeString() : r.at.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + ", " + r.at.toLocaleTimeString());
         const rows = r.files.map(f => {
             const cb = `<input type="checkbox" name="k" value="${esc(f.key)}" class="fchk" data-run="${ri}" data-size="${f.missing ? 0 : f.size}" data-name="${esc(f.name)}" data-missing="${f.missing ? 1 : 0}" aria-label="Select ${esc(f.name)}" checked>`;
             return f.missing
                 ? `<tr class="gone"><td class="c">${cb}</td><td>${esc(f.name)}<div class="hint">already deleted — selecting it removes it from this list</div></td><td>${esc(f.type)}</td><td class="r">—</td></tr>`
-                : `<tr><td class="c">${cb}</td><td><a href="/files/download?date=${encodeURIComponent(date)}&amp;f=${encodeURIComponent(f.key)}">${esc(f.name)}</a></td><td>${esc(f.type)}</td><td class="r">${fmtSize(f.size)}</td></tr>`;
+                : `<tr><td class="c">${cb}</td><td><a href="/files/download?${rq}&amp;f=${encodeURIComponent(f.key)}">${esc(f.name)}</a></td><td>${esc(f.type)}</td><td class="r">${fmtSize(f.size)}</td></tr>`;
         }).join("");
         return `<section class="card"><header class="cardhead"><label class="runsel"><input type="checkbox" class="runchk" data-run="${ri}" aria-label="Select all files in this run"><span class="rtitle">${title}</span></label><span class="rsub">${sub}</span>${badge}</header><table><tbody>${rows}</tbody></table></section>`;
     }).join("");
 
-    res.send(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Emailed files ${esc(date)}</title>
+    res.send(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Emailed files ${esc(range.label)}</title>
 <style>
 *{box-sizing:border-box}[hidden]{display:none!important}
 body{font-family:system-ui,-apple-system,Segoe UI,sans-serif;margin:0;background:#f7fafc;color:#2d3748}
@@ -2084,20 +2126,28 @@ tr:last-child td{border-bottom:0}td.c{width:36px}td.r{text-align:right;white-spa
 tr.gone td{color:#a0aec0}.hint{font-size:12px;color:#a0aec0}
 a{color:#2b6cb0}input[type=checkbox]{width:16px;height:16px;cursor:pointer}
 .flash{padding:10px 14px;border-radius:8px;font-size:14px;margin:0 0 12px}.flash.ok{background:#f0fff4;border:1px solid #9ae6b4;color:#22543d}.flash.bad{background:#fff5f5;border:1px solid #feb2b2;color:#9b2c2c}
+.range{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:12px 0 0}
+.chip{display:inline-block;padding:5px 12px;border:1px solid #cbd5e0;border-radius:999px;background:#fff;color:#2d3748;font-size:13px;text-decoration:none}
+.chip:hover{background:#edf2f7}.chip.on{background:#2b6cb0;border-color:#2b6cb0;color:#fff}
 .empty{background:#fff;border:1px dashed #cbd5e0;border-radius:10px;padding:28px;text-align:center;color:#718096}
 dialog{border:0;border-radius:12px;padding:22px 24px;max-width:480px;width:calc(100% - 32px);box-shadow:0 20px 50px rgba(0,0,0,.3)}
 dialog::backdrop{background:rgba(26,32,44,.55)}dialog h2{margin:0 0 8px;font-size:18px}dialog p{margin:0 0 10px;font-size:14px;color:#4a5568;line-height:1.5}
 dialog ul{margin:0 0 12px;padding:8px 8px 8px 26px;background:#f7fafc;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;max-height:180px;overflow:auto;word-break:break-all}
 .ack{display:flex;align-items:center;gap:8px;font-size:14px;margin:0 0 14px}.dlgbtns{display:flex;justify-content:flex-end;gap:10px}
 </style></head><body><div class="wrap">
-<h1>Files sent by email — ${esc(date)}</h1>
-<div class="sub">The Excel and PDF attachments each run emails: Ready-tab selected-records, all-offices SUMMARY, Ready To Send summary, electronic claims and paper-claim PDFs. ${present.length} file(s), ${fmtSize(totalBytes)} · server time.</div>
-<form method="get" class="filters" aria-label="Filter files"><label>Date <input type="date" name="date" value="${esc(date)}"></label>
+<h1>Files sent by email — ${esc(range.label)}</h1>
+<div class="sub">The Excel and PDF attachments each run emails: Ready-tab selected-records, all-offices SUMMARY, Ready To Send summary, electronic claims and paper-claim PDFs. ${present.length} file(s), ${fmtSize(totalBytes)} · server time.${range.clamped ? " Range limited to the last 366 days." : ""}</div>
+<div class="range" role="group" aria-label="Quick ranges">${chips}</div>
+<form method="get" class="filters" aria-label="Date range and filter"><label>From <input type="date" name="from" id="rfrom" value="${esc(range.from)}"></label>
+<label>To <input type="date" name="to" id="rto" value="${esc(range.to)}"></label>
 <label>Filter <input name="q" value="${esc(q)}" placeholder="e.g. Taunton, MA, paper-claim"></label><button class="btn">Show / refresh</button>
-${present.length ? `<a class="btn" href="/files/today.zip?date=${encodeURIComponent(date)}${q ? "&amp;q=" + encodeURIComponent(q) : ""}">Download all as .zip</a>` : ""}</form>
+${present.length ? `<a class="btn" href="/files/today.zip?${rq}${q ? "&amp;q=" + encodeURIComponent(q) : ""}">Download all as .zip</a>` : ""}</form>
+<script>(function(){var f=document.getElementById('rfrom'),t=document.getElementById('rto');if(!f||!t)return;
+f.addEventListener('change',function(){if(f.value&&(!t.value||t.value<f.value))t.value=f.value;});
+t.addEventListener('change',function(){if(t.value&&(!f.value||f.value>t.value))f.value=t.value;});})();</script>
 ${flash}
 ${all.length ? `<form method="post" action="/files/zip" id="zf">
-<input type="hidden" name="date" value="${esc(date)}">
+<input type="hidden" name="from" value="${esc(range.from)}"><input type="hidden" name="to" value="${esc(range.to)}">
 <div class="toolbar" role="toolbar" aria-label="Bulk actions">
 <label class="master"><input type="checkbox" id="master" aria-label="Select all files"><span id="selText">0 selected</span></label>
 <span class="spacer"></span>
@@ -2106,12 +2156,12 @@ ${all.length ? `<form method="post" action="/files/zip" id="zf">
 </div>
 ${cards}
 </form>
-<form method="post" action="/files/delete" id="df"><input type="hidden" name="date" value="${esc(date)}"><input type="hidden" name="q" value="${esc(q)}"></form>
+<form method="post" action="/files/delete" id="df"><input type="hidden" name="from" value="${esc(range.from)}"><input type="hidden" name="to" value="${esc(range.to)}"><input type="hidden" name="q" value="${esc(q)}"></form>
 <dialog id="delDlg" aria-labelledby="delTitle" aria-describedby="delDesc">
 <h2 id="delTitle">Delete files?</h2><p id="delDesc"></p><ul id="delList"></ul>
 <label class="ack" id="ackRow" hidden><input type="checkbox" id="ack"> I understand this cannot be undone</label>
 <div class="dlgbtns"><button type="button" class="btn" id="delCancel">Cancel</button><button type="button" class="btn danger solid" id="delConfirm">Delete permanently</button></div>
-</dialog>` : `<div class="empty">No emailed files found for ${esc(date)}${q ? " matching &quot;" + esc(q) + "&quot;" : ""}.<br>Run an office first, or pick another date.</div>`}
+</dialog>` : `<div class="empty">No emailed files found for ${esc(range.label)}${q ? " matching &quot;" + esc(q) + "&quot;" : ""}.<br>Run an office first, or pick another date range.</div>`}
 <p style="margin-top:26px"><a href="/billing">← Back to billing</a></p>
 </div>
 <script>
@@ -2180,9 +2230,9 @@ ${cards}
 // while a billing run is active, and same-origin only. Also prunes them (and any
 // already-missing entries that were selected) from downloads/email-manifest.json.
 app.post("/files/delete", express_1.default.urlencoded({ extended: false, limit: "1mb" }), (req, res) => {
-    const date = filesDateParam(req);
+    const range = filesRangeParam(req);
     const q = String((req.body && req.body.q) || "").trim();
-    const back = (params) => res.redirect(303, "/files/today?date=" + encodeURIComponent(date) + (q ? "&q=" + encodeURIComponent(q) : "") + (params || ""));
+    const back = (params) => res.redirect(303, "/files/today?" + range.qs + (q ? "&q=" + encodeURIComponent(q) : "") + (params || ""));
     const origin = req.headers.origin;
     if (origin) {
         try { if (new URL(origin).host !== req.headers.host) return res.status(403).send("Cross-site request blocked."); }
@@ -2195,7 +2245,7 @@ app.post("/files/delete", express_1.default.urlencoded({ extended: false, limit:
     keys = Array.isArray(keys) ? keys : (keys ? [keys] : []);
     const want = new Set(keys.map(String));
     if (want.size === 0) return back("&err=" + encodeURIComponent("No files were selected."));
-    const targets = listFilesForDate(date, "").filter(f => want.has(f.key));
+    const targets = listFilesForDate(range, "").filter(f => want.has(f.key));
     if (targets.length === 0) return back("&err=" + encodeURIComponent("Those files are no longer in the list — nothing was deleted."));
 
     let root = process.cwd();
@@ -2230,7 +2280,7 @@ app.post("/files/delete", express_1.default.urlencoded({ extended: false, limit:
             }
         } catch (e) { console.error("manifest prune failed:", e.message || e); }
     }
-    console.log(`🗑️  /files/delete (${date}): deleted ${deleted}, cleaned ${cleaned}, failed ${failures.length}`);
+    console.log(`🗑️  /files/delete (${range.label}): deleted ${deleted}, cleaned ${cleaned}, failed ${failures.length}`);
     failures.forEach(f => console.log(`   ✗ ${f}`));
     const extra = (deleted ? "&deleted=" + deleted : "") + (cleaned ? "&cleaned=" + cleaned : "") +
         (failures.length ? "&err=" + encodeURIComponent(failures.length + " file" + (failures.length === 1 ? "" : "s") + " could not be deleted: " + failures.slice(0, 3).join(", ") + (failures.length > 3 ? ", …" : "")) : "");
@@ -2238,29 +2288,29 @@ app.post("/files/delete", express_1.default.urlencoded({ extended: false, limit:
 });
 // Zip exactly the files that were ticked (keys are re-resolved against the day's list).
 app.post("/files/zip", express_1.default.urlencoded({ extended: false, limit: "1mb" }), (req, res) => {
-    const date = filesDateParam(req);
+    const range = filesRangeParam(req);
     let keys = req.body && req.body.k;
     keys = Array.isArray(keys) ? keys : (keys ? [keys] : []);
     const want = new Set(keys.map(String));
-    const files = listFilesForDate(date, "").filter(f => !f.missing && want.has(f.key));
+    const files = listFilesForDate(range, "").filter(f => !f.missing && want.has(f.key));
     if (files.length === 0) return res.status(404).send("No matching files (they may have changed — go back and refresh).");
-    try { sendZip(res, files, date); }
+    try { sendZip(res, files, range); }
     catch (e) { console.error("zip build failed:", e); res.status(500).send("Could not build zip: " + (e.message || e)); }
 });
 // Every emailed file for the day in one zip.
 app.get("/files/today.zip", (req, res) => {
-    const date = filesDateParam(req);
+    const range = filesRangeParam(req);
     const q = String(req.query.q || "").trim();
-    const files = listFilesForDate(date, q).filter(f => !f.missing);
-    if (files.length === 0) return res.status(404).send(`No files found for ${date}`);
-    try { sendZip(res, files, date); }
+    const files = listFilesForDate(range, q).filter(f => !f.missing);
+    if (files.length === 0) return res.status(404).send(`No files found for ${range.label}`);
+    try { sendZip(res, files, range); }
     catch (e) { console.error("zip build failed:", e); res.status(500).send("Could not build zip: " + (e.message || e)); }
 });
 app.get("/files/download", (req, res) => {
-    const date = filesDateParam(req);
+    const range = filesRangeParam(req);
     const key = String(req.query.f || "");
-    // Resolve only against the day's emailed-file list; never use the input as a path.
-    const hit = listFilesForDate(date, "").find(x => x.key === key && !x.missing);
+    // Resolve only against the range's emailed-file list; never use the input as a path.
+    const hit = listFilesForDate(range, "").find(x => x.key === key && !x.missing);
     if (!hit) return res.status(404).send("File not found");
     res.download(hit.full, hit.name);
 });
