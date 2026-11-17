@@ -577,24 +577,54 @@ async function setAllRejectedFilter(page) {
         throw new Error(`Could not set status filter: ${e.message}`);
     }
 
-    // Trigger the search (the page may auto-search on change, but click Search/Apply if present).
+    // Run the search with the claim-listing form's own Search button. A generic
+    // "button containing 'Search'" match used to hit the "Saved Searches (0)" toggle
+    // (#btnSavedSearchToggle) instead, so the search never ran and the CSV was empty.
     const searchSelectors = [
-        "#searchBtn", "#btnSearch", "button:has-text('Search')",
-        "input[value='Search']", "button:has-text('Apply')"
+        "#ClaimListingSearchButtonTop", "#ClaimListingSearchButtonBottom",
+        "#claimListingSearchForm input[type='submit'][value='Search']",
+        "#claimListingSearchForm input[type='button'][value='Search']"
     ];
+    let clicked = "";
     for (const sel of searchSelectors) {
         try {
             const el = await page.$(sel);
             if (el && await el.isVisible()) {
+                await el.scrollIntoViewIfNeeded().catch(() => {});
                 await el.click();
-                log(`  ✓ Clicked search (${sel})`);
+                clicked = sel;
                 break;
             }
         } catch (e) { /* try next */ }
     }
+    if (!clicked) {
+        // Last resort: submit the claim-listing form directly.
+        const submitted = await page.evaluate(() => {
+            const f = document.getElementById("claimListingSearchForm");
+            if (!f) return false;
+            if (typeof f.requestSubmit === "function") f.requestSubmit(); else f.submit();
+            return true;
+        }).catch(() => false);
+        if (submitted) clicked = "#claimListingSearchForm (submit)";
+    }
+    if (!clicked) {
+        await screenshot(page, "ERROR_search_button_not_found");
+        throw new Error("Claim listing Search button not found — cannot run the All Rejected search");
+    }
+    log(`  ✓ Clicked search (${clicked})`);
     await page.waitForTimeout(4000);
     await page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {});
+    // Confirm the search actually ran (the empty state says "Please run a search").
+    const state = await page.evaluate(() => {
+        const t = (document.body && document.body.innerText) || "";
+        const m = t.match(/(\d[\d,]*)\s+Results?/);
+        return { notRun: /please run a search/i.test(t), count: m ? parseInt(m[1].replace(/,/g, ""), 10) : null };
+    }).catch(() => ({ notRun: false, count: null }));
     await screenshot(page, "04_all_rejected_applied");
+    if (state.notRun) {
+        throw new Error("All Rejected search did not run (page still says \"Please run a search\")");
+    }
+    log(`  ✓ Search ran — ${state.count === null ? "result count not shown" : state.count + " rejected claim(s) listed"}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -2080,8 +2110,10 @@ const PARTNERSHIP_BILLING_TAXONOMY = "251E00000X";
 const NPI_LOOKUP_URL = "https://npilookup.pverify.com/";
 const TAXONOMY_RE = /\b(\d{3}[0-9A-Z]{6}X)\b/i;          // NUCC taxonomy code, e.g. 363A00000X
 
-// Select an AjaxControlToolkit sub-tab (header span id "__tab_<panelId>").
-async function selectAjaxSubTab(page, panelId) {
+// Select an AjaxControlToolkit sub-tab (header span id "__tab_<panelId>"). The Provider
+// sub-tabs load their fields by AJAX (switching removes the previous panel's fields), so
+// pass readySel = a field inside the panel and we wait until it is rendered and visible.
+async function selectAjaxSubTab(page, panelId, readySel) {
     const headerSel = `#__tab_${panelId}`;
     let clicked = false;
     try { await page.locator(headerSel).click({ timeout: 5000 }); clicked = true; }
@@ -2093,12 +2125,17 @@ async function selectAjaxSubTab(page, panelId) {
             return true;
         }, headerSel).catch(() => false);
     }
-    await page.waitForTimeout(800);
+    let ready = true;
+    if (readySel) {
+        ready = await page.waitForSelector(readySel, { state: "visible", timeout: 15000 }).then(() => true).catch(() => false);
+    }
+    await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
+    await page.waitForTimeout(500);
     const visible = await page.evaluate((id) => {
         const el = document.getElementById(id);
         return !!el && el.offsetParent !== null;
     }, panelId).catch(() => false);
-    return { clicked, visible };
+    return { clicked, visible, ready };
 }
 
 // Set a taxonomy input. Its onchange runs TaxonomySearch(), so after setting it we
@@ -2106,19 +2143,26 @@ async function selectAjaxSubTab(page, panelId) {
 // already there it is left alone.
 async function setTaxonomyField(page, inputId, code) {
     const sel = `#${inputId}`;
+    await page.waitForSelector(sel, { state: "visible", timeout: 15000 }).catch(() => {});
     const before = await page.$eval(sel, (e) => e.value).catch(() => null);
     if (before === null) return { found: false };
     const norm = (v) => String(v || "").trim().toUpperCase();
     if (norm(before) === code) return { found: true, before, after: before, ok: true, unchanged: true };
     const context = page.context();
     const pagesBefore = new Set(context.pages());
-    await setInputValue(page, sel, code);
-    await page.waitForTimeout(1500);
-    for (const pg of context.pages()) {
-        if (!pagesBefore.has(pg)) { try { await pg.close(); } catch (e) { /* ignore */ } }
+    let after = "";
+    for (let attempt = 1; attempt <= 2; attempt++) {
+        await setInputValue(page, sel, code);
+        await page.waitForTimeout(2000);
+        // TaxonomySearch() opens a small lookup popup (taxonomy_search.aspx) — close it.
+        for (const pg of context.pages()) {
+            if (!pagesBefore.has(pg)) { try { await pg.close(); } catch (e) { /* ignore */ } }
+        }
+        await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
+        after = await page.$eval(sel, (e) => e.value).catch(() => "");
+        if (norm(after) === code) return { found: true, before, after, ok: true, unchanged: false, attempts: attempt };
     }
-    const after = await page.$eval(sel, (e) => e.value).catch(() => "");
-    return { found: true, before, after, ok: norm(after) === code, unchanged: false };
+    return { found: true, before, after, ok: false, unchanged: false, attempts: 2 };
 }
 
 // Look the NPI up on pverify.com in a NEW tab (the claim editor stays untouched) and
@@ -2220,7 +2264,7 @@ async function correctPartnershipClaim(page, claim, r, step, submit, confirmFn) 
 
     // 2) Provider tab → Billing sub-tab → Taxonomy = 251E00000X
     await clickMenuTab(page, "prt", "Provider");
-    const bil = await selectAjaxSubTab(page, "prt_tc_bilTP");
+    const bil = await selectAjaxSubTab(page, "prt_tc_bilTP", "#prt_tc_bilTP_bil_FV_taxonomy");
     if (!bil.clicked) step("info", "Billing sub-tab", "tab header not clickable — trying the field anyway");
     const bt = await setTaxonomyField(page, "prt_tc_bilTP_bil_FV_taxonomy", PARTNERSHIP_BILLING_TAXONOMY);
     if (!bt.found) {
@@ -2234,7 +2278,7 @@ async function correctPartnershipClaim(page, claim, r, step, submit, confirmFn) 
     await screenshot(page, `PSHIP_billing_${claim.claimNo}`);
 
     // 3) Attending sub-tab → read NPI
-    const att = await selectAjaxSubTab(page, "prt_tc_attTP");
+    const att = await selectAjaxSubTab(page, "prt_tc_attTP", "#prt_tc_attTP_att_FV_npi");
     if (!att.clicked) step("info", "Attending sub-tab", "tab header not clickable — trying the fields anyway");
     const npiRaw = await page.$eval("#prt_tc_attTP_att_FV_npi", (e) => e.value).catch(() => null);
     const npi = String(npiRaw || "").replace(/\D/g, "");
@@ -2276,6 +2320,19 @@ async function correctPartnershipClaim(page, claim, r, step, submit, confirmFn) 
         step("skip", "Attending taxonomy", "not set — no taxonomy from the NPI lookup");
     }
     await screenshot(page, `EDITED_${claim.claimNo}`);
+
+    // Re-check Billing: switching sub-tabs reloads panel content, so confirm the billing
+    // taxonomy survived before we save.
+    if (problems.length === 0) {
+        await selectAjaxSubTab(page, "prt_tc_bilTP", "#prt_tc_bilTP_bil_FV_taxonomy");
+        const bNow = await page.$eval("#prt_tc_bilTP_bil_FV_taxonomy", (e) => e.value).catch(() => null);
+        if (String(bNow || "").trim().toUpperCase() === PARTNERSHIP_BILLING_TAXONOMY) {
+            step("done", "Billing taxonomy re-check", `still ${PARTNERSHIP_BILLING_TAXONOMY} after switching sub-tabs`);
+        } else {
+            problems.push("Billing taxonomy lost after switching sub-tabs");
+            step("fail", "Billing taxonomy re-check", `shows "${bNow}" after switching back from Attending`);
+        }
+    }
 
     // 6) Save Draft — never save a half-done Partnership claim.
     if (problems.length > 0) {
