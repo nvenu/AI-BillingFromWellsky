@@ -798,7 +798,9 @@ function readInsuranceFromExcel(excelPath) {
  * look up its Claim # in the CSV map, then write two columns: "Claim ID" and "Claim URL".
  * Returns a summary of what was matched.
  */
-function enrichSelectedRecordsExcel(excelPath, byClaimNumber) {
+function enrichSelectedRecordsExcel(excelPath, byClaimNumber, opts) {
+    // stateCode of the office this Excel belongs to (used to gate office-specific flows).
+    const officeState = String((opts && opts.stateCode) || "").trim().toUpperCase();
     log(`\n📊 Enriching Excel: ${path.basename(excelPath)}`);
     const wb = XLSX.readFile(excelPath);
     const sheetName = wb.SheetNames[0];
@@ -850,9 +852,11 @@ function enrichSelectedRecordsExcel(excelPath, byClaimNumber) {
         const hay = `${String(ins || "")} ${String(insFull || "")}`.toLowerCase();
         return /senior\s*whole\s*health/.test(hay) || /\bswhma/.test(hay);
     };
+    const isPartnershipIns = (ins, insFull) =>
+        /partnership\s*health\s*plan/i.test(`${String(ins || "")} ${String(insFull || "")}`);
 
     let tob327 = 0, matched = 0, eligibleCount = 0, skippedReasonCount = 0;
-    let dupCount = 0, tcodeCount = 0;
+    let dupCount = 0, tcodeCount = 0, partnershipCount = 0;
     const unmatched = [];
     const enriched = []; // { claimNo, claimId, url, reason, eligible, correctionType } for the correction step
 
@@ -874,6 +878,9 @@ function enrichSelectedRecordsExcel(excelPath, byClaimNumber) {
         let correctionType = null;
         if (isDuplicateReason(reason327)) correctionType = "duplicate";
         else if (isTcodeReason(reason327) && swh) correctionType = "tcode";
+        // Partnership Health Plan of CA — Yuba City (YC) office only: patient estimate
+        // blank + billing/attending taxonomy (see correctPartnershipClaim).
+        else if (officeState === "YC" && isPartnershipIns(insurance, insuranceFull)) correctionType = "partnership";
         const eligible = correctionType !== null;
         const claimNo = String(row[idxClaimNo] || "").trim();
         if (!claimNo) {
@@ -898,7 +905,9 @@ function enrichSelectedRecordsExcel(excelPath, byClaimNumber) {
             // duplicate-date and TCODE/Senior-Whole-Health rows as eligible.
             if (eligible) {
                 eligibleCount++;
-                if (correctionType === "duplicate") dupCount++; else if (correctionType === "tcode") tcodeCount++;
+                if (correctionType === "duplicate") dupCount++;
+                else if (correctionType === "tcode") tcodeCount++;
+                else if (correctionType === "partnership") partnershipCount++;
             } else {
                 skippedReasonCount++;
             }
@@ -916,13 +925,13 @@ function enrichSelectedRecordsExcel(excelPath, byClaimNumber) {
     XLSX.writeFile(wb, excelPath);
 
     log(`  ✓ TOB 327 rows: ${tob327}, matched & enriched: ${matched}, unmatched: ${unmatched.length}`);
-    log(`  ✓ Eligible for correction: ${eligibleCount} (duplicate-date: ${dupCount}, TCODE/Senior Whole Health: ${tcodeCount}) | not eligible (other 327): ${skippedReasonCount}`);
+    log(`  ✓ Eligible for correction: ${eligibleCount} (duplicate-date: ${dupCount}, TCODE/Senior Whole Health: ${tcodeCount}, Partnership (YC): ${partnershipCount}) | not eligible (other 327): ${skippedReasonCount}`);
     if (unmatched.length > 0) {
         unmatched.slice(0, 20).forEach(u =>
             log(`     ⚠️  Row ${u.row}: claim # "${u.claimNo}" — ${u.reason}`));
     }
     log(`  ✓ Saved: ${excelPath}`);
-    return { matched, tob327, unmatched, excelPath, enriched, eligibleCount, skippedReasonCount, dupCount, tcodeCount };
+    return { matched, tob327, unmatched, excelPath, enriched, eligibleCount, skippedReasonCount, dupCount, tcodeCount, partnershipCount };
 }
 
 // ---------------------------------------------------------------------------
@@ -1036,6 +1045,11 @@ function writeWaystarRunReport(officeResults) {
                     txt.push(`        ${c.correctionType === "tcode" ? "TCODE" : "Duplicate-MRN (Senior Whole Health)"}: prior auth "${c.priorAuthBefore || ""}"${c.priorAuthChanged ? ` → "${c.priorAuthAfter}"` : " (unchanged)"}`
                         + ((c.procRewrites || []).length ? ` | proc rewrites: ${c.procRewrites.map(x => `${x.fromProc}→T1502 rev${x.revAfter || "0640"} @${x.charge}`).join(", ")}` : " | no G0299/G0300 rows")
                         + (c.patientEstimateSet ? ` | patient estimate = ${c.patientEstimateSet} (total charges)` : ""));
+                }
+                if (c.correctionType === "partnership" && c.partnership) {
+                    const pp = c.partnership;
+                    txt.push(`        Partnership (YC): patient estimate "${pp.patEstBefore}" → blank | billing taxonomy ${pp.billingTaxAfter || "?"}`
+                        + ` | attending NPI ${pp.npi || "?"} → taxonomy ${pp.attTaxAfter || "not set"}`);
                 }
                 if (c.correctionType !== "tcode" && !c.swhPricing && c.priorAuthChanged) {
                     txt.push(`        Prior auth "${c.priorAuthBefore || ""}" → "${c.priorAuthAfter}"`);
@@ -1720,6 +1734,11 @@ async function correctClaim(page, claim, submit, confirmFn) {
         if (onPageId && onPageId === String(claim.claimId)) {
             r.verified = true;
             step("done", "Open/verify claim", `claim id ${onPageId} open`);
+            // Partnership Health Plan of CA (Yuba City) has its own short flow — none of
+            // the Prior Auth / service-line / statement-date / TOB steps apply to it.
+            if (r.correctionType === "partnership") {
+                return await correctPartnershipClaim(page, claim, r, step, submit, confirmFn);
+            }
         } else {
             r.skipped = true;
             r.error = `Open claim id "${onPageId}" != expected "${claim.claimId}" — skipping (no edits made)`;
@@ -2046,6 +2065,265 @@ async function correctClaim(page, claim, submit, confirmFn) {
     }
 }
 
+// ===========================================================================
+// PARTNERSHIP HEALTH PLAN OF CA — Yuba City (YC)
+//   1. Claim tab: clear Patient Estimated Amount Due (completely empty).
+//   2. Provider tab → Billing sub-tab: Taxonomy = 251E00000X.
+//   3. Provider tab → Attending sub-tab: read the NPI.
+//   4. pverify NPI lookup (npilookup.pverify.com, separate browser tab): read the Primary taxonomy.
+//   5. Attending sub-tab: Taxonomy = the looked-up code.
+//   6. Save Draft — only if every step above succeeded.
+// ===========================================================================
+const PARTNERSHIP_BILLING_TAXONOMY = "251E00000X";
+// The NPI search tool that pverify.com/npi-lookup/ embeds in a (lazy-loaded) frame;
+// opening it directly is the same lookup and is far more reliable to automate.
+const NPI_LOOKUP_URL = "https://npilookup.pverify.com/";
+const TAXONOMY_RE = /\b(\d{3}[0-9A-Z]{6}X)\b/i;          // NUCC taxonomy code, e.g. 363A00000X
+
+// Select an AjaxControlToolkit sub-tab (header span id "__tab_<panelId>").
+async function selectAjaxSubTab(page, panelId) {
+    const headerSel = `#__tab_${panelId}`;
+    let clicked = false;
+    try { await page.locator(headerSel).click({ timeout: 5000 }); clicked = true; }
+    catch (e) {
+        clicked = await page.evaluate((sel) => {
+            const el = document.querySelector(sel);
+            if (!el) return false;
+            el.click();
+            return true;
+        }, headerSel).catch(() => false);
+    }
+    await page.waitForTimeout(800);
+    const visible = await page.evaluate((id) => {
+        const el = document.getElementById(id);
+        return !!el && el.offsetParent !== null;
+    }, panelId).catch(() => false);
+    return { clicked, visible };
+}
+
+// Set a taxonomy input. Its onchange runs TaxonomySearch(), so after setting it we
+// wait, close any popup that search opened, and read the field back. If the code was
+// already there it is left alone.
+async function setTaxonomyField(page, inputId, code) {
+    const sel = `#${inputId}`;
+    const before = await page.$eval(sel, (e) => e.value).catch(() => null);
+    if (before === null) return { found: false };
+    const norm = (v) => String(v || "").trim().toUpperCase();
+    if (norm(before) === code) return { found: true, before, after: before, ok: true, unchanged: true };
+    const context = page.context();
+    const pagesBefore = new Set(context.pages());
+    await setInputValue(page, sel, code);
+    await page.waitForTimeout(1500);
+    for (const pg of context.pages()) {
+        if (!pagesBefore.has(pg)) { try { await pg.close(); } catch (e) { /* ignore */ } }
+    }
+    const after = await page.$eval(sel, (e) => e.value).catch(() => "");
+    return { found: true, before, after, ok: norm(after) === code, unchanged: false };
+}
+
+// Look the NPI up on pverify.com in a NEW tab (the claim editor stays untouched) and
+// return the Primary taxonomy code from the result row for that exact NPI.
+async function lookupTaxonomyByNpi(context, npi) {
+    const out = { ok: false, taxonomy: "", text: "", name: "", error: "" };
+    const p = await context.newPage();
+    try {
+        await p.goto(NPI_LOOKUP_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
+        // Cookie banner (only if it shows).
+        try {
+            const accept = p.locator("#pv-cookie-banner button.pv-accept");
+            await accept.waitFor({ state: "visible", timeout: 5000 });
+            await accept.click();
+            await p.waitForTimeout(500);
+        } catch (e) { /* no banner */ }
+        // The tool opens on the "First & last name" tab; switch to the "NPI #" tab.
+        try { await p.locator('a[href="#npi"]').first().click({ timeout: 10000 }); }
+        catch (e) { /* tab may already be active */ }
+        await p.locator("#Number").waitFor({ state: "visible", timeout: 30000 });
+        await p.fill("#Number", "");
+        await p.fill("#Number", npi);
+        let submitted = false;
+        // Three "NPI Lookup" arrows exist (one per tab) — use the one in the NPI tab.
+        try { await p.locator("#npi span.glyphicon-chevron-right").first().click({ timeout: 5000 }); submitted = true; }
+        catch (e) { /* fall back to Enter */ }
+        if (!submitted) await p.press("#Number", "Enter");
+        try {
+            await p.waitForSelector(`table a[href*="/NPIDetails/${npi}"]`, { timeout: 30000 });
+        } catch (e) {
+            out.error = `no lookup result for NPI ${npi}`;
+            return out;
+        }
+        const res = await p.evaluate((npi) => {
+            const clean = (t) => String(t || "").replace(/\s+/g, " ").trim();
+            const table = Array.from(document.querySelectorAll("table")).find((t) => {
+                const h = t.querySelector("thead");
+                return h && /taxonomy/i.test(h.textContent || "");
+            });
+            if (!table) return { error: "results table not found" };
+            const heads = Array.from(table.querySelectorAll("thead th")).map((th) => clean(th.textContent).toLowerCase());
+            const ti = heads.indexOf("taxonomy"), ni = heads.indexOf("name");
+            const row = Array.from(table.querySelectorAll("tbody tr")).find((tr) => {
+                const first = tr.querySelector("td");
+                return first && clean(first.textContent).replace(/\D/g, "") === npi;
+            });
+            if (!row) return { error: `no result row for NPI ${npi}` };
+            const cells = row.querySelectorAll("td");
+            const cell = cells[ti >= 0 ? ti : cells.length - 1];
+            if (!cell) return { error: "taxonomy cell not found" };
+            let lines = Array.from(cell.querySelectorAll("div")).map((d) => clean(d.textContent)).filter(Boolean);
+            if (lines.length === 0 && clean(cell.textContent)) lines = [clean(cell.textContent)];
+            return { lines, name: ni >= 0 && cells[ni] ? clean(cells[ni].textContent) : "" };
+        }, npi);
+        if (res.error) { out.error = res.error; return out; }
+        out.name = res.name;
+        // Use the line marked "Primary"; if there is no such line, accept only a single taxonomy.
+        const primary = res.lines.find((l) => /^primary\b/i.test(l));
+        const pick = primary || (res.lines.length === 1 ? res.lines[0] : "");
+        if (!pick) {
+            out.error = `${res.lines.length} taxonomies listed and none marked Primary: ${res.lines.join(" | ")}`;
+            return out;
+        }
+        const m = pick.match(TAXONOMY_RE);
+        if (!m) { out.error = `no taxonomy code in "${pick}"`; return out; }
+        out.taxonomy = m[1].toUpperCase();
+        out.text = pick;
+        out.ok = true;
+        return out;
+    } catch (e) {
+        out.error = e.message || String(e);
+        return out;
+    } finally {
+        try { await p.close(); } catch (e) { /* ignore */ }
+    }
+}
+
+async function correctPartnershipClaim(page, claim, r, step, submit, confirmFn) {
+    const p = r.partnership = {
+        patEstBefore: "", billingTaxBefore: "", billingTaxAfter: "",
+        npi: "", lookupName: "", lookupText: "", attTaxBefore: "", attTaxAfter: ""
+    };
+    const problems = [];   // anything here blocks Save Draft
+
+    // 1) Claim tab → Patient Estimated Amount Due = blank
+    await clickMenuTab(page, "clt", "Claim");
+    const PE = "#clt_tc_genTP_gen_FV_patestamt";
+    const peBefore = await page.$eval(PE, (e) => e.value).catch(() => null);
+    if (peBefore === null) {
+        problems.push("Patient estimate field not found");
+        step("fail", "Patient estimate cleared", "field #clt_tc_genTP_gen_FV_patestamt not found");
+    } else {
+        p.patEstBefore = peBefore;
+        if (peBefore !== "") await setInputValue(page, PE, "");
+        const peAfter = await page.$eval(PE, (e) => e.value).catch(() => null);
+        if (peAfter === "") step("done", "Patient estimate cleared", peBefore === "" ? "already blank" : `"${peBefore}" → blank`);
+        else { problems.push("Patient estimate not cleared"); step("fail", "Patient estimate cleared", `still "${peAfter}" after clearing`); }
+    }
+
+    // 2) Provider tab → Billing sub-tab → Taxonomy = 251E00000X
+    await clickMenuTab(page, "prt", "Provider");
+    const bil = await selectAjaxSubTab(page, "prt_tc_bilTP");
+    if (!bil.clicked) step("info", "Billing sub-tab", "tab header not clickable — trying the field anyway");
+    const bt = await setTaxonomyField(page, "prt_tc_bilTP_bil_FV_taxonomy", PARTNERSHIP_BILLING_TAXONOMY);
+    if (!bt.found) {
+        problems.push("Billing taxonomy field not found");
+        step("fail", "Billing taxonomy", "field #prt_tc_bilTP_bil_FV_taxonomy not found");
+    } else {
+        p.billingTaxBefore = bt.before; p.billingTaxAfter = bt.after;
+        if (bt.ok) step("done", "Billing taxonomy", bt.unchanged ? `already ${PARTNERSHIP_BILLING_TAXONOMY}` : `"${bt.before}" → ${PARTNERSHIP_BILLING_TAXONOMY}`);
+        else { problems.push("Billing taxonomy did not stick"); step("fail", "Billing taxonomy", `field shows "${bt.after}" after setting ${PARTNERSHIP_BILLING_TAXONOMY}`); }
+    }
+    await screenshot(page, `PSHIP_billing_${claim.claimNo}`);
+
+    // 3) Attending sub-tab → read NPI
+    const att = await selectAjaxSubTab(page, "prt_tc_attTP");
+    if (!att.clicked) step("info", "Attending sub-tab", "tab header not clickable — trying the fields anyway");
+    const npiRaw = await page.$eval("#prt_tc_attTP_att_FV_npi", (e) => e.value).catch(() => null);
+    const npi = String(npiRaw || "").replace(/\D/g, "");
+    p.npi = npi;
+    let lookedUp = "";
+    if (npiRaw === null) {
+        problems.push("Attending NPI field not found");
+        step("fail", "Attending NPI", "field #prt_tc_attTP_att_FV_npi not found");
+    } else if (npi.length !== 10) {
+        problems.push("Attending NPI missing/invalid");
+        step("fail", "Attending NPI", `"${npiRaw}" is not a 10-digit NPI`);
+    } else {
+        step("done", "Attending NPI", npi);
+        // 4) pverify lookup
+        const lk = await lookupTaxonomyByNpi(page.context(), npi);
+        try { await page.bringToFront(); } catch (e) { /* ignore */ }
+        if (lk.ok) {
+            lookedUp = lk.taxonomy;
+            p.lookupName = lk.name; p.lookupText = lk.text;
+            step("done", "NPI lookup", `${npi}${lk.name ? " (" + lk.name + ")" : ""} → ${lk.text}`);
+        } else {
+            problems.push("NPI lookup failed");
+            step("fail", "NPI lookup", `pverify: ${lk.error}`);
+        }
+    }
+
+    // 5) Attending taxonomy = looked-up code
+    if (lookedUp) {
+        const at = await setTaxonomyField(page, "prt_tc_attTP_att_FV_taxonomy", lookedUp);
+        if (!at.found) {
+            problems.push("Attending taxonomy field not found");
+            step("fail", "Attending taxonomy", "field #prt_tc_attTP_att_FV_taxonomy not found");
+        } else {
+            p.attTaxBefore = at.before; p.attTaxAfter = at.after;
+            if (at.ok) step("done", "Attending taxonomy", at.unchanged ? `already ${lookedUp}` : `"${at.before}" → ${lookedUp}`);
+            else { problems.push("Attending taxonomy did not stick"); step("fail", "Attending taxonomy", `field shows "${at.after}" after setting ${lookedUp}`); }
+        }
+    } else {
+        step("skip", "Attending taxonomy", "not set — no taxonomy from the NPI lookup");
+    }
+    await screenshot(page, `EDITED_${claim.claimNo}`);
+
+    // 6) Save Draft — never save a half-done Partnership claim.
+    if (problems.length > 0) {
+        r.error = "Partnership: not saved — " + problems.join("; ");
+        step("fail", "Save Draft", "NOT saved because: " + problems.join("; "));
+        logClaimSummary(r);
+        return r;
+    }
+    if (!submit) {
+        r.skipped = true;
+        step("skip", "Save Draft", "DRY RUN — edits made in the form but NOT saved");
+        logClaimSummary(r);
+        return r;
+    }
+    let proceed = true;
+    if (typeof confirmFn === "function") {
+        log(`     ❓ Confirm Save Draft: claim #${claim.claimNo} | Partnership: patient estimate blank, billing taxonomy ${PARTNERSHIP_BILLING_TAXONOMY}, attending taxonomy ${lookedUp}`);
+        proceed = await confirmFn(r);
+    }
+    if (!proceed) {
+        r.skipped = true;
+        r.confirmDeclined = true;
+        step("skip", "Save Draft", "declined by user — claim left edited but NOT saved");
+        logClaimSummary(r);
+        return r;
+    }
+    const saved = await page.evaluate(() => {
+        const btn = document.querySelector("#SaveDraftButton");
+        if (!btn) return false;
+        btn.click();
+        return true;
+    });
+    if (!saved) {
+        r.error = "Save Draft button (#SaveDraftButton) not found";
+        step("fail", "Save Draft", r.error);
+        await screenshot(page, `NOSAVEDRAFT_${claim.claimNo}`);
+        logClaimSummary(r);
+        return r;
+    }
+    await page.waitForTimeout(4000);
+    await page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {});
+    r.savedDraft = true;
+    step("done", "Save Draft", `claim #${claim.claimNo} saved as draft for review`);
+    await screenshot(page, `SAVEDDRAFT_${claim.claimNo}`);
+    logClaimSummary(r);
+    return r;
+}
+
 // Print a compact "what was done / not done" summary for one claim result.
 function logClaimSummary(r) {
     log(`\n     ┌─ Claim #${r.claimNo} (${r.correctionType}) — step summary ─`);
@@ -2214,7 +2492,7 @@ async function runWaystarOnPage(page, account, opts) {
             continue;
         }
 
-        const result = enrichSelectedRecordsExcel(excelPath, byClaimNumber);
+        const result = enrichSelectedRecordsExcel(excelPath, byClaimNumber, { stateCode });
         totMatched += result.matched; totTob327 += result.tob327;
         (result.unmatched || []).forEach(u => allUnmatched.push({ ...u, insurance }));
 
@@ -2228,7 +2506,7 @@ async function runWaystarOnPage(page, account, opts) {
         if (doCorrect && correctable.length > 0) {
             correction = await correctAllClaims(page, correctable, doSubmit, confirmFn);
         } else if (doCorrect) {
-            log(`\n  ℹ️  No eligible (duplicate-date or TCODE/Senior Whole Health) TOB-327 claims to correct in this file` +
+            log(`\n  ℹ️  No eligible (duplicate-date, TCODE/Senior Whole Health or Partnership/YC) TOB-327 claims to correct in this file` +
                 (skippedByReason.length ? ` (${skippedByReason.length} other 327 enriched but not corrected).` : `.`));
         } else {
             log(`\n  ⏭️  Claim correction disabled (correct=false).`);
