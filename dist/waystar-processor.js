@@ -852,6 +852,9 @@ function enrichSelectedRecordsExcel(excelPath, byClaimNumber, opts) {
     // The Kinnser export has both a short "Insurance" and an "Insurance (Full)" column.
     const idxInsurance = header.findIndex(h => h.trim().toLowerCase() === "insurance");
     const idxInsuranceFull = header.findIndex(h => h.trim().toLowerCase() === "insurance (full)");
+    // Authorization columns (used for the Boston Medical Center T-code rule).
+    const idxAuth = header.findIndex(h => h.trim().toLowerCase() === "authorization");
+    const idxAuthFull = header.findIndex(h => h.trim().toLowerCase() === "authorization (full)");
     if (idxTob === -1) {
         throw new Error('Excel has no "TOB" column — cannot locate 327 rows');
     }
@@ -884,9 +887,22 @@ function enrichSelectedRecordsExcel(excelPath, byClaimNumber, opts) {
     };
     const isPartnershipIns = (ins, insFull) =>
         /partnership\s*health\s*plan/i.test(`${String(ins || "")} ${String(insFull || "")}`);
+    // BOSTON MEDICAL CENTER HEALTH PLAN only — NOT "... PLAN PPS" (a separate, no-changes plan).
+    const isBmcIns = (ins, insFull) => [ins, insFull].some(v => {
+        const t = String(v || "").toLowerCase().replace(/\s+/g, " ").trim();
+        return /^boston medical center health plan\b/.test(t) && !/\bpps\b/.test(t);
+    });
+    // Same T-code rule the Kinnser step uses to make a claim TOB 327
+    // (shouldChangeTOB327ForAuth): starts with "T", or contains "not t" / "not a t".
+    const isTcodeAuth = (auth) => {
+        const a = String(auth || "").trim();
+        if (!a) return false;
+        const l = a.toLowerCase();
+        return /^t/i.test(a) || /not[\s-]t/.test(l) || l.includes("not a t");
+    };
 
     let tob327 = 0, matched = 0, eligibleCount = 0, skippedReasonCount = 0;
-    let dupCount = 0, tcodeCount = 0, partnershipCount = 0;
+    let dupCount = 0, tcodeCount = 0, partnershipCount = 0, bmcCount = 0;
     const unmatched = [];
     const enriched = []; // { claimNo, claimId, url, reason, eligible, correctionType } for the correction step
 
@@ -905,12 +921,19 @@ function enrichSelectedRecordsExcel(excelPath, byClaimNumber, opts) {
         //   • TCODE 327 for Senior Whole Health (incl. BID) → correctionType "tcode"
         //   • anything else → not eligible (enriched only)
         const swh = isSeniorWholeHealth(insurance, insuranceFull);
+        const authText = [idxAuth, idxAuthFull].filter(i => i !== -1).map(i => String(row[i] || "").trim()).find(Boolean) || "";
+        // Boston Medical Center Health Plan (MA) with a T-code authorization: gets the
+        // service-line rev/proc changes ON TOP of the normal duplicate-range checks.
+        const isBmcTcode = officeState === "MA" && isBmcIns(insurance, insuranceFull) && isTcodeAuth(authText);
         let correctionType = null;
         if (isDuplicateReason(reason327)) correctionType = "duplicate";
         else if (isTcodeReason(reason327) && swh) correctionType = "tcode";
         // Partnership Health Plan of CA — Yuba City (YC) office only: patient estimate
         // blank + billing/attending taxonomy (see correctPartnershipClaim).
         else if (officeState === "YC" && isPartnershipIns(insurance, insuranceFull)) correctionType = "partnership";
+        // BMC T-code claims run the standard correction (Prior Auth, statement dates,
+        // TOB/discharge, Save Draft) plus the BMC service-line changes.
+        else if (isBmcTcode) correctionType = "bmc";
         const eligible = correctionType !== null;
         const claimNo = String(row[idxClaimNo] || "").trim();
         if (!claimNo) {
@@ -938,12 +961,13 @@ function enrichSelectedRecordsExcel(excelPath, byClaimNumber, opts) {
                 if (correctionType === "duplicate") dupCount++;
                 else if (correctionType === "tcode") tcodeCount++;
                 else if (correctionType === "partnership") partnershipCount++;
+                else if (correctionType === "bmc") bmcCount++;
             } else {
                 skippedReasonCount++;
             }
             // isSwh: Senior Whole Health / BID (matched from the Excel's Insurance columns).
             // Used to gate the T1502 / rev 0640 / 139×units package for duplicate-MRN claims.
-            enriched.push({ claimNo, claimId: String(claimId).trim(), url, reason: reason327, insurance, eligible, correctionType, isSwh: swh });
+            enriched.push({ claimNo, claimId: String(claimId).trim(), url, reason: reason327, insurance, eligible, correctionType, isSwh: swh, isBmcTcode, auth: authText });
         } else {
             unmatched.push({ row: r + 1, claimNo, reason: "claim # not in CSV" });
         }
@@ -955,13 +979,13 @@ function enrichSelectedRecordsExcel(excelPath, byClaimNumber, opts) {
     XLSX.writeFile(wb, excelPath);
 
     log(`  ✓ TOB 327 rows: ${tob327}, matched & enriched: ${matched}, unmatched: ${unmatched.length}`);
-    log(`  ✓ Eligible for correction: ${eligibleCount} (duplicate-date: ${dupCount}, TCODE/Senior Whole Health: ${tcodeCount}, Partnership (YC): ${partnershipCount}) | not eligible (other 327): ${skippedReasonCount}`);
+    log(`  ✓ Eligible for correction: ${eligibleCount} (duplicate-date: ${dupCount}, TCODE/Senior Whole Health: ${tcodeCount}, Partnership (YC): ${partnershipCount}, BMC T-code (MA): ${bmcCount}) | not eligible (other 327): ${skippedReasonCount}`);
     if (unmatched.length > 0) {
         unmatched.slice(0, 20).forEach(u =>
             log(`     ⚠️  Row ${u.row}: claim # "${u.claimNo}" — ${u.reason}`));
     }
     log(`  ✓ Saved: ${excelPath}`);
-    return { matched, tob327, unmatched, excelPath, enriched, eligibleCount, skippedReasonCount, dupCount, tcodeCount, partnershipCount };
+    return { matched, tob327, unmatched, excelPath, enriched, eligibleCount, skippedReasonCount, dupCount, tcodeCount, partnershipCount, bmcCount };
 }
 
 // ---------------------------------------------------------------------------
@@ -1080,6 +1104,9 @@ function writeWaystarRunReport(officeResults) {
                     const pp = c.partnership;
                     txt.push(`        Partnership (YC): patient estimate "${pp.patEstBefore}" → blank | billing taxonomy ${pp.billingTaxAfter || "?"}`
                         + ` | attending NPI ${pp.npi || "?"} → taxonomy ${pp.attTaxAfter || "not set"}`);
+                }
+                if (c.isBmcTcode) {
+                    txt.push(`        BMC T-code: ${(c.bmcRewrites || []).length ? c.bmcRewrites.map(x => `${x.procBefore}→${x.procAfter} rev ${x.revBefore}→${x.revAfter}`).join(", ") : "no G0299/G0300 or rev 0551 rows"}`);
                 }
                 if (c.correctionType !== "tcode" && !c.swhPricing && c.priorAuthChanged) {
                     txt.push(`        Prior auth "${c.priorAuthBefore || ""}" → "${c.priorAuthAfter}"`);
@@ -1652,6 +1679,39 @@ async function mergeDuplicateDateServiceLines(page) {
     return out;
 }
 
+// Boston Medical Center Health Plan (T-code auth) — Service Line tab, every row:
+//   • Proc G0299 / G0300 → T1502, and that row's Rev Code → 0590
+//   • any other row with Rev Code 0551 → 0590
+// Charges and units are NOT touched. Returns { rewrites, scan, count, error }.
+async function rewriteBmcServiceLines(page) {
+    return await page.evaluate(() => {
+        const table = document.getElementById("slv_FV_GV");
+        if (!table) return { rewrites: [], scan: [], count: 0, error: "service line grid not found" };
+        const fire = (n) => ["input", "keyup", "change", "blur"].forEach(t => n.dispatchEvent(new Event(t, { bubbles: true })));
+        const setVal = (el, v) => { el.focus(); el.value = v; fire(el); };
+        const rewrites = [], scan = [];
+        for (const proc of Array.from(table.querySelectorAll("input[id$='_proccode']"))) {
+            const m = (proc.id || "").match(/^(.*_)proccode$/i);
+            if (!m) continue;
+            const prefix = m[1];
+            const revEl = document.getElementById(prefix + "revcode");
+            const procBefore = (proc.value || "").trim();
+            const revBefore = revEl ? (revEl.value || "").trim() : "";
+            const P = procBefore.toUpperCase();
+            const isG = P === "G0299" || P === "G0300";
+            const rev551 = revBefore === "0551";
+            if (!isG && !rev551) { scan.push({ prefix, proc: procBefore, rev: revBefore, changed: false, reason: "no BMC rule applies" }); continue; }
+            if (isG) setVal(proc, "T1502");
+            if (revEl && (isG || rev551)) setVal(revEl, "0590");
+            const procAfter = (proc.value || "").trim(), revAfter = revEl ? (revEl.value || "").trim() : "";
+            const ok = (!isG || procAfter.toUpperCase() === "T1502") && (!revEl || revAfter === "0590");
+            rewrites.push({ prefix, procBefore, procAfter, revBefore, revAfter, ok, revMissing: !revEl });
+            scan.push({ prefix, proc: procBefore, rev: revBefore, changed: true, reason: ok ? "ok" : "write did not stick" });
+        }
+        return { rewrites, scan, count: rewrites.length };
+    });
+}
+
 // Read the recalculated Total Charges (#FV_totalCharges span, e.g. "$373.00").
 // Returns a plain numeric string without "$"/commas (e.g. "373.00"), or "".
 async function readTotalCharges(page) {
@@ -1723,7 +1783,7 @@ async function correctClaim(page, claim, submit, confirmFn) {
         lastServiceDate: "", tobRule: "",
         correctionType: claim.correctionType || "duplicate", insurance: claim.insurance || "",
         priorAuthBefore: "", priorAuthAfter: "", priorAuthChanged: false,
-        procRewrites: [], lineMerges: [], totalCharges: "", patientEstimateSet: "",
+        procRewrites: [], lineMerges: [], bmcRewrites: [], isBmcTcode: !!claim.isBmcTcode, totalCharges: "", patientEstimateSet: "",
         submitted: false, savedDraft: false, skipped: false, error: null,
         steps: []
     };
@@ -1814,6 +1874,21 @@ async function correctClaim(page, claim, submit, confirmFn) {
         step("done", "Service Line read",
             `${svc.rows.length} row(s): ` + svc.rows.map((x, i) => `#${i + 1} rev=${x.revCode || "-"} proc=${x.procCode || "-"} date=${x.serviceDate || "-"}`).join(" | "));
 
+        // Boston Medical Center Health Plan with a T-code authorization:
+        // Proc G0299/G0300 → T1502 (+ Rev → 0590); Rev 0551 → 0590. No charge changes.
+        if (claim.isBmcTcode) {
+            const bw = await rewriteBmcServiceLines(page);
+            r.bmcRewrites = bw.rewrites || [];
+            const bad = r.bmcRewrites.filter(x => !x.ok);
+            if (bw.error) step("fail", "BMC service lines", `could not apply — ${bw.error}`);
+            else if (bw.count === 0) step("info", "BMC service lines", "no G0299/G0300 proc or 0551 rev on any row — nothing to change");
+            else if (bad.length) step("fail", "BMC service lines", `${bad.length} row(s) did not keep the change: ` + bad.map(x => `proc "${x.procAfter}" rev "${x.revAfter}"`).join(", "));
+            else step("done", "BMC service lines", r.bmcRewrites.map(x =>
+                (x.procBefore !== x.procAfter ? `${x.procBefore}→${x.procAfter}` : x.procBefore) + ` rev ${x.revBefore}→${x.revAfter}`).join(", "));
+            await screenshot(page, `BMC_serviceline_${claim.claimNo}`);
+            await page.waitForTimeout(500);
+            svc = await readServiceLineRows(page);
+        }
         // Senior Whole Health / BID only (TCODE or duplicate-MRN): rewrite
         // G0299/G0300 → T1502, Rev → 0640, Covered Charges = 139 * Units for those
         // rows. Total Charges auto-recalculates from lines.
