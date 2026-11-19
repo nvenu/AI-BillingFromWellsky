@@ -929,7 +929,7 @@ function enrichSelectedRecordsExcel(excelPath, byClaimNumber, opts) {
         if (isDuplicateReason(reason327)) correctionType = "duplicate";
         else if (isTcodeReason(reason327) && swh) correctionType = "tcode";
         // Partnership Health Plan of CA — Yuba City (YC) office only: patient estimate
-        // blank + billing/attending taxonomy (see correctPartnershipClaim).
+        // blank + billing/attending taxonomy plus the shared duplicate-range checks (see runPartnershipSteps).
         else if (officeState === "YC" && isPartnershipIns(insurance, insuranceFull)) correctionType = "partnership";
         // BMC T-code claims run the standard correction (Prior Auth, statement dates,
         // TOB/discharge, Save Draft) plus the BMC service-line changes.
@@ -1824,11 +1824,6 @@ async function correctClaim(page, claim, submit, confirmFn) {
         if (onPageId && onPageId === String(claim.claimId)) {
             r.verified = true;
             step("done", "Open/verify claim", `claim id ${onPageId} open`);
-            // Partnership Health Plan of CA (Yuba City) has its own short flow — none of
-            // the Prior Auth / service-line / statement-date / TOB steps apply to it.
-            if (r.correctionType === "partnership") {
-                return await correctPartnershipClaim(page, claim, r, step, submit, confirmFn);
-            }
         } else {
             r.skipped = true;
             r.error = `Open claim id "${onPageId}" != expected "${claim.claimId}" — skipping (no edits made)`;
@@ -1838,10 +1833,10 @@ async function correctClaim(page, claim, submit, confirmFn) {
             return r;
         }
 
-        // STEP 0 (TCODE AND duplicate-MRN claims) — Insurance tab → if Prior Auth
+        // STEP 0 (every flow except Partnership) — Insurance tab → if Prior Auth
         // contains "TCODE"/"T CODE", remove that token and keep the rest; if it does
         // not contain it, leave the field untouched.
-        {
+        if (r.correctionType !== "partnership") {
             try {
                 await clickMenuTab(page, "ins", "Insurance");
             } catch (e) {
@@ -2114,6 +2109,18 @@ async function correctClaim(page, claim, submit, confirmFn) {
             step("info", "Senior Whole Health pricing", `not applied — insurance "${r.insurance || "?"}" is not Senior Whole Health / BID`);
         }
 
+        // Partnership Health Plan of CA (Yuba City): after the duplicate-range checks
+        // above (HIPPS, statement dates, TOB/discharge), clear the patient estimate and
+        // set the billing/attending taxonomies. Never save a half-done Partnership claim.
+        if (r.correctionType === "partnership") {
+            const problems = await runPartnershipSteps(page, claim, r, step);
+            if (problems.length > 0) {
+                r.error = "Partnership: not saved — " + problems.join("; ");
+                step("fail", "Save Draft", "NOT saved because: " + problems.join("; "));
+                logClaimSummary(r);
+                return r;
+            }
+        }
         await screenshot(page, `EDITED_${claim.claimNo}`);
 
         // SAVE DRAFT (NOT Resubmit) — saves the edits so a human can review the
@@ -2177,7 +2184,8 @@ async function correctClaim(page, claim, submit, confirmFn) {
 //   3. Provider tab → Attending sub-tab: read the NPI.
 //   4. pverify NPI lookup (npilookup.pverify.com, separate browser tab): read the Primary taxonomy.
 //   5. Attending sub-tab: Taxonomy = the looked-up code.
-//   6. Save Draft — only if every step above succeeded.
+//   (Runs AFTER the shared duplicate-range checks — HIPPS, statement dates, TOB /
+//    discharge rule. Save Draft happens in correctClaim, only if no step failed.)
 // ===========================================================================
 const PARTNERSHIP_BILLING_TAXONOMY = "251E00000X";
 // The NPI search tool that pverify.com/npi-lookup/ embeds in a (lazy-loaded) frame;
@@ -2315,7 +2323,7 @@ async function lookupTaxonomyByNpi(context, npi) {
     }
 }
 
-async function correctPartnershipClaim(page, claim, r, step, submit, confirmFn) {
+async function runPartnershipSteps(page, claim, r, step) {
     const p = r.partnership = {
         patEstBefore: "", billingTaxBefore: "", billingTaxAfter: "",
         npi: "", lookupName: "", lookupText: "", attTaxBefore: "", attTaxAfter: ""
@@ -2409,51 +2417,7 @@ async function correctPartnershipClaim(page, claim, r, step, submit, confirmFn) 
         }
     }
 
-    // 6) Save Draft — never save a half-done Partnership claim.
-    if (problems.length > 0) {
-        r.error = "Partnership: not saved — " + problems.join("; ");
-        step("fail", "Save Draft", "NOT saved because: " + problems.join("; "));
-        logClaimSummary(r);
-        return r;
-    }
-    if (!submit) {
-        r.skipped = true;
-        step("skip", "Save Draft", "DRY RUN — edits made in the form but NOT saved");
-        logClaimSummary(r);
-        return r;
-    }
-    let proceed = true;
-    if (typeof confirmFn === "function") {
-        log(`     ❓ Confirm Save Draft: claim #${claim.claimNo} | Partnership: patient estimate blank, billing taxonomy ${PARTNERSHIP_BILLING_TAXONOMY}, attending taxonomy ${lookedUp}`);
-        proceed = await confirmFn(r);
-    }
-    if (!proceed) {
-        r.skipped = true;
-        r.confirmDeclined = true;
-        step("skip", "Save Draft", "declined by user — claim left edited but NOT saved");
-        logClaimSummary(r);
-        return r;
-    }
-    const saved = await page.evaluate(() => {
-        const btn = document.querySelector("#SaveDraftButton");
-        if (!btn) return false;
-        btn.click();
-        return true;
-    });
-    if (!saved) {
-        r.error = "Save Draft button (#SaveDraftButton) not found";
-        step("fail", "Save Draft", r.error);
-        await screenshot(page, `NOSAVEDRAFT_${claim.claimNo}`);
-        logClaimSummary(r);
-        return r;
-    }
-    await page.waitForTimeout(4000);
-    await page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {});
-    r.savedDraft = true;
-    step("done", "Save Draft", `claim #${claim.claimNo} saved as draft for review`);
-    await screenshot(page, `SAVEDDRAFT_${claim.claimNo}`);
-    logClaimSummary(r);
-    return r;
+    return problems;
 }
 
 // Print a compact "what was done / not done" summary for one claim result.
