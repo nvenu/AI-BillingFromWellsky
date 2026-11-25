@@ -924,16 +924,20 @@ function enrichSelectedRecordsExcel(excelPath, byClaimNumber, opts) {
         const authText = [idxAuth, idxAuthFull].filter(i => i !== -1).map(i => String(row[i] || "").trim()).find(Boolean) || "";
         // Boston Medical Center Health Plan (MA) with a T-code authorization: gets the
         // service-line rev/proc changes ON TOP of the normal duplicate-range checks.
-        const isBmcTcode = officeState === "MA" && isBmcIns(insurance, insuranceFull) && isTcodeAuth(authText);
+        // Every BOSTON MEDICAL CENTER HEALTH PLAN 327 claim at MA is corrected (Kinnser now
+        // makes all BMC claims 327). The T-code-only steps (Proc G0299/G0300 → T1502, Rev
+        // 0590) still run only when the authorization is a T-code.
+        const isBmc = officeState === "MA" && isBmcIns(insurance, insuranceFull);
+        const isBmcTcode = isBmc && isTcodeAuth(authText);
         let correctionType = null;
         if (isDuplicateReason(reason327)) correctionType = "duplicate";
         else if (isTcodeReason(reason327) && swh) correctionType = "tcode";
         // Partnership Health Plan of CA — Yuba City (YC) office only: patient estimate
-        // blank + billing/attending taxonomy plus the shared duplicate-range checks (see runPartnershipSteps).
+        // blank + billing/attending taxonomy plus the shared duplicate-range checks (see runTaxonomySteps).
         else if (officeState === "YC" && isPartnershipIns(insurance, insuranceFull)) correctionType = "partnership";
         // BMC T-code claims run the standard correction (Prior Auth, statement dates,
         // TOB/discharge, Save Draft) plus the BMC service-line changes.
-        else if (isBmcTcode) correctionType = "bmc";
+        else if (isBmc) correctionType = "bmc";
         const eligible = correctionType !== null;
         const claimNo = String(row[idxClaimNo] || "").trim();
         if (!claimNo) {
@@ -967,7 +971,7 @@ function enrichSelectedRecordsExcel(excelPath, byClaimNumber, opts) {
             }
             // isSwh: Senior Whole Health / BID (matched from the Excel's Insurance columns).
             // Used to gate the T1502 / rev 0640 / 139×units package for duplicate-MRN claims.
-            enriched.push({ claimNo, claimId: String(claimId).trim(), url, reason: reason327, insurance, eligible, correctionType, isSwh: swh, isBmcTcode, auth: authText });
+            enriched.push({ claimNo, claimId: String(claimId).trim(), url, reason: reason327, insurance, eligible, correctionType, isSwh: swh, isBmc, isBmcTcode, auth: authText });
         } else {
             unmatched.push({ row: r + 1, claimNo, reason: "claim # not in CSV" });
         }
@@ -979,7 +983,7 @@ function enrichSelectedRecordsExcel(excelPath, byClaimNumber, opts) {
     XLSX.writeFile(wb, excelPath);
 
     log(`  ✓ TOB 327 rows: ${tob327}, matched & enriched: ${matched}, unmatched: ${unmatched.length}`);
-    log(`  ✓ Eligible for correction: ${eligibleCount} (duplicate-date: ${dupCount}, TCODE/Senior Whole Health: ${tcodeCount}, Partnership (YC): ${partnershipCount}, BMC T-code (MA): ${bmcCount}) | not eligible (other 327): ${skippedReasonCount}`);
+    log(`  ✓ Eligible for correction: ${eligibleCount} (duplicate-date: ${dupCount}, TCODE/Senior Whole Health: ${tcodeCount}, Partnership (YC): ${partnershipCount}, BMC (MA): ${bmcCount}) | not eligible (other 327): ${skippedReasonCount}`);
     if (unmatched.length > 0) {
         unmatched.slice(0, 20).forEach(u =>
             log(`     ⚠️  Row ${u.row}: claim # "${u.claimNo}" — ${u.reason}`));
@@ -1100,9 +1104,11 @@ function writeWaystarRunReport(officeResults) {
                         + ((c.procRewrites || []).length ? ` | proc rewrites: ${c.procRewrites.map(x => `${x.fromProc}→T1502 rev${x.revAfter || "0640"} @${x.charge}`).join(", ")}` : " | no G0299/G0300 rows")
                         + (c.patientEstimateSet ? ` | patient estimate = ${c.patientEstimateSet} (total charges)` : ""));
                 }
-                if (c.correctionType === "partnership" && c.partnership) {
+                if ((c.correctionType === "partnership" || c.isBmc) && c.partnership) {
                     const pp = c.partnership;
-                    txt.push(`        Partnership (YC): patient estimate "${pp.patEstBefore}" → blank | billing taxonomy ${pp.billingTaxAfter || "?"}`
+                    txt.push((c.correctionType === "partnership"
+                            ? `        Partnership (YC): patient estimate "${pp.patEstBefore}" → blank | billing taxonomy ${pp.billingTaxAfter || "?"}`
+                            : `        BMC (MA): billing taxonomy ${pp.billingTaxAfter || "?"}`)
                         + ` | attending NPI ${pp.npi || "?"} → taxonomy ${pp.attTaxAfter || "not set"}`);
                 }
                 if (c.isBmcTcode) {
@@ -1783,7 +1789,7 @@ async function correctClaim(page, claim, submit, confirmFn) {
         lastServiceDate: "", tobRule: "",
         correctionType: claim.correctionType || "duplicate", insurance: claim.insurance || "",
         priorAuthBefore: "", priorAuthAfter: "", priorAuthChanged: false,
-        procRewrites: [], lineMerges: [], bmcRewrites: [], isBmcTcode: !!claim.isBmcTcode, totalCharges: "", patientEstimateSet: "",
+        procRewrites: [], lineMerges: [], bmcRewrites: [], isBmc: !!claim.isBmc, isBmcTcode: !!claim.isBmcTcode, totalCharges: "", patientEstimateSet: "",
         submitted: false, savedDraft: false, skipped: false, error: null,
         steps: []
     };
@@ -2109,13 +2115,15 @@ async function correctClaim(page, claim, submit, confirmFn) {
             step("info", "Senior Whole Health pricing", `not applied — insurance "${r.insurance || "?"}" is not Senior Whole Health / BID`);
         }
 
-        // Partnership Health Plan of CA (Yuba City): after the duplicate-range checks
-        // above (HIPPS, statement dates, TOB/discharge), clear the patient estimate and
-        // set the billing/attending taxonomies. Never save a half-done Partnership claim.
-        if (r.correctionType === "partnership") {
-            const problems = await runPartnershipSteps(page, claim, r, step);
+        // Partnership Health Plan of CA (Yuba City) and Boston Medical Center Health Plan
+        // (MA): after the duplicate-range checks above (HIPPS, statement dates,
+        // TOB/discharge), set the billing/attending taxonomies. Partnership also clears the
+        // patient estimate. Never save a half-done claim.
+        if (r.correctionType === "partnership" || claim.isBmc) {
+            const label = r.correctionType === "partnership" ? "Partnership" : "BMC";
+            const problems = await runTaxonomySteps(page, claim, r, step, { clearPatientEstimate: r.correctionType === "partnership" });
             if (problems.length > 0) {
-                r.error = "Partnership: not saved — " + problems.join("; ");
+                r.error = label + ": not saved — " + problems.join("; ");
                 step("fail", "Save Draft", "NOT saved because: " + problems.join("; "));
                 logClaimSummary(r);
                 return r;
@@ -2323,14 +2331,20 @@ async function lookupTaxonomyByNpi(context, npi) {
     }
 }
 
-async function runPartnershipSteps(page, claim, r, step) {
-    const p = r.partnership = {
+// Provider-tab taxonomy steps shared by Partnership (YC) and BMC (MA):
+//   billing taxonomy 251E00000X; attending NPI → pverify lookup → attending taxonomy.
+// opts.clearPatientEstimate: Partnership only — clear Patient Estimated Amount Due first.
+// Returns the list of problems (any problem blocks Save Draft).
+async function runTaxonomySteps(page, claim, r, step, opts) {
+    const clearPE = !!(opts && opts.clearPatientEstimate);
+    const p = r.partnership = r.taxonomy = {
         patEstBefore: "", billingTaxBefore: "", billingTaxAfter: "",
         npi: "", lookupName: "", lookupText: "", attTaxBefore: "", attTaxAfter: ""
     };
     const problems = [];   // anything here blocks Save Draft
 
-    // 1) Claim tab → Patient Estimated Amount Due = blank
+    // 1) Claim tab → Patient Estimated Amount Due = blank (Partnership only)
+    if (clearPE) {
     await clickMenuTab(page, "clt", "Claim");
     const PE = "#clt_tc_genTP_gen_FV_patestamt";
     const peBefore = await page.$eval(PE, (e) => e.value).catch(() => null);
@@ -2343,6 +2357,7 @@ async function runPartnershipSteps(page, claim, r, step) {
         const peAfter = await page.$eval(PE, (e) => e.value).catch(() => null);
         if (peAfter === "") step("done", "Patient estimate cleared", peBefore === "" ? "already blank" : `"${peBefore}" → blank`);
         else { problems.push("Patient estimate not cleared"); step("fail", "Patient estimate cleared", `still "${peAfter}" after clearing`); }
+    }
     }
 
     // 2) Provider tab → Billing sub-tab → Taxonomy = 251E00000X
