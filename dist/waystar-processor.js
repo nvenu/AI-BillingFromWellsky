@@ -900,9 +900,20 @@ function enrichSelectedRecordsExcel(excelPath, byClaimNumber, opts) {
         const l = a.toLowerCase();
         return /^t/i.test(a) || /not[\s-]t/.test(l) || l.includes("not a t");
     };
+    // MA plans with the common checks only (duplicate range + TOB 322/323/324 + Save Draft).
+    const insHay = (ins, insFull) => `${String(ins || "")} ${String(insFull || "")}`.toLowerCase().replace(/\s+/g, " ");
+    const isCcaIns = (ins, insFull) => /commonwealth care alliance/.test(insHay(ins, insFull));
+    const isTuftsIns = (ins, insFull) => /tufts health plan/.test(insHay(ins, insFull));
+    // Fallon Community Health Plan: "... MAV" is a separate plan with its own rules.
+    const isFallonIns = (ins, insFull) => /fallon community health plan/.test(insHay(ins, insFull));
+    const isFallonMavIns = (ins, insFull) => isFallonIns(ins, insFull) && /\bmav\b/.test(insHay(ins, insFull));
+    // "Not T Code" is its own case and never counts as a T-code for Fallon.
+    const isNotTcodeAuth = (auth) => /\bnot[\s-]*(a\s+)?t[\s-]*code\b/i.test(String(auth || ""));
+    const isFallonTcodeAuth = (auth) => !isNotTcodeAuth(auth) && /\bt[\s-]*code\b/i.test(String(auth || ""));
 
     let tob327 = 0, matched = 0, eligibleCount = 0, skippedReasonCount = 0;
     let dupCount = 0, tcodeCount = 0, partnershipCount = 0, bmcCount = 0;
+    let ccaCount = 0, tuftsCount = 0, fallonCount = 0, fallonMavCount = 0;
     const unmatched = [];
     const enriched = []; // { claimNo, claimId, url, reason, eligible, correctionType } for the correction step
 
@@ -929,6 +940,13 @@ function enrichSelectedRecordsExcel(excelPath, byClaimNumber, opts) {
         // 0590) still run only when the authorization is a T-code.
         const isBmc = officeState === "MA" && isBmcIns(insurance, insuranceFull);
         const isBmcTcode = isBmc && isTcodeAuth(authText);
+        const isMa = officeState === "MA";
+        const isFallonMav = isMa && isFallonMavIns(insurance, insuranceFull);
+        const isFallon = isMa && !isFallonMav && isFallonIns(insurance, insuranceFull);
+        // Fallon (non-MAV) + "T Code" auth: strip T Code from Prior Auth, Rev 0551→0590, Proc G0299/G0300→T1502.
+        const isFallonTcode = isFallon && isFallonTcodeAuth(authText);
+        // Fallon MAV + "Not T Code" auth: clear Prior Auth, Rev 0590 + Proc T1502 → Rev 0551 + Proc G0299.
+        const isFallonMavNotT = isFallonMav && isNotTcodeAuth(authText);
         let correctionType = null;
         if (isDuplicateReason(reason327)) correctionType = "duplicate";
         else if (isTcodeReason(reason327) && swh) correctionType = "tcode";
@@ -938,6 +956,12 @@ function enrichSelectedRecordsExcel(excelPath, byClaimNumber, opts) {
         // BMC T-code claims run the standard correction (Prior Auth, statement dates,
         // TOB/discharge, Save Draft) plus the BMC service-line changes.
         else if (isBmc) correctionType = "bmc";
+        // MA: Commonwealth Care Alliance / Tufts Health Plan — common checks only.
+        else if (isMa && isCcaIns(insurance, insuranceFull)) correctionType = "cca";
+        else if (isMa && isTuftsIns(insurance, insuranceFull)) correctionType = "tufts";
+        // MA: Fallon Community Health Plan (non-MAV) and Fallon MAV.
+        else if (isFallon) correctionType = "fallon";
+        else if (isFallonMav) correctionType = "fallonmav";
         const eligible = correctionType !== null;
         const claimNo = String(row[idxClaimNo] || "").trim();
         if (!claimNo) {
@@ -966,12 +990,16 @@ function enrichSelectedRecordsExcel(excelPath, byClaimNumber, opts) {
                 else if (correctionType === "tcode") tcodeCount++;
                 else if (correctionType === "partnership") partnershipCount++;
                 else if (correctionType === "bmc") bmcCount++;
+                else if (correctionType === "cca") ccaCount++;
+                else if (correctionType === "tufts") tuftsCount++;
+                else if (correctionType === "fallon") fallonCount++;
+                else if (correctionType === "fallonmav") fallonMavCount++;
             } else {
                 skippedReasonCount++;
             }
             // isSwh: Senior Whole Health / BID (matched from the Excel's Insurance columns).
             // Used to gate the T1502 / rev 0640 / 139×units package for duplicate-MRN claims.
-            enriched.push({ claimNo, claimId: String(claimId).trim(), url, reason: reason327, insurance, eligible, correctionType, isSwh: swh, isBmc, isBmcTcode, auth: authText });
+            enriched.push({ claimNo, claimId: String(claimId).trim(), url, reason: reason327, insurance, eligible, correctionType, isSwh: swh, isBmc, isBmcTcode, isFallonTcode, isFallonMavNotT, auth: authText });
         } else {
             unmatched.push({ row: r + 1, claimNo, reason: "claim # not in CSV" });
         }
@@ -983,13 +1011,13 @@ function enrichSelectedRecordsExcel(excelPath, byClaimNumber, opts) {
     XLSX.writeFile(wb, excelPath);
 
     log(`  ✓ TOB 327 rows: ${tob327}, matched & enriched: ${matched}, unmatched: ${unmatched.length}`);
-    log(`  ✓ Eligible for correction: ${eligibleCount} (duplicate-date: ${dupCount}, TCODE/Senior Whole Health: ${tcodeCount}, Partnership (YC): ${partnershipCount}, BMC (MA): ${bmcCount}) | not eligible (other 327): ${skippedReasonCount}`);
+    log(`  ✓ Eligible for correction: ${eligibleCount} (duplicate-date: ${dupCount}, TCODE/Senior Whole Health: ${tcodeCount}, Partnership (YC): ${partnershipCount}, BMC (MA): ${bmcCount}, CCA (MA): ${ccaCount}, Tufts (MA): ${tuftsCount}, Fallon (MA): ${fallonCount}, Fallon MAV (MA): ${fallonMavCount}) | not eligible (other 327): ${skippedReasonCount}`);
     if (unmatched.length > 0) {
         unmatched.slice(0, 20).forEach(u =>
             log(`     ⚠️  Row ${u.row}: claim # "${u.claimNo}" — ${u.reason}`));
     }
     log(`  ✓ Saved: ${excelPath}`);
-    return { matched, tob327, unmatched, excelPath, enriched, eligibleCount, skippedReasonCount, dupCount, tcodeCount, partnershipCount, bmcCount };
+    return { matched, tob327, unmatched, excelPath, enriched, eligibleCount, skippedReasonCount, dupCount, tcodeCount, partnershipCount, bmcCount, ccaCount, tuftsCount, fallonCount, fallonMavCount };
 }
 
 // ---------------------------------------------------------------------------
@@ -1113,6 +1141,9 @@ function writeWaystarRunReport(officeResults) {
                 }
                 if (c.isBmcTcode) {
                     txt.push(`        BMC T-code: ${(c.bmcRewrites || []).length ? c.bmcRewrites.map(x => `${x.procBefore}→${x.procAfter} rev ${x.revBefore}→${x.revAfter}`).join(", ") : "no G0299/G0300 or rev 0551 rows"}`);
+                }
+                if (c.isFallonTcode || c.isFallonMavNotT) {
+                    txt.push(`        ${c.isFallonMavNotT ? "Fallon MAV Not T Code" : "Fallon T Code"}: ${(c.fallonRewrites || []).length ? c.fallonRewrites.map(x => `${x.procBefore}→${x.procAfter} rev ${x.revBefore}→${x.revAfter}`).join(", ") : "no service lines changed"}`);
                 }
                 if (c.correctionType !== "tcode" && !c.swhPricing && c.priorAuthChanged) {
                     txt.push(`        Prior auth "${c.priorAuthBefore || ""}" → "${c.priorAuthAfter}"`);
@@ -1718,6 +1749,51 @@ async function rewriteBmcServiceLines(page) {
     });
 }
 
+// Fallon Community Health Plan MAV with a "Not T Code" authorization: on every row
+// where Rev is 0590 (or 590) AND Proc is T1502, set Rev → 0551 and Proc → G0299.
+// Other rows and charges/units are NOT touched. Returns { rewrites, scan, count, error }.
+async function rewriteFallonMavServiceLines(page) {
+    return await page.evaluate(() => {
+        const table = document.getElementById("slv_FV_GV");
+        if (!table) return { rewrites: [], scan: [], count: 0, error: "service line grid not found" };
+        const fire = (n) => ["input", "keyup", "change", "blur"].forEach(t => n.dispatchEvent(new Event(t, { bubbles: true })));
+        const setVal = (el, v) => { el.focus(); el.value = v; fire(el); };
+        const rewrites = [], scan = [];
+        for (const proc of Array.from(table.querySelectorAll("input[id$='_proccode']"))) {
+            const m = (proc.id || "").match(/^(.*_)proccode$/i);
+            if (!m) continue;
+            const prefix = m[1];
+            const revEl = document.getElementById(prefix + "revcode");
+            const procBefore = (proc.value || "").trim();
+            const revBefore = revEl ? (revEl.value || "").trim() : "";
+            const match = !!revEl && /^0?590$/.test(revBefore) && procBefore.toUpperCase() === "T1502";
+            if (!match) { scan.push({ prefix, proc: procBefore, rev: revBefore, changed: false, reason: "not Rev 0590 + Proc T1502" }); continue; }
+            setVal(proc, "G0299");
+            setVal(revEl, "0551");
+            const procAfter = (proc.value || "").trim(), revAfter = (revEl.value || "").trim();
+            const ok = procAfter.toUpperCase() === "G0299" && revAfter === "0551";
+            rewrites.push({ prefix, procBefore, procAfter, revBefore, revAfter, ok });
+            scan.push({ prefix, proc: procBefore, rev: revBefore, changed: true, reason: ok ? "ok" : "write did not stick" });
+        }
+        return { rewrites, scan, count: rewrites.length };
+    });
+}
+
+// Insurance tab: clear the Prior Auth field entirely (Fallon MAV "Not T Code").
+// Returns { found, before, after, changed }.
+async function clearPriorAuth(page) {
+    return await page.evaluate(() => {
+        const el = document.getElementById("ins_FV2_priorauth");
+        if (!el) return { found: false };
+        const before = (el.value || "");
+        if (before.trim() === "") return { found: true, before, after: "", changed: false };
+        el.focus();
+        el.value = "";
+        ["input", "change", "blur"].forEach(t => el.dispatchEvent(new Event(t, { bubbles: true })));
+        return { found: true, before, after: el.value, changed: el.value === "" };
+    });
+}
+
 // Read the recalculated Total Charges (#FV_totalCharges span, e.g. "$373.00").
 // Returns a plain numeric string without "$"/commas (e.g. "373.00"), or "".
 async function readTotalCharges(page) {
@@ -1789,7 +1865,8 @@ async function correctClaim(page, claim, submit, confirmFn) {
         lastServiceDate: "", tobRule: "",
         correctionType: claim.correctionType || "duplicate", insurance: claim.insurance || "",
         priorAuthBefore: "", priorAuthAfter: "", priorAuthChanged: false,
-        procRewrites: [], lineMerges: [], bmcRewrites: [], isBmc: !!claim.isBmc, isBmcTcode: !!claim.isBmcTcode, totalCharges: "", patientEstimateSet: "",
+        procRewrites: [], lineMerges: [], bmcRewrites: [], isBmc: !!claim.isBmc, isBmcTcode: !!claim.isBmcTcode,
+        isFallonTcode: !!claim.isFallonTcode, isFallonMavNotT: !!claim.isFallonMavNotT, fallonRewrites: [], totalCharges: "", patientEstimateSet: "",
         submitted: false, savedDraft: false, skipped: false, error: null,
         steps: []
     };
@@ -1842,7 +1919,31 @@ async function correctClaim(page, claim, submit, confirmFn) {
         // STEP 0 (every flow except Partnership) — Insurance tab → if Prior Auth
         // contains "TCODE"/"T CODE", remove that token and keep the rest; if it does
         // not contain it, leave the field untouched.
-        if (r.correctionType !== "partnership") {
+        // MA Commonwealth Care Alliance / Tufts / Fallon / Fallon MAV: common checks only,
+        // except Fallon (non-MAV) T-code claims (strip T Code) and Fallon MAV "Not T Code"
+        // claims (Prior Auth cleared entirely). Any failure in these Fallon steps blocks Save Draft.
+        const maCommonOnly = ["cca", "tufts", "fallon", "fallonmav"].includes(r.correctionType);
+        const fallonProblems = [];
+        if (claim.isFallonMavNotT) {
+            try {
+                await clickMenuTab(page, "ins", "Insurance");
+            } catch (e) {
+                step("fail", "Insurance tab", `could not open Insurance tab: ${e.message}`);
+            }
+            const pa = await clearPriorAuth(page);
+            if (!pa.found) {
+                fallonProblems.push("Prior Auth field not found");
+                step("fail", "Prior Auth (Fallon MAV)", "field #ins_FV2_priorauth NOT found on Insurance tab — Prior Auth NOT cleared");
+            } else {
+                r.priorAuthBefore = pa.before;
+                r.priorAuthAfter = pa.after;
+                r.priorAuthChanged = !!pa.changed;
+                if (pa.changed) step("done", "Prior Auth (Fallon MAV)", `"${pa.before}" → cleared`);
+                else if (pa.before.trim() === "") step("info", "Prior Auth (Fallon MAV)", "already blank");
+                else { fallonProblems.push("Prior Auth not cleared"); step("fail", "Prior Auth (Fallon MAV)", `still "${pa.after}" after clearing`); }
+            }
+            await screenshot(page, `PRIORAUTH_${claim.claimNo}`);
+        } else if (r.correctionType !== "partnership" && (!maCommonOnly || claim.isFallonTcode)) {
             try {
                 await clickMenuTab(page, "ins", "Insurance");
             } catch (e) {
@@ -1887,6 +1988,35 @@ async function correctClaim(page, claim, submit, confirmFn) {
             else step("done", "BMC service lines", r.bmcRewrites.map(x =>
                 (x.procBefore !== x.procAfter ? `${x.procBefore}→${x.procAfter}` : x.procBefore) + ` rev ${x.revBefore}→${x.revAfter}`).join(", "));
             await screenshot(page, `BMC_serviceline_${claim.claimNo}`);
+            await page.waitForTimeout(500);
+            svc = await readServiceLineRows(page);
+        }
+        // Fallon Community Health Plan (non-MAV) with a T Code authorization:
+        // Rev 0551 → 0590, Proc G0299/G0300 → T1502 (same rewrite as BMC).
+        if (claim.isFallonTcode) {
+            const fw = await rewriteBmcServiceLines(page);
+            r.fallonRewrites = fw.rewrites || [];
+            const bad = r.fallonRewrites.filter(x => !x.ok);
+            if (fw.error) { fallonProblems.push("service lines: " + fw.error); step("fail", "Fallon service lines", `could not apply — ${fw.error}`); }
+            else if (fw.count === 0) step("info", "Fallon service lines", "no G0299/G0300 proc or 0551 rev on any row — nothing to change");
+            else if (bad.length) { fallonProblems.push(`${bad.length} service line(s) did not keep the change`); step("fail", "Fallon service lines", `${bad.length} row(s) did not keep the change: ` + bad.map(x => `proc "${x.procAfter}" rev "${x.revAfter}"`).join(", ")); }
+            else step("done", "Fallon service lines", r.fallonRewrites.map(x =>
+                (x.procBefore !== x.procAfter ? `${x.procBefore}→${x.procAfter}` : x.procBefore) + ` rev ${x.revBefore}→${x.revAfter}`).join(", "));
+            await screenshot(page, `FALLON_serviceline_${claim.claimNo}`);
+            await page.waitForTimeout(500);
+            svc = await readServiceLineRows(page);
+        }
+        // Fallon Community Health Plan MAV with a "Not T Code" authorization:
+        // Rev 0590 + Proc T1502 → Rev 0551 + Proc G0299.
+        if (claim.isFallonMavNotT) {
+            const fw = await rewriteFallonMavServiceLines(page);
+            r.fallonRewrites = fw.rewrites || [];
+            const bad = r.fallonRewrites.filter(x => !x.ok);
+            if (fw.error) { fallonProblems.push("service lines: " + fw.error); step("fail", "Fallon MAV service lines", `could not apply — ${fw.error}`); }
+            else if (fw.count === 0) step("info", "Fallon MAV service lines", "no row with Rev 0590 + Proc T1502 — nothing to change");
+            else if (bad.length) { fallonProblems.push(`${bad.length} service line(s) did not keep the change`); step("fail", "Fallon MAV service lines", `${bad.length} row(s) did not keep the change: ` + bad.map(x => `proc "${x.procAfter}" rev "${x.revAfter}"`).join(", ")); }
+            else step("done", "Fallon MAV service lines", r.fallonRewrites.map(x => `${x.procBefore}→${x.procAfter} rev ${x.revBefore}→${x.revAfter}`).join(", "));
+            await screenshot(page, `FALLONMAV_serviceline_${claim.claimNo}`);
             await page.waitForTimeout(500);
             svc = await readServiceLineRows(page);
         }
@@ -2128,6 +2258,12 @@ async function correctClaim(page, claim, submit, confirmFn) {
                 logClaimSummary(r);
                 return r;
             }
+        }
+        if (fallonProblems.length > 0) {
+            r.error = "Fallon: not saved — " + fallonProblems.join("; ");
+            step("fail", "Save Draft", "NOT saved because: " + fallonProblems.join("; "));
+            logClaimSummary(r);
+            return r;
         }
         await screenshot(page, `EDITED_${claim.claimNo}`);
 
