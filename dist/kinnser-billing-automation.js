@@ -5270,14 +5270,14 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
         console.log(`\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501`);
     }
     // PROCESS BOSTON MEDICAL CENTER HEALTH PLAN RECORDS
-    // T-code auth → TOB 327, UD modifier for SN visits >30 days from admission
+    // Every BMC record → TOB 327 (not only T-code auths), UD modifier for SN visits >30 days from admission
     const bmcRecords = isInsuranceSelected('boston medical center health plan')
         ? validRecords.filter(r => r.insurance.toLowerCase().trim() === 'boston medical center health plan')
         : [];
     if (bmcRecords.length > 0) {
         console.log(`\n=== PROCESSING BOSTON MEDICAL CENTER HEALTH PLAN RECORDS ===`);
         console.log(`Found ${bmcRecords.length} BMC Health Plan record(s)`);
-        console.log("  Requires: T-code auth check (TOB 327), admission date, UD modifier for SN >30 days");
+        console.log("  Requires: TOB 327 for every record, admission date, UD modifier for SN >30 days");
         for (const record of bmcRecords) {
             console.log(`\nProcessing BMC record:`);
             console.log(`  MRN: ${record.mrn}`);
@@ -5401,11 +5401,25 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                 // Handle modal
                 await dismissModal(page);
                 console.log(`  \u2713 Worksheet loaded`);
-                // STEP 4: T-Code Authorization check → TOB 327
-                let needsTOB327 = false;
-                if (authorizationCode && shouldChangeTOB327ForAuth(authorizationCode)) {
-                    needsTOB327 = true;
-                    console.log(`  Step 4: Auth "${authorizationCode}" triggers TOB 327 (T-code or not-T rule)`);
+                // STEP 4: TOB 327 — BOSTON MEDICAL CENTER HEALTH PLAN ONLY: every record is
+                // changed to 327, whatever the authorization. (Other insurances still use the
+                // T-code rule elsewhere; the PPS plan is not in bmcRecords.)
+                const isTcodeAuth = !!(authorizationCode && shouldChangeTOB327ForAuth(authorizationCode));
+                let needsTOB327 = true;
+                {
+                    console.log(`  Step 4: BMC Health Plan → TOB 327 for every record (auth "${authorizationCode || "none"}"${isTcodeAuth ? ", T-code" : ""})`);
+                    // Record a 327 reason so the audit Excel shows TOB 327. T-code records already
+                    // get a "TCODE authorization" reason from the all-insurance check; duplicates
+                    // already have theirs — don't add a second one.
+                    const alreadyReasoned = changedRecords.some(c => c.mrn === record.mrn && c.billingPeriod === record.billingPeriodText);
+                    const alreadyT327 = !!(record.typeOfBill && record.typeOfBill.includes('327'));
+                    if (!isTcodeAuth && !alreadyReasoned && !alreadyT327) {
+                        changedRecords.push({
+                            mrn: record.mrn,
+                            billingPeriod: record.billingPeriodText,
+                            reason: 'Boston Medical Center Health Plan - all claims changed to TOB 327'
+                        });
+                    }
                     await page.evaluate(() => {
                         const select = document.querySelector('#typeOfBill');
                         if (select) {
@@ -5418,10 +5432,6 @@ async function processPendingApprovalRecords(page, insuranceHelper, selectedInsu
                         }
                     });
                     console.log(`  \u2713 Changed TOB to 327`);
-                } else if (authorizationCode) {
-                    console.log(`  Step 4: Auth "${authorizationCode}" does NOT trigger TOB 327`);
-                } else {
-                    console.log(`  Step 4: No auth code \u2192 TOB unchanged`);
                 }
                 // STEP 5: Expand Visits and add UD modifier for SN visits >30 days from admission
                 console.log(`  Step 5: Expanding Visits section...`);
