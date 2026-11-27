@@ -913,7 +913,7 @@ function enrichSelectedRecordsExcel(excelPath, byClaimNumber, opts) {
 
     let tob327 = 0, matched = 0, eligibleCount = 0, skippedReasonCount = 0;
     let dupCount = 0, tcodeCount = 0, partnershipCount = 0, bmcCount = 0;
-    let ccaCount = 0, tuftsCount = 0, fallonCount = 0, fallonMavCount = 0;
+    let ccaCount = 0, tuftsCount = 0, fallonCount = 0, fallonMavCount = 0, otherCount = 0;
     const unmatched = [];
     const enriched = []; // { claimNo, claimId, url, reason, eligible, correctionType } for the correction step
 
@@ -962,6 +962,9 @@ function enrichSelectedRecordsExcel(excelPath, byClaimNumber, opts) {
         // MA: Fallon Community Health Plan (non-MAV) and Fallon MAV.
         else if (isFallon) correctionType = "fallon";
         else if (isFallonMav) correctionType = "fallonmav";
+        // Every other insurance (any office): common checks only — duplicate date
+        // range, TOB 322/323/324, Save Draft. No Prior Auth / service-line changes.
+        else correctionType = "other";
         const eligible = correctionType !== null;
         const claimNo = String(row[idxClaimNo] || "").trim();
         if (!claimNo) {
@@ -994,6 +997,7 @@ function enrichSelectedRecordsExcel(excelPath, byClaimNumber, opts) {
                 else if (correctionType === "tufts") tuftsCount++;
                 else if (correctionType === "fallon") fallonCount++;
                 else if (correctionType === "fallonmav") fallonMavCount++;
+                else if (correctionType === "other") otherCount++;
             } else {
                 skippedReasonCount++;
             }
@@ -1011,13 +1015,13 @@ function enrichSelectedRecordsExcel(excelPath, byClaimNumber, opts) {
     XLSX.writeFile(wb, excelPath);
 
     log(`  ✓ TOB 327 rows: ${tob327}, matched & enriched: ${matched}, unmatched: ${unmatched.length}`);
-    log(`  ✓ Eligible for correction: ${eligibleCount} (duplicate-date: ${dupCount}, TCODE/Senior Whole Health: ${tcodeCount}, Partnership (YC): ${partnershipCount}, BMC (MA): ${bmcCount}, CCA (MA): ${ccaCount}, Tufts (MA): ${tuftsCount}, Fallon (MA): ${fallonCount}, Fallon MAV (MA): ${fallonMavCount}) | not eligible (other 327): ${skippedReasonCount}`);
+    log(`  ✓ Eligible for correction: ${eligibleCount} (duplicate-date: ${dupCount}, TCODE/Senior Whole Health: ${tcodeCount}, Partnership (YC): ${partnershipCount}, BMC (MA): ${bmcCount}, CCA (MA): ${ccaCount}, Tufts (MA): ${tuftsCount}, Fallon (MA): ${fallonCount}, Fallon MAV (MA): ${fallonMavCount}, other insurance: ${otherCount}) | not eligible (other 327): ${skippedReasonCount}`);
     if (unmatched.length > 0) {
         unmatched.slice(0, 20).forEach(u =>
             log(`     ⚠️  Row ${u.row}: claim # "${u.claimNo}" — ${u.reason}`));
     }
     log(`  ✓ Saved: ${excelPath}`);
-    return { matched, tob327, unmatched, excelPath, enriched, eligibleCount, skippedReasonCount, dupCount, tcodeCount, partnershipCount, bmcCount, ccaCount, tuftsCount, fallonCount, fallonMavCount };
+    return { matched, tob327, unmatched, excelPath, enriched, eligibleCount, skippedReasonCount, dupCount, tcodeCount, partnershipCount, bmcCount, ccaCount, tuftsCount, fallonCount, fallonMavCount, otherCount };
 }
 
 // ---------------------------------------------------------------------------
@@ -1922,7 +1926,7 @@ async function correctClaim(page, claim, submit, confirmFn) {
         // MA Commonwealth Care Alliance / Tufts / Fallon / Fallon MAV: common checks only,
         // except Fallon (non-MAV) T-code claims (strip T Code) and Fallon MAV "Not T Code"
         // claims (Prior Auth cleared entirely). Any failure in these Fallon steps blocks Save Draft.
-        const maCommonOnly = ["cca", "tufts", "fallon", "fallonmav"].includes(r.correctionType);
+        const maCommonOnly = ["cca", "tufts", "fallon", "fallonmav", "other"].includes(r.correctionType);
         const fallonProblems = [];
         if (claim.isFallonMavNotT) {
             try {
