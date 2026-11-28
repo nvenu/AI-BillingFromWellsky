@@ -37,6 +37,7 @@ exports.processWaystarForOffice = processWaystarForOffice;
 exports.processWaystarForAllOffices = processWaystarForAllOffices;
 exports.parseClaimsCsv = parseClaimsCsv;
 exports.enrichSelectedRecordsExcel = enrichSelectedRecordsExcel;
+exports.findAllSelectedRecordsFiles = findAllSelectedRecordsFiles;
 exports.correctAllClaims = correctAllClaims;
 require("dotenv/config");
 const playwright_1 = require("playwright");
@@ -796,11 +797,15 @@ function findSelectedRecordsFile(stateCode) {
 // Find ALL selected-records Excel files for a given stateCode in cwd.
 // A state (e.g. MA/Taunton) can have one file PER INSURANCE, so Waystar must
 // process every file, not just the newest. Sorted by name (stable order).
-function findAllSelectedRecordsFiles(stateCode) {
+// onlyDates (optional): array of "yyyy-MM-dd" — keep only files whose filename
+// timestamp (…-yyyy-MM-dd_HH-mm-ss.xlsx, written by Kinnser) is one of those days.
+function findAllSelectedRecordsFiles(stateCode, onlyDates) {
     const cwd = process.cwd();
     const prefix = `selected-records-${stateCode}-`;
+    const dates = Array.isArray(onlyDates) && onlyDates.length ? onlyDates : null;
     return fs.readdirSync(cwd)
         .filter(f => f.startsWith(prefix) && f.endsWith(".xlsx"))
+        .filter(f => !dates || dates.some(d => f.includes(`-${d}_`)))
         .sort()
         .map(f => path.join(cwd, f));
 }
@@ -2701,9 +2706,9 @@ async function runWaystarOnPage(page, account, opts) {
     // endpoint so a user can test the Waystar step with a specific file.
     const excelFiles = (opts && Array.isArray(opts.excelFiles) && opts.excelFiles.length > 0)
         ? opts.excelFiles
-        : findAllSelectedRecordsFiles(stateCode);
+        : findAllSelectedRecordsFiles(stateCode, opts && opts.onlyDates);
     if (excelFiles.length === 0) {
-        const msg = `No selected-records-${stateCode}-*.xlsx found in ${process.cwd()}. Run the Kinnser step first (or upload an Excel).`;
+        const msg = `No selected-records-${stateCode}-*.xlsx found in ${process.cwd()}${opts && Array.isArray(opts.onlyDates) && opts.onlyDates.length ? ` for ${opts.onlyDates.join(" / ")}` : ""}. Run the Kinnser step first (or upload an Excel).`;
         log(`⚠️  ${msg}`);
         return { success: false, skipped: true, reason: msg, stateCode, account: account.displayText };
     }

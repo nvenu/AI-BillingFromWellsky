@@ -2534,7 +2534,88 @@ async function runDailyChain(options = {}) {
     console.log(`${'='.repeat(80)}`);
     broadcastLog(`⏰ Daily chain finished - ${failures.length} failed`);
     await notifyScheduleFailures(failures, startedAt);
+    // Waystar step: correct today's TOB-327 claims, then email the run report.
+    try {
+        await runWaystarAfterKinnser(startedAt);
+    } catch (e) {
+        console.error("⚠️  Scheduler: Waystar after Kinnser threw:", e);
+    }
     scheduledChainRunning = false;
+}
+// After the daily Kinnser chain: run Waystar for every Waystar-mapped office that has a
+// selected-records Excel from TODAY (the chain's start day, or today if the chain ran past
+// midnight), then email the run report (per-claim actions) with the report files attached.
+// Disable with WAYSTAR_AFTER_KINNSER=false. Save Draft only when WAYSTAR_SUBMIT=true;
+// otherwise it is a dry run (edits made, nothing saved). No per-claim pause (unattended).
+async function runWaystarAfterKinnser(chainStartedAt) {
+    if (process.env.WAYSTAR_AFTER_KINNSER === 'false') {
+        console.log("⏭️  Waystar after Kinnser disabled (WAYSTAR_AFTER_KINNSER=false)");
+        return;
+    }
+    const { format } = require('date-fns');
+    const { sendEmail } = require('./email-helper');
+    const to = process.env.EMAIL_RECIPIENTS || "nvenu@solifetec.com";
+    const dates = Array.from(new Set([format(new Date(chainStartedAt), 'yyyy-MM-dd'), format(new Date(), 'yyyy-MM-dd')]));
+    const dayLabel = dates.join(" / ");
+    const submit = process.env.WAYSTAR_SUBMIT === 'true';
+    const mode = submit ? "Save Draft" : "DRY RUN (edits made, nothing saved)";
+    const notify = async (subject, body, attachments = []) => {
+        try { await sendEmail({ to, subject, body, attachments }); console.log(`✉️  Waystar email sent: ${subject}`); }
+        catch (e) { console.error(`⚠️  Waystar email failed: ${e.message}`); }
+    };
+    if (waystarLock.running) {
+        const msg = `A Waystar run ("${waystarLock.stateCode}") was already in progress, so the automatic Waystar step was skipped.`;
+        console.log(`⚠️  ${msg}`);
+        await notify(`⚠️ Waystar run SKIPPED - ${dayLabel}`, msg);
+        return;
+    }
+    const offices = waystar_config_1.WAYSTAR_ACCOUNTS
+        .filter(a => waystar_processor_1.findAllSelectedRecordsFiles(a.stateCode, dates).length > 0)
+        .map(a => ({ stateCode: a.stateCode, name: a.officeName }));
+    if (offices.length === 0) {
+        console.log(`⏭️  Waystar after Kinnser: no selected-records files for ${dayLabel} — nothing to do`);
+        await notify(`Waystar Run Report - ${dayLabel} - no files`, `No selected-records Excel files were created for ${dayLabel}, so no Waystar claims were processed.`);
+        return;
+    }
+    console.log(`\n${'='.repeat(80)}\n▶️  WAYSTAR AFTER KINNSER — ${offices.map(o => o.stateCode).join(", ")} | files for ${dayLabel} | ${mode}\n${'='.repeat(80)}`);
+    broadcastLog(`▶️  Waystar after Kinnser: ${offices.map(o => o.stateCode).join(", ")} (${mode})`);
+    waystarLock = { running: true, stateCode: "AUTO", startedAt: Date.now() };
+    let result;
+    try {
+        result = await waystar_processor_1.processWaystarForAllOffices(offices, { submit, autoConfirm: true, onlyDates: dates });
+    } catch (e) {
+        result = { success: false, error: e.message, offices: [], report: null };
+    } finally {
+        waystarLock = { running: false, stateCode: null, startedAt: null };
+    }
+    const report = result && result.report;
+    const t = (report && report.totals) || {};
+    const files = report ? [report.xlsxPath, report.txtPath].filter(f => f && fs_1.existsSync(f)) : [];
+    let reportText = "";
+    try { if (report && report.txtPath) reportText = fs_1.readFileSync(report.txtPath, 'utf8'); } catch (_) {}
+    const failedOffices = ((result && result.offices) || []).filter(o => !o.success && !o.skipped);
+    const body = `Waystar automatic run after Kinnser\n` +
+        `Files from: ${dayLabel}\n` +
+        `Mode: ${mode}\n` +
+        `Offices: ${offices.map(o => `${o.name} (${o.stateCode})`).join(", ")}\n` +
+        (result && result.error ? `\nRUN ERROR: ${result.error}\n` : "") +
+        (failedOffices.length ? `\nFAILED OFFICES:\n${failedOffices.map(o => `  - ${o.stateCode}: ${o.error || "unknown error"}`).join("\n")}\n` : "") +
+        `\nTOTALS: claims=${t.claims || 0}, saved as draft=${t.savedDraft || 0}, edited=${t.edited || 0}, skipped=${t.skipped || 0}, errors=${t.errored || 0}, ` +
+        `not corrected=${t.notCorrected || 0}, 327 not found in Waystar=${t.unmatched327 || 0}\n\n` +
+        (reportText || "(no run report was produced)");
+    const subject = `Waystar Run Report - ${dayLabel} - ${t.savedDraft || 0} saved as draft` +
+        ((t.errored || failedOffices.length || (result && result.error)) ? " - ⚠️ errors" : "") + (submit ? "" : " [DRY RUN]");
+    // List the report on the /files page too (same manifest the Kinnser emails use).
+    let manifestId = null;
+    try { manifestId = kinnser_billing_automation_1.recordEmailManifest({ offices: ["Waystar " + offices.map(o => o.stateCode).join("/")], files }); } catch (_) {}
+    try {
+        await sendEmail({ to, subject, body, attachments: files });
+        console.log(`✉️  Waystar run report emailed to ${to}`);
+        try { kinnser_billing_automation_1.updateEmailManifest(manifestId, { emailSent: true }); } catch (_) {}
+    } catch (e) {
+        console.error(`⚠️  Waystar run report email failed: ${e.message}`);
+        try { kinnser_billing_automation_1.updateEmailManifest(manifestId, { emailSent: false, error: String(e.message || e).slice(0, 300) }); } catch (_) {}
+    }
 }
 // Compute ms until the next 11:00 AM IST (05:30 UTC) and schedule the chain.
 function msUntilNextRunIST() {

@@ -36,6 +36,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.setLogBroadcaster = setLogBroadcaster;
 exports.setStopCheckFunction = setStopCheckFunction;
 exports.loginAndProcessOffices = loginAndProcessOffices;
+exports.recordEmailManifest = recordEmailManifest;
+exports.updateEmailManifest = updateEmailManifest;
 require("dotenv/config");
 const playwright_1 = require("playwright");
 const insurance_helper_1 = require("./insurance-helper");
