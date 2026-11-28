@@ -990,7 +990,11 @@ function enrichSelectedRecordsExcel(excelPath, byClaimNumber, opts) {
         else if (isFallonMav) correctionType = "fallonmav";
         // Every other insurance (any office): common checks only — duplicate date
         // range, TOB 322/323/324, Save Draft. No Prior Auth / service-line changes.
-        else correctionType = "other";
+        // Exception: Kinnser writes a "327 Reason" for Community Health Group records
+        // ("Community health Group - <severity remark>") although it only adds a remark and
+        // does NOT change their TOB to 327 — the Excel then shows TOB 327 for them. Leave
+        // those rows alone (enriched only), as before.
+        else if (!/^community health group\b/i.test(reason327)) correctionType = "other";
         const eligible = correctionType !== null;
         const claimNo = String(row[idxClaimNo] || "").trim();
         if (!claimNo) {
