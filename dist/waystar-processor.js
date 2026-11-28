@@ -38,6 +38,7 @@ exports.processWaystarForAllOffices = processWaystarForAllOffices;
 exports.parseClaimsCsv = parseClaimsCsv;
 exports.enrichSelectedRecordsExcel = enrichSelectedRecordsExcel;
 exports.findAllSelectedRecordsFiles = findAllSelectedRecordsFiles;
+exports.deleteOldSelectedRecordsFiles = deleteOldSelectedRecordsFiles;
 exports.correctAllClaims = correctAllClaims;
 require("dotenv/config");
 const playwright_1 = require("playwright");
@@ -808,6 +809,26 @@ function findAllSelectedRecordsFiles(stateCode, onlyDates) {
         .filter(f => !dates || dates.some(d => f.includes(`-${d}_`)))
         .sort()
         .map(f => path.join(cwd, f));
+}
+
+// Delete selected-records-*.xlsx files (in cwd) whose filename date is BEFORE the
+// earliest of keepDates ("yyyy-MM-dd"). Files without a date in the name, and files
+// from keepDates or later, are left alone. Returns { deleted: [names], failed: [{name,error}] }.
+function deleteOldSelectedRecordsFiles(keepDates) {
+    const cwd = process.cwd();
+    const dates = (Array.isArray(keepDates) ? keepDates : []).filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort();
+    const out = { deleted: [], failed: [] };
+    if (dates.length === 0) return out; // never delete without a cutoff
+    const cutoff = dates[0];
+    for (const f of fs.readdirSync(cwd)) {
+        const m = f.match(/^selected-records-.+-(\d{4}-\d{2}-\d{2})_\d{2}-\d{2}-\d{2}\.xlsx$/);
+        if (!m || m[1] >= cutoff) continue;
+        try { fs.unlinkSync(path.join(cwd, f)); out.deleted.push(f); }
+        catch (e) { out.failed.push({ name: f, error: e.message }); }
+    }
+    if (out.deleted.length || out.failed.length)
+        log(`🗑  Deleted ${out.deleted.length} selected-records file(s) older than ${cutoff}${out.failed.length ? ` (${out.failed.length} could not be deleted)` : ""}`);
+    return out;
 }
 
 // Read the primary Insurance value from a selected-records Excel (first data row's

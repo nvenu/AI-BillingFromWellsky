@@ -2559,6 +2559,18 @@ async function runWaystarAfterKinnser(chainStartedAt) {
     const dayLabel = dates.join(" / ");
     const submit = process.env.WAYSTAR_SUBMIT === 'true';
     const mode = submit ? "Save Draft" : "DRY RUN (edits made, nothing saved)";
+    // After the Waystar step, remove selected-records Excel files from previous days.
+    const cleanupOldFiles = () => {
+        try {
+            const c = waystar_processor_1.deleteOldSelectedRecordsFiles(dates);
+            return `\nOLD EXCEL CLEANUP: deleted ${c.deleted.length} selected-records file(s) from before ${dates[0]}` +
+                (c.deleted.length ? `\n${c.deleted.map(f => `  - ${f}`).join("\n")}` : "") +
+                (c.failed.length ? `\nCould not delete:\n${c.failed.map(f => `  - ${f.name}: ${f.error}`).join("\n")}` : "") + "\n";
+        } catch (e) {
+            console.error(`⚠️  Old selected-records cleanup failed: ${e.message}`);
+            return `\nOLD EXCEL CLEANUP FAILED: ${e.message}\n`;
+        }
+    };
     const notify = async (subject, body, attachments = []) => {
         try { await sendEmail({ to, subject, body, attachments }); console.log(`✉️  Waystar email sent: ${subject}`); }
         catch (e) { console.error(`⚠️  Waystar email failed: ${e.message}`); }
@@ -2574,7 +2586,8 @@ async function runWaystarAfterKinnser(chainStartedAt) {
         .map(a => ({ stateCode: a.stateCode, name: a.officeName }));
     if (offices.length === 0) {
         console.log(`⏭️  Waystar after Kinnser: no selected-records files for ${dayLabel} — nothing to do`);
-        await notify(`Waystar Run Report - ${dayLabel} - no files`, `No selected-records Excel files were created for ${dayLabel}, so no Waystar claims were processed.`);
+        const cleanup = cleanupOldFiles();
+        await notify(`Waystar Run Report - ${dayLabel} - no files`, `No selected-records Excel files were created for ${dayLabel}, so no Waystar claims were processed.\n` + cleanup);
         return;
     }
     console.log(`\n${'='.repeat(80)}\n▶️  WAYSTAR AFTER KINNSER — ${offices.map(o => o.stateCode).join(", ")} | files for ${dayLabel} | ${mode}\n${'='.repeat(80)}`);
@@ -2588,6 +2601,7 @@ async function runWaystarAfterKinnser(chainStartedAt) {
     } finally {
         waystarLock = { running: false, stateCode: null, startedAt: null };
     }
+    const cleanup = cleanupOldFiles();
     const report = result && result.report;
     const t = (report && report.totals) || {};
     const files = report ? [report.xlsxPath, report.txtPath].filter(f => f && fs_1.existsSync(f)) : [];
@@ -2601,7 +2615,8 @@ async function runWaystarAfterKinnser(chainStartedAt) {
         (result && result.error ? `\nRUN ERROR: ${result.error}\n` : "") +
         (failedOffices.length ? `\nFAILED OFFICES:\n${failedOffices.map(o => `  - ${o.stateCode}: ${o.error || "unknown error"}`).join("\n")}\n` : "") +
         `\nTOTALS: claims=${t.claims || 0}, saved as draft=${t.savedDraft || 0}, edited=${t.edited || 0}, skipped=${t.skipped || 0}, errors=${t.errored || 0}, ` +
-        `not corrected=${t.notCorrected || 0}, 327 not found in Waystar=${t.unmatched327 || 0}\n\n` +
+        `not corrected=${t.notCorrected || 0}, 327 not found in Waystar=${t.unmatched327 || 0}\n` +
+        cleanup + `\n` +
         (reportText || "(no run report was produced)");
     const subject = `Waystar Run Report - ${dayLabel} - ${t.savedDraft || 0} saved as draft` +
         ((t.errored || failedOffices.length || (result && result.error)) ? " - ⚠️ errors" : "") + (submit ? "" : " [DRY RUN]");
